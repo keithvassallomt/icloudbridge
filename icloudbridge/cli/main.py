@@ -1,5 +1,6 @@
 """Command-line interface for iCloudBridge."""
 
+import asyncio
 import logging
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ from rich.table import Table
 
 from icloudbridge import __version__
 from icloudbridge.core.config import load_config
+from icloudbridge.core.sync import NotesSyncEngine
 
 # Create Typer app
 app = typer.Typer(
@@ -184,6 +186,12 @@ app.add_typer(notes_app, name="notes")
 @notes_app.command("sync")
 def notes_sync(
     ctx: typer.Context,
+    folder: Optional[str] = typer.Option(
+        None,
+        "--folder",
+        "-f",
+        help="Specific folder to sync (syncs all if not specified)",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -191,22 +199,193 @@ def notes_sync(
         help="Preview changes without applying them",
     ),
 ) -> None:
-    """Synchronize notes."""
-    console.print("[yellow]Notes sync not yet implemented[/yellow]")
+    """Synchronize notes between Apple Notes and markdown files."""
+    cfg = ctx.obj["config"]
+
+    # Check if notes sync is enabled
+    if not cfg.notes.enabled:
+        console.print("[red]Notes sync is not enabled in configuration[/red]")
+        console.print("[dim]Enable it in your config file or use environment variables[/dim]")
+        raise typer.Exit(1)
+
+    # Check if remote folder is configured
+    if not cfg.notes.remote_folder:
+        console.print("[red]Notes remote folder is not configured[/red]")
+        console.print("[dim]Set ICLOUDBRIDGE_NOTES_REMOTE_FOLDER in your config[/dim]")
+        raise typer.Exit(1)
+
     if dry_run:
-        console.print("[dim]Dry run mode enabled[/dim]")
+        console.print("[yellow]Dry run mode is not yet implemented[/yellow]")
+        console.print("[dim]For now, running actual sync...[/dim]\n")
+
+    async def run_sync():
+        # Initialize sync engine
+        sync_engine = NotesSyncEngine(
+            markdown_base_path=cfg.notes.remote_folder,
+            db_path=cfg.db_path,
+        )
+        await sync_engine.initialize()
+
+        # Get folders to sync
+        if folder:
+            folders_to_sync = [folder]
+            console.print(f"[cyan]Syncing folder:[/cyan] {folder}\n")
+        else:
+            console.print("[cyan]Fetching folders from Apple Notes...[/cyan]")
+            all_folders = await sync_engine.list_folders()
+            folders_to_sync = [f["name"] for f in all_folders]
+            console.print(f"[green]Found {len(folders_to_sync)} folders[/green]\n")
+
+        # Sync each folder
+        total_stats = {
+            "created_local": 0,
+            "created_remote": 0,
+            "updated_local": 0,
+            "updated_remote": 0,
+            "deleted_local": 0,
+            "deleted_remote": 0,
+            "unchanged": 0,
+        }
+
+        for folder_name in folders_to_sync:
+            try:
+                console.print(f"[bold]Syncing folder:[/bold] {folder_name}")
+                stats = await sync_engine.sync_folder(folder_name, folder_name)
+
+                # Aggregate stats
+                for key in total_stats:
+                    total_stats[key] += stats[key]
+
+                # Show folder stats
+                if any(stats[k] > 0 for k in stats if k != "unchanged"):
+                    console.print(
+                        f"  [green]✓[/green] "
+                        f"{stats['created_remote']} created, "
+                        f"{stats['updated_remote']} updated, "
+                        f"{stats['deleted_remote']} deleted "
+                        f"(remote)"
+                    )
+                    console.print(
+                        f"  [green]✓[/green] "
+                        f"{stats['created_local']} created, "
+                        f"{stats['updated_local']} updated, "
+                        f"{stats['deleted_local']} deleted "
+                        f"(local)"
+                    )
+                else:
+                    console.print(f"  [dim]No changes needed ({stats['unchanged']} unchanged)[/dim]")
+
+            except Exception as e:
+                console.print(f"  [red]✗ Failed: {e}[/red]")
+                logging.exception(f"Failed to sync folder {folder_name}")
+
+        # Show summary
+        console.print("\n[bold]Sync Summary[/bold]")
+        table = Table()
+        table.add_column("Operation", style="cyan")
+        table.add_column("Local (Apple Notes)", style="green", justify="right")
+        table.add_column("Remote (Markdown)", style="blue", justify="right")
+
+        table.add_row("Created", str(total_stats["created_local"]), str(total_stats["created_remote"]))
+        table.add_row("Updated", str(total_stats["updated_local"]), str(total_stats["updated_remote"]))
+        table.add_row("Deleted", str(total_stats["deleted_local"]), str(total_stats["deleted_remote"]))
+        table.add_row("Unchanged", str(total_stats["unchanged"]), str(total_stats["unchanged"]))
+
+        console.print(table)
+
+    # Run async sync
+    try:
+        asyncio.run(run_sync())
+    except Exception as e:
+        console.print(f"[red]Sync failed: {e}[/red]")
+        logging.exception("Sync operation failed")
+        raise typer.Exit(1) from e
 
 
 @notes_app.command("list")
 def notes_list(ctx: typer.Context) -> None:
-    """List local note folders."""
-    console.print("[yellow]Notes list not yet implemented[/yellow]")
+    """List all Apple Notes folders."""
+    cfg = ctx.obj["config"]
+
+    async def run_list():
+        # Initialize sync engine
+        sync_engine = NotesSyncEngine(
+            markdown_base_path=cfg.notes.remote_folder or Path("/tmp"),
+            db_path=cfg.db_path,
+        )
+        await sync_engine.initialize()
+
+        # Get folders
+        console.print("[cyan]Fetching folders from Apple Notes...[/cyan]\n")
+        folders = await sync_engine.list_folders()
+
+        if not folders:
+            console.print("[yellow]No folders found in Apple Notes[/yellow]")
+            return
+
+        # Display folders in a table
+        table = Table(title="Apple Notes Folders")
+        table.add_column("Folder Name", style="cyan", no_wrap=True)
+        table.add_column("UUID", style="dim")
+
+        for folder in folders:
+            table.add_row(folder["name"], folder["uuid"])
+
+        console.print(table)
+        console.print(f"\n[dim]Total: {len(folders)} folders[/dim]")
+
+    # Run async list
+    try:
+        asyncio.run(run_list())
+    except Exception as e:
+        console.print(f"[red]Failed to list folders: {e}[/red]")
+        logging.exception("List operation failed")
+        raise typer.Exit(1) from e
 
 
 @notes_app.command("status")
 def notes_status(ctx: typer.Context) -> None:
-    """Show notes sync status."""
-    console.print("[yellow]Notes status not yet implemented[/yellow]")
+    """Show notes synchronization status."""
+    cfg = ctx.obj["config"]
+
+    # Check if notes sync is enabled
+    if not cfg.notes.enabled:
+        console.print("[red]Notes sync is not enabled in configuration[/red]")
+        return
+
+    async def run_status():
+        # Initialize sync engine
+        sync_engine = NotesSyncEngine(
+            markdown_base_path=cfg.notes.remote_folder or Path("/tmp"),
+            db_path=cfg.db_path,
+        )
+        await sync_engine.initialize()
+
+        # Get sync status
+        status = await sync_engine.get_sync_status()
+
+        # Display status
+        table = Table(title="Notes Sync Status")
+        table.add_column("Property", style="cyan", no_wrap=True)
+        table.add_column("Value", style="green")
+
+        table.add_row("Total Synced Notes", str(status["total_mappings"]))
+        table.add_row("Remote Folder", str(cfg.notes.remote_folder))
+        table.add_row("Database", str(cfg.db_path))
+
+        console.print(table)
+
+        if status["total_mappings"] == 0:
+            console.print("\n[yellow]No notes have been synced yet[/yellow]")
+            console.print("[dim]Run 'icloudbridge notes sync' to start syncing[/dim]")
+
+    # Run async status
+    try:
+        asyncio.run(run_status())
+    except Exception as e:
+        console.print(f"[red]Failed to get status: {e}[/red]")
+        logging.exception("Status operation failed")
+        raise typer.Exit(1) from e
 
 
 # Reminders subcommand group

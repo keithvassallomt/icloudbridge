@@ -75,6 +75,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
+"icloudbridge/cli/main.py" = ["UP007"]  # Typer requires Optional[X] syntax
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
