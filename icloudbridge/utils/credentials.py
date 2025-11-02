@@ -108,3 +108,115 @@ class CredentialStore:
             True if password exists, False otherwise
         """
         return self.get_caldav_password(username) is not None
+
+    # VaultWarden credential methods
+
+    def set_vaultwarden_credentials(
+        self, email: str, password: str, client_id: str | None = None, client_secret: str | None = None
+    ) -> None:
+        """
+        Store VaultWarden credentials in system keyring.
+
+        Stores password, client_id, and client_secret separately.
+
+        Args:
+            email: VaultWarden email
+            password: VaultWarden password
+            client_id: Optional OAuth client ID
+            client_secret: Optional OAuth client secret
+
+        Raises:
+            keyring.errors.PasswordSetError: If credentials cannot be stored
+        """
+        try:
+            keyring.set_password(self.service_name, f"vaultwarden:password:{email}", password)
+            if client_id:
+                keyring.set_password(self.service_name, f"vaultwarden:client_id:{email}", client_id)
+            if client_secret:
+                keyring.set_password(self.service_name, f"vaultwarden:client_secret:{email}", client_secret)
+            logger.info(f"Stored VaultWarden credentials for: {email}")
+        except Exception as e:
+            logger.error(f"Failed to store VaultWarden credentials: {e}")
+            raise
+
+    def get_vaultwarden_credentials(self, email: str) -> dict[str, str] | None:
+        """
+        Retrieve VaultWarden credentials from system keyring.
+
+        Args:
+            email: VaultWarden email
+
+        Returns:
+            Dictionary with 'email', 'password', 'client_id', 'client_secret' if found, None otherwise
+        """
+        try:
+            password = keyring.get_password(self.service_name, f"vaultwarden:password:{email}")
+            if not password:
+                logger.debug(f"No VaultWarden password found for: {email}")
+                return None
+
+            client_id = keyring.get_password(self.service_name, f"vaultwarden:client_id:{email}")
+            client_secret = keyring.get_password(self.service_name, f"vaultwarden:client_secret:{email}")
+
+            logger.debug(f"Retrieved VaultWarden credentials for: {email}")
+            return {
+                "email": email,
+                "password": password,
+                "client_id": client_id or "icloudbridge",
+                "client_secret": client_secret or "",
+            }
+        except Exception as e:
+            logger.error(f"Failed to retrieve VaultWarden credentials: {e}")
+            return None
+
+    def delete_vaultwarden_credentials(self, email: str) -> bool:
+        """
+        Delete VaultWarden credentials from system keyring.
+
+        Args:
+            email: VaultWarden email
+
+        Returns:
+            True if deleted, False if not found or error
+        """
+        try:
+            deleted = False
+            try:
+                keyring.delete_password(self.service_name, f"vaultwarden:password:{email}")
+                deleted = True
+            except keyring.errors.PasswordDeleteError:
+                pass
+
+            # Try to delete optional fields (ignore if not present)
+            try:
+                keyring.delete_password(self.service_name, f"vaultwarden:client_id:{email}")
+            except keyring.errors.PasswordDeleteError:
+                pass
+
+            try:
+                keyring.delete_password(self.service_name, f"vaultwarden:client_secret:{email}")
+            except keyring.errors.PasswordDeleteError:
+                pass
+
+            if deleted:
+                logger.info(f"Deleted VaultWarden credentials for: {email}")
+                return True
+            else:
+                logger.warning(f"No VaultWarden credentials found to delete for: {email}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to delete VaultWarden credentials: {e}")
+            return False
+
+    def has_vaultwarden_credentials(self, email: str) -> bool:
+        """
+        Check if VaultWarden credentials exist for the given email.
+
+        Args:
+            email: VaultWarden email
+
+        Returns:
+            True if credentials exist, False otherwise
+        """
+        return self.get_vaultwarden_credentials(email) is not None

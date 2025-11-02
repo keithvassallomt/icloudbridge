@@ -494,3 +494,331 @@ class RemindersDB:
         if self._connection:
             await self._connection.close()
             self._connection = None
+
+
+class PasswordsDB:
+    """
+    Manages SQLite database for tracking password synchronization state.
+
+    Stores metadata and password hashes (NOT plaintext passwords) for tracking
+    sync state between Apple Passwords and Bitwarden. Uses ephemeral processing
+    model where plaintext passwords are never stored in the database.
+    """
+
+    def __init__(self, db_path: Path):
+        """
+        Initialize database connection.
+
+        Args:
+            db_path: Path to SQLite database file
+        """
+        self.db_path = db_path
+        self._connection: aiosqlite.Connection | None = None
+
+    async def initialize(self) -> None:
+        """
+        Initialize database schema if it doesn't exist.
+
+        Creates tables for tracking password entries and sync metadata.
+        """
+        # Ensure database directory exists
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        async with aiosqlite.connect(self.db_path) as db:
+            # Password entries table
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS password_entry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    url TEXT,
+                    username TEXT NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    notes TEXT,
+                    otp_auth TEXT,
+                    folder TEXT,
+                    source TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    last_synced_at REAL,
+                    UNIQUE(title, url, username)
+                )
+                """
+            )
+
+            # Sync metadata table
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sync_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sync_type TEXT NOT NULL,
+                    timestamp REAL NOT NULL,
+                    file_path TEXT,
+                    entry_count INTEGER,
+                    notes TEXT
+                )
+                """
+            )
+
+            # Create indexes for faster lookups
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_password_title
+                ON password_entry(title)
+                """
+            )
+
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_password_url
+                ON password_entry(url)
+                """
+            )
+
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_password_source
+                ON password_entry(source)
+                """
+            )
+
+            await db.commit()
+            logger.debug(f"Passwords database initialized at {self.db_path}")
+
+    async def upsert_entry(
+        self,
+        title: str,
+        username: str,
+        password_hash: str,
+        url: str | None = None,
+        notes: str | None = None,
+        otp_auth: str | None = None,
+        folder: str | None = None,
+        source: str = "apple",
+    ) -> int:
+        """
+        Insert or update a password entry.
+
+        Args:
+            title: Entry title/name
+            username: Username/email
+            password_hash: SHA-256 hash of the password
+            url: Associated URL
+            notes: Additional notes
+            otp_auth: OTP/2FA secret
+            folder: Folder/collection name
+            source: Source system ('apple' or 'bitwarden')
+
+        Returns:
+            Row ID of the inserted/updated entry
+        """
+        now = datetime.now().timestamp()
+
+        async with aiosqlite.connect(self.db_path) as db:
+            # Check if entry exists
+            async with db.execute(
+                """
+                SELECT id, password_hash FROM password_entry
+                WHERE title = ? AND url IS ? AND username = ?
+                """,
+                (title, url, username),
+            ) as cursor:
+                existing = await cursor.fetchone()
+
+            if existing:
+                entry_id, old_hash = existing
+                # Only update if password hash changed
+                if old_hash != password_hash:
+                    await db.execute(
+                        """
+                        UPDATE password_entry
+                        SET password_hash = ?, notes = ?, otp_auth = ?,
+                            folder = ?, updated_at = ?, last_synced_at = ?
+                        WHERE id = ?
+                        """,
+                        (password_hash, notes, otp_auth, folder, now, now, entry_id),
+                    )
+                    logger.debug(f"Updated password entry: {title}")
+                else:
+                    # Just update last_synced_at
+                    await db.execute(
+                        """
+                        UPDATE password_entry
+                        SET last_synced_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, entry_id),
+                    )
+                await db.commit()
+                return entry_id
+            else:
+                # Insert new entry
+                async with db.execute(
+                    """
+                    INSERT INTO password_entry
+                    (title, url, username, password_hash, notes, otp_auth,
+                     folder, source, created_at, updated_at, last_synced_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        title,
+                        url,
+                        username,
+                        password_hash,
+                        notes,
+                        otp_auth,
+                        folder,
+                        source,
+                        now,
+                        now,
+                        now,
+                    ),
+                ) as cursor:
+                    entry_id = cursor.lastrowid
+
+                await db.commit()
+                logger.debug(f"Inserted new password entry: {title}")
+                return entry_id
+
+    async def get_all_entries(self, source: str | None = None) -> list[dict]:
+        """
+        Get all password entries.
+
+        Args:
+            source: Filter by source ('apple' or 'bitwarden'), or None for all
+
+        Returns:
+            List of password entry dictionaries
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+
+            if source:
+                query = "SELECT * FROM password_entry WHERE source = ? ORDER BY title"
+                params = (source,)
+            else:
+                query = "SELECT * FROM password_entry ORDER BY title"
+                params = ()
+
+            async with db.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+
+    async def get_entry_by_key(
+        self, title: str, url: str | None, username: str
+    ) -> dict | None:
+        """
+        Get a password entry by its unique key.
+
+        Args:
+            title: Entry title
+            url: Entry URL (can be None)
+            username: Username
+
+        Returns:
+            Password entry dictionary or None if not found
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM password_entry
+                WHERE title = ? AND url IS ? AND username = ?
+                """,
+                (title, url, username),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def record_sync(
+        self,
+        sync_type: str,
+        file_path: str | None = None,
+        entry_count: int = 0,
+        notes: str | None = None,
+    ) -> None:
+        """
+        Record a sync operation in metadata table.
+
+        Args:
+            sync_type: Type of sync ('apple_import', 'bitwarden_import', 'bitwarden_export', etc.)
+            file_path: Path to the CSV file involved
+            entry_count: Number of entries processed
+            notes: Additional notes about the sync
+        """
+        now = datetime.now().timestamp()
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO sync_metadata
+                (sync_type, timestamp, file_path, entry_count, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (sync_type, now, file_path, entry_count, notes),
+            )
+            await db.commit()
+            logger.info(f"Recorded sync: {sync_type} ({entry_count} entries)")
+
+    async def get_last_sync(self, sync_type: str) -> dict | None:
+        """
+        Get the most recent sync of a given type.
+
+        Args:
+            sync_type: Type of sync to query
+
+        Returns:
+            Sync metadata dictionary or None if no sync found
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM sync_metadata
+                WHERE sync_type = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+                """,
+                (sync_type,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def get_stats(self) -> dict:
+        """
+        Get statistics about password entries.
+
+        Returns:
+            Dictionary with entry counts by source
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            # Total entries
+            async with db.execute(
+                "SELECT COUNT(*) FROM password_entry"
+            ) as cursor:
+                total = (await cursor.fetchone())[0]
+
+            # By source
+            async with db.execute(
+                """
+                SELECT source, COUNT(*) as count
+                FROM password_entry
+                GROUP BY source
+                """
+            ) as cursor:
+                by_source = {row[0]: row[1] for row in await cursor.fetchall()}
+
+            return {"total": total, "by_source": by_source}
+
+    async def clear_all_entries(self) -> None:
+        """Clear all password entries from the database."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM password_entry")
+            await db.commit()
+            logger.info("All password entries cleared from database")
+
+    async def close(self) -> None:
+        """Close database connection if open."""
+        if self._connection:
+            await self._connection.close()
+            self._connection = None

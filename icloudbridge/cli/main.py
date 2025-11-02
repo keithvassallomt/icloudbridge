@@ -9,6 +9,7 @@ from typing import Optional
 import typer
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.panel import Panel
 from rich.table import Table
 
 from icloudbridge import __version__
@@ -917,6 +918,641 @@ def reminders_delete_password(
             console.print(f"[yellow]No password found for user: {username}[/yellow]")
     except Exception as e:
         console.print(f"[red]Failed to delete password: {e}[/red]")
+        raise typer.Exit(1)
+
+
+# ============================================================================
+# PASSWORD COMMANDS
+# ============================================================================
+
+
+@app.command()
+def passwords_import_apple(
+    ctx: typer.Context,
+    csv_file: Path = typer.Argument(..., help="Apple Passwords CSV export file"),
+) -> None:
+    """Import passwords from Apple Passwords CSV export."""
+    import asyncio
+    from datetime import datetime
+
+    from ..core.passwords_sync import PasswordsSyncEngine
+    from ..utils.db import PasswordsDB
+
+    cfg = ctx.obj["config"]
+
+    console.print(Panel.fit("🔐 Apple Passwords Import", style="bold blue"))
+
+    # Validate file exists
+    if not csv_file.exists():
+        console.print(f"[red]Error: File not found: {csv_file}[/red]")
+        raise typer.Exit(1)
+
+    # Initialize database
+    db_path = cfg.general.data_dir / "passwords.db"
+    db = PasswordsDB(db_path)
+
+    async def run_import():
+        await db.initialize()
+        engine = PasswordsSyncEngine(db)
+        return await engine.import_apple_csv(csv_file)
+
+    try:
+        stats = asyncio.run(run_import())
+
+        # Display results
+        table = Table(title="Import Results")
+        table.add_column("Category", style="cyan")
+        table.add_column("Count", justify="right", style="green")
+
+        table.add_row("Total processed", str(stats["total_processed"]))
+        table.add_row("New entries", str(stats["new"]))
+        table.add_row("Updated entries", str(stats["updated"]))
+        table.add_row("Duplicates skipped", str(stats["duplicates"]))
+        table.add_row("Unchanged", str(stats["unchanged"]))
+        if stats["errors"] > 0:
+            table.add_row("Errors", str(stats["errors"]), style="red")
+
+        console.print(table)
+
+        console.print(f"\n[green]✅ Import complete[/green]")
+        console.print(f"   Database: {db_path}")
+        console.print(f"   Last import: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Security warning
+        console.print(
+            "\n[yellow]⚠️  SECURITY WARNING[/yellow]\n"
+            "   CSV file contains plaintext passwords!\n"
+            f"   Delete immediately: {csv_file}\n"
+        )
+
+        # Next step suggestion
+        console.print(
+            "[dim]💡 Next step: Generate Bitwarden import file[/dim]\n"
+            f"   → icloudbridge passwords-export-bitwarden -o bitwarden.csv --apple-csv {csv_file}"
+        )
+
+    except Exception as e:
+        console.print(f"[red]Error importing passwords: {e}[/red]")
+        logging.exception("Import failed")
+        raise typer.Exit(1)
+
+
+@app.command()
+def passwords_export_bitwarden(
+    ctx: typer.Context,
+    output: Path = typer.Option(..., "-o", "--output", help="Output CSV file"),
+    apple_csv: Path = typer.Option(..., help="Original Apple Passwords CSV"),
+) -> None:
+    """Generate Bitwarden-formatted CSV for import."""
+    import asyncio
+    from datetime import datetime
+
+    from ..core.passwords_sync import PasswordsSyncEngine
+    from ..utils.db import PasswordsDB
+
+    cfg = ctx.obj["config"]
+
+    console.print(Panel.fit("🔐 Bitwarden CSV Export", style="bold blue"))
+
+    # Validate input file exists
+    if not apple_csv.exists():
+        console.print(f"[red]Error: Apple CSV not found: {apple_csv}[/red]")
+        raise typer.Exit(1)
+
+    # Initialize database
+    db_path = cfg.general.data_dir / "passwords.db"
+    db = PasswordsDB(db_path)
+
+    async def run_export():
+        await db.initialize()
+        engine = PasswordsSyncEngine(db)
+        return await engine.export_bitwarden_csv(output, apple_csv)
+
+    try:
+        count = asyncio.run(run_export())
+
+        console.print(f"[green]✅ Bitwarden CSV generated[/green]")
+        console.print(f"   File: {output}")
+        console.print(f"   Entries: {count}")
+        console.print(f"   Permissions: 0600 (owner read/write only)")
+
+        # Security warning
+        console.print(
+            "\n[yellow]⚠️  SECURITY WARNING[/yellow]\n"
+            "   Generated CSV contains plaintext passwords!\n"
+            f"   1. Import to Bitwarden immediately\n"
+            f"   2. Delete file: rm {output}\n"
+        )
+
+        # Next steps
+        console.print(
+            "[dim]💡 Import to Bitwarden:[/dim]\n"
+            "   Settings → Import Data → Bitwarden (csv)\n"
+            f"   Then delete both CSV files!"
+        )
+
+    except Exception as e:
+        console.print(f"[red]Error exporting to Bitwarden: {e}[/red]")
+        logging.exception("Export failed")
+        raise typer.Exit(1)
+
+
+@app.command()
+def passwords_import_bitwarden(
+    ctx: typer.Context,
+    csv_file: Path = typer.Argument(..., help="Bitwarden CSV export file"),
+) -> None:
+    """Import passwords from Bitwarden CSV export."""
+    import asyncio
+    from datetime import datetime
+
+    from ..core.passwords_sync import PasswordsSyncEngine
+    from ..utils.db import PasswordsDB
+
+    cfg = ctx.obj["config"]
+
+    console.print(Panel.fit("🔐 Bitwarden Import", style="bold blue"))
+
+    # Validate file exists
+    if not csv_file.exists():
+        console.print(f"[red]Error: File not found: {csv_file}[/red]")
+        raise typer.Exit(1)
+
+    # Initialize database
+    db_path = cfg.general.data_dir / "passwords.db"
+    db = PasswordsDB(db_path)
+
+    async def run_import():
+        await db.initialize()
+        engine = PasswordsSyncEngine(db)
+        return await engine.import_bitwarden_csv(csv_file)
+
+    try:
+        stats = asyncio.run(run_import())
+
+        # Display results
+        table = Table(title="Import Results")
+        table.add_column("Category", style="cyan")
+        table.add_column("Count", justify="right", style="green")
+
+        table.add_row("Total processed", str(stats["total_processed"]))
+        table.add_row("New entries", str(stats["new"]))
+        table.add_row("Updated entries", str(stats["updated"]))
+        table.add_row("Duplicates skipped", str(stats["duplicates"]))
+        table.add_row("Unchanged", str(stats["unchanged"]))
+        if stats["errors"] > 0:
+            table.add_row("Errors", str(stats["errors"]), style="red")
+
+        console.print(table)
+
+        console.print(f"\n[green]✅ Import complete[/green]")
+        console.print(f"   Database: {db_path}")
+        console.print(f"   Last import: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Security warning
+        console.print(
+            "\n[yellow]⚠️  SECURITY WARNING[/yellow]\n"
+            "   CSV file contains plaintext passwords!\n"
+            f"   Delete immediately: {csv_file}\n"
+        )
+
+        # Next step suggestion
+        console.print(
+            "[dim]💡 Next step: Generate Apple Passwords import file[/dim]\n"
+            f"   → icloudbridge passwords-export-apple -o apple-import.csv --bitwarden-csv {csv_file}"
+        )
+
+    except Exception as e:
+        console.print(f"[red]Error importing passwords: {e}[/red]")
+        logging.exception("Import failed")
+        raise typer.Exit(1)
+
+
+@app.command()
+def passwords_export_apple(
+    ctx: typer.Context,
+    output: Path = typer.Option(..., "-o", "--output", help="Output CSV file"),
+    bitwarden_csv: Path = typer.Option(..., help="Original Bitwarden CSV export"),
+) -> None:
+    """Generate Apple Passwords CSV for entries only in Bitwarden (not in Apple)."""
+    import asyncio
+
+    from ..core.passwords_sync import PasswordsSyncEngine
+    from ..utils.db import PasswordsDB
+
+    cfg = ctx.obj["config"]
+
+    console.print(Panel.fit("🔐 Apple Passwords Export", style="bold blue"))
+
+    # Validate input file exists
+    if not bitwarden_csv.exists():
+        console.print(f"[red]Error: Bitwarden CSV not found: {bitwarden_csv}[/red]")
+        raise typer.Exit(1)
+
+    # Initialize database
+    db_path = cfg.general.data_dir / "passwords.db"
+    db = PasswordsDB(db_path)
+
+    async def run_export():
+        await db.initialize()
+        engine = PasswordsSyncEngine(db)
+        return await engine.export_apple_csv(output, bitwarden_csv)
+
+    try:
+        count = asyncio.run(run_export())
+
+        if count == 0:
+            console.print("[yellow]No new passwords found in Bitwarden[/yellow]")
+            console.print("   All Bitwarden passwords already exist in Apple Passwords")
+        else:
+            console.print(f"[green]✅ Apple Passwords CSV generated[/green]")
+            console.print(f"   File: {output}")
+            console.print(f"   New entries: {count}")
+            console.print(f"   Permissions: 0600 (owner read/write only)")
+
+            # Security warning
+            console.print(
+                "\n[yellow]⚠️  SECURITY WARNING[/yellow]\n"
+                "   Generated CSV contains plaintext passwords!\n"
+                f"   1. Import to Apple Passwords immediately\n"
+                f"   2. Delete file: rm {output}\n"
+            )
+
+            # Instructions
+            console.print(
+                "[dim]💡 Import to Apple Passwords:[/dim]\n"
+                "   1. Open Passwords app\n"
+                "   2. File → Import Passwords\n"
+                f"   3. Select {output}\n"
+                "   4. Delete both CSV files!"
+            )
+
+    except Exception as e:
+        console.print(f"[red]Error exporting to Apple format: {e}[/red]")
+        logging.exception("Export failed")
+        raise typer.Exit(1)
+
+
+@app.command()
+def passwords_status(ctx: typer.Context) -> None:
+    """Show password sync status."""
+    import asyncio
+    from datetime import datetime
+
+    from ..utils.db import PasswordsDB
+
+    cfg = ctx.obj["config"]
+
+    console.print(Panel.fit("🔐 Password Sync Status", style="bold blue"))
+
+    # Initialize database
+    db_path = cfg.general.data_dir / "passwords.db"
+    db = PasswordsDB(db_path)
+
+    async def get_status():
+        await db.initialize()
+
+        # Get statistics
+        stats = await db.get_stats()
+
+        # Get last syncs
+        apple_import = await db.get_last_sync("apple_import")
+        bitwarden_export = await db.get_last_sync("bitwarden_export")
+        bitwarden_import = await db.get_last_sync("bitwarden_import")
+        apple_export = await db.get_last_sync("apple_export")
+
+        return {
+            "stats": stats,
+            "apple_import": apple_import,
+            "bitwarden_export": bitwarden_export,
+            "bitwarden_import": bitwarden_import,
+            "apple_export": apple_export,
+        }
+
+    try:
+        data = asyncio.run(get_status())
+        stats = data["stats"]
+
+        # Display statistics
+        table = Table(title="Database Statistics")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", justify="right", style="green")
+
+        table.add_row("Total entries", str(stats["total"]))
+        for source, count in stats["by_source"].items():
+            table.add_row(f"  From {source}", str(count))
+
+        console.print(table)
+
+        # Display last syncs
+        def format_timestamp(ts: float | None) -> str:
+            if ts is None:
+                return "Never"
+            dt = datetime.fromtimestamp(ts)
+            now = datetime.now()
+            delta = now - dt
+            if delta.days > 0:
+                return f"{dt.strftime('%Y-%m-%d %H:%M:%S')} ({delta.days} days ago)"
+            elif delta.seconds > 3600:
+                hours = delta.seconds // 3600
+                return f"{dt.strftime('%Y-%m-%d %H:%M:%S')} ({hours} hours ago)"
+            else:
+                minutes = delta.seconds // 60
+                return f"{dt.strftime('%Y-%m-%d %H:%M:%S')} ({minutes} minutes ago)"
+
+        sync_table = Table(title="Last Syncs")
+        sync_table.add_column("Operation", style="cyan")
+        sync_table.add_column("Timestamp", style="yellow")
+
+        sync_table.add_row(
+            "Apple import",
+            format_timestamp(data["apple_import"]["timestamp"] if data["apple_import"] else None),
+        )
+        sync_table.add_row(
+            "Bitwarden export",
+            format_timestamp(data["bitwarden_export"]["timestamp"] if data["bitwarden_export"] else None),
+        )
+        sync_table.add_row(
+            "Bitwarden import",
+            format_timestamp(data["bitwarden_import"]["timestamp"] if data["bitwarden_import"] else None),
+        )
+        sync_table.add_row(
+            "Apple export",
+            format_timestamp(data["apple_export"]["timestamp"] if data["apple_export"] else None),
+        )
+
+        console.print(sync_table)
+
+        console.print(f"\n[dim]Database: {db_path}[/dim]")
+
+    except Exception as e:
+        console.print(f"[red]Error retrieving status: {e}[/red]")
+        logging.exception("Status failed")
+        raise typer.Exit(1)
+
+
+@app.command()
+def passwords_set_vaultwarden_credentials(ctx: typer.Context) -> None:
+    """Set VaultWarden credentials in system keyring."""
+    from getpass import getpass
+
+    from ..utils.credentials import CredentialStore
+
+    cfg = ctx.obj["config"]
+
+    console.print(Panel.fit("🔐 VaultWarden Credentials Setup", style="bold blue"))
+
+    # Get VaultWarden URL from config or prompt
+    url = cfg.passwords.vaultwarden_url
+    if not url:
+        url = typer.prompt("VaultWarden URL (e.g., https://vault.example.com)")
+
+        # Update config
+        cfg.passwords.vaultwarden_url = url
+        try:
+            cfg.ensure_data_dir()
+            config_path = cfg.general.data_dir / "config.toml"
+            cfg.save_to_file(config_path)
+            console.print(f"[dim]Saved URL to config: {config_path}[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not save URL to config: {e}[/yellow]")
+
+    # Get email
+    email = cfg.passwords.vaultwarden_email
+    if not email:
+        email = typer.prompt("VaultWarden Email")
+
+    # Get password (securely)
+    console.print("\n[dim]Enter VaultWarden password (input hidden):[/dim]")
+    password = getpass("Password: ")
+    password_confirm = getpass("Confirm password: ")
+
+    if password != password_confirm:
+        console.print("[red]❌ Passwords do not match[/red]")
+        raise typer.Exit(1)
+
+    # Optional: client ID and secret
+    console.print("\n[dim]OAuth client ID and secret (optional, press Enter to skip):[/dim]")
+    client_id = typer.prompt("Client ID", default="", show_default=False) or None
+    client_secret = None
+    if client_id:
+        client_secret = getpass("Client Secret: ") or None
+
+    # Store in keyring
+    try:
+        cred_store = CredentialStore()
+        cred_store.set_vaultwarden_credentials(email, password, client_id, client_secret)
+
+        console.print(f"\n[green]✅ VaultWarden credentials stored securely[/green]")
+        console.print(f"   Email: {email}")
+        console.print(f"   URL: {url}")
+        if client_id:
+            console.print(f"   Client ID: {client_id}")
+
+        console.print("\n[dim]💡 Test connection with:[/dim]")
+        console.print(f"   icloudbridge passwords-sync --apple-csv <path/to/passwords.csv>")
+
+    except Exception as e:
+        console.print(f"[red]❌ Failed to store credentials: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def passwords_delete_vaultwarden_credentials(
+    ctx: typer.Context,
+    email: str | None = typer.Option(None, "--email", help="VaultWarden email"),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation"),
+) -> None:
+    """Delete VaultWarden credentials from system keyring."""
+    from ..utils.credentials import CredentialStore
+
+    cfg = ctx.obj["config"]
+
+    # Get email from config if not provided
+    if not email:
+        email = cfg.passwords.vaultwarden_email
+        if not email:
+            console.print("[red]Email not specified and not found in config[/red]")
+            console.print("[dim]Use --email or set ICLOUDBRIDGE_PASSWORDS__VAULTWARDEN_EMAIL[/dim]")
+            raise typer.Exit(1)
+
+    if not yes:
+        confirmed = typer.confirm(f"Delete stored credentials for {email}?")
+        if not confirmed:
+            console.print("[dim]Cancelled[/dim]")
+            raise typer.Exit(0)
+
+    # Delete from keyring
+    try:
+        cred_store = CredentialStore()
+        if cred_store.delete_vaultwarden_credentials(email):
+            console.print(f"[green]✓ Credentials deleted for: {email}[/green]")
+        else:
+            console.print(f"[yellow]No credentials found for: {email}[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Failed to delete credentials: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@app.command()
+def passwords_sync(
+    ctx: typer.Context,
+    apple_csv: Path = typer.Option(..., help="Apple Passwords CSV export"),
+    output: Path | None = typer.Option(None, "-o", "--output", help="Output path for Apple CSV (default: data_dir/apple-import.csv)"),
+) -> None:
+    """Full auto-sync: Apple → VaultWarden (push) and VaultWarden → Apple (pull)."""
+    import asyncio
+
+    from ..core.passwords_sync import PasswordsSyncEngine
+    from ..sources.passwords.vaultwarden_api import VaultwardenAPIClient
+    from ..utils.credentials import CredentialStore
+    from ..utils.db import PasswordsDB
+
+    cfg = ctx.obj["config"]
+
+    console.print(Panel.fit("🔐 Password Full Auto-Sync", style="bold blue"))
+
+    # Validate Apple CSV exists
+    if not apple_csv.exists():
+        console.print(f"[red]Error: Apple CSV not found: {apple_csv}[/red]")
+        raise typer.Exit(1)
+
+    # Get VaultWarden configuration
+    url = cfg.passwords.vaultwarden_url
+    email = cfg.passwords.vaultwarden_email
+
+    if not url:
+        console.print("[red]VaultWarden URL not configured[/red]")
+        console.print("[dim]Set with: icloudbridge passwords-set-vaultwarden-credentials[/dim]")
+        raise typer.Exit(1)
+
+    if not email:
+        console.print("[red]VaultWarden email not configured[/red]")
+        console.print("[dim]Set with: icloudbridge passwords-set-vaultwarden-credentials[/dim]")
+        raise typer.Exit(1)
+
+    # Get credentials
+    credentials = cfg.passwords.get_vaultwarden_credentials()
+    if not credentials:
+        console.print("[red]VaultWarden credentials not found[/red]")
+        console.print("[dim]Set with: icloudbridge passwords-set-vaultwarden-credentials[/dim]")
+        raise typer.Exit(1)
+
+    # Initialize database
+    db_path = cfg.general.data_dir / "passwords.db"
+    db = PasswordsDB(db_path)
+
+    async def run_sync():
+        await db.initialize()
+
+        # Create and authenticate VaultWarden client
+        vw_client = VaultwardenAPIClient(
+            url=url,
+            email=credentials["email"],
+            password=credentials["password"],
+            client_id=credentials.get("client_id"),
+            client_secret=credentials.get("client_secret"),
+        )
+
+        console.print("[dim]Authenticating with VaultWarden...[/dim]")
+        await vw_client.authenticate()
+
+        # Run full sync
+        engine = PasswordsSyncEngine(db)
+        return await engine.sync(apple_csv, vw_client, output)
+
+    try:
+        stats = asyncio.run(run_sync())
+
+        # Display results
+        console.print("\n" + "=" * 60)
+        console.print("📤 [bold]Apple → VaultWarden (Push)[/bold]")
+        console.print("=" * 60)
+
+        push_table = Table(show_header=False)
+        push_table.add_column("Metric", style="cyan")
+        push_table.add_column("Count", justify="right", style="green")
+
+        push_stats = stats["push"]
+        push_table.add_row("Created", str(push_stats.get("created", 0)))
+        push_table.add_row("Updated", str(push_stats.get("updated", 0)))
+        push_table.add_row("Skipped (unchanged)", str(push_stats.get("skipped", 0)))
+        if push_stats.get("failed", 0) > 0:
+            push_table.add_row("Failed", str(push_stats["failed"]), style="red")
+
+        console.print(push_table)
+
+        console.print("\n" + "=" * 60)
+        console.print("📥 [bold]VaultWarden → Apple (Pull)[/bold]")
+        console.print("=" * 60)
+
+        pull_stats = stats["pull"]
+        new_entries = pull_stats.get("new_entries", 0)
+
+        if new_entries > 0:
+            console.print(f"[green]✅ Generated Apple CSV with {new_entries} new entries[/green]")
+            console.print(f"   File: {pull_stats['output_file']}")
+
+            console.print("\n[yellow]⚠️  Manual step required:[/yellow]")
+            console.print(f"   1. Open Passwords app")
+            console.print(f"   2. File → Import Passwords")
+            console.print(f"   3. Select: {pull_stats['output_file']}")
+            console.print(f"   4. Delete CSV file after import")
+        else:
+            console.print("[dim]No new passwords from VaultWarden[/dim]")
+
+        console.print("\n" + "=" * 60)
+        console.print(f"[bold green]✅ Sync complete in {stats['total_time']:.1f}s[/bold green]")
+        console.print("=" * 60)
+
+        # Security reminder
+        console.print(
+            "\n[yellow]⚠️  SECURITY REMINDER[/yellow]\n"
+            "   Delete CSV files after import:\n"
+            f"   → rm {apple_csv}"
+        )
+        if new_entries > 0:
+            console.print(f"   → rm {pull_stats['output_file']}")
+
+    except Exception as e:
+        console.print(f"[red]❌ Sync failed: {e}[/red]")
+        logging.exception("Sync failed")
+        raise typer.Exit(1)
+
+
+@app.command()
+def passwords_reset(
+    ctx: typer.Context,
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
+) -> None:
+    """Clear all password entries from database."""
+    import asyncio
+
+    from ..utils.db import PasswordsDB
+
+    cfg = ctx.obj["config"]
+
+    if not yes:
+        confirm = typer.confirm(
+            "⚠️  This will delete all password entries from the database. Continue?"
+        )
+        if not confirm:
+            console.print("[yellow]Cancelled[/yellow]")
+            raise typer.Exit(0)
+
+    db_path = cfg.general.data_dir / "passwords.db"
+    db = PasswordsDB(db_path)
+
+    async def reset():
+        await db.initialize()
+        await db.clear_all_entries()
+
+    try:
+        asyncio.run(reset())
+        console.print("[green]✅ Password database reset complete[/green]")
+    except Exception as e:
+        console.print(f"[red]Error resetting database: {e}[/red]")
+        logging.exception("Reset failed")
         raise typer.Exit(1)
 
 

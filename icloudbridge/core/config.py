@@ -111,6 +111,61 @@ class RemindersConfig(BaseSettings):
         return None
 
 
+class PasswordsConfig(BaseSettings):
+    """Configuration for Passwords synchronization with VaultWarden."""
+
+    enabled: bool = True
+    vaultwarden_url: str | None = None
+    vaultwarden_email: str | None = None
+    vaultwarden_password: str | None = None
+    vaultwarden_client_id: str | None = None
+    vaultwarden_client_secret: str | None = None
+
+    @field_validator("vaultwarden_url", mode="before")
+    @classmethod
+    def validate_url(cls, v: str | None) -> str | None:
+        """Validate VaultWarden URL format."""
+        if v and not v.startswith(("http://", "https://")):
+            raise ValueError("VaultWarden URL must start with http:// or https://")
+        return v
+
+    def get_vaultwarden_credentials(self) -> dict[str, str] | None:
+        """
+        Get VaultWarden credentials from keyring or config.
+
+        Priority:
+        1. System keyring (if email is configured)
+        2. Config/environment variable (fallback)
+
+        Returns:
+            Dictionary with 'email', 'password', 'client_id', 'client_secret' if found
+        """
+        # Try keyring first (most secure)
+        if self.vaultwarden_email:
+            try:
+                from icloudbridge.utils.credentials import CredentialStore
+
+                cred_store = CredentialStore()
+                credentials = cred_store.get_vaultwarden_credentials(self.vaultwarden_email)
+                if credentials:
+                    logger.debug("Using VaultWarden credentials from system keyring")
+                    return credentials
+            except Exception as e:
+                logger.warning(f"Failed to retrieve credentials from keyring: {e}")
+
+        # Fallback to config/env var
+        if self.vaultwarden_password:
+            logger.debug("Using VaultWarden credentials from config/environment")
+            return {
+                "email": self.vaultwarden_email or "",
+                "password": self.vaultwarden_password,
+                "client_id": self.vaultwarden_client_id or "icloudbridge",
+                "client_secret": self.vaultwarden_client_secret or "",
+            }
+
+        return None
+
+
 class GeneralConfig(BaseSettings):
     """General application configuration."""
 
@@ -149,6 +204,7 @@ class AppConfig(BaseSettings):
     general: GeneralConfig = Field(default_factory=GeneralConfig)
     notes: NotesConfig = Field(default_factory=NotesConfig)
     reminders: RemindersConfig = Field(default_factory=RemindersConfig)
+    passwords: PasswordsConfig = Field(default_factory=PasswordsConfig)
 
     @classmethod
     def load_from_file(cls, config_path: Path) -> "AppConfig":
