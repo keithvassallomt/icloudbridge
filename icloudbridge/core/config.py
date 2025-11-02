@@ -44,7 +44,21 @@ class RemindersConfig(BaseSettings):
     enabled: bool = True
     caldav_url: str | None = None
     caldav_username: str | None = None
+    caldav_password: str | None = None
     caldav_path: str = "/remote.php/dav/calendars/{username}/"
+
+    # Sync mode: "auto" (sync all lists) or "manual" (only specified mappings)
+    sync_mode: str = "auto"
+
+    # Calendar mappings: Apple Reminders list → CalDAV calendar
+    # Default: {"Reminders": "tasks"}
+    calendar_mappings: dict[str, str] = Field(
+        default_factory=lambda: {"Reminders": "tasks"}
+    )
+
+    # Legacy fields for backward compatibility (deprecated)
+    apple_calendar: str | None = None
+    caldav_calendar: str | None = None
     lists: dict[str, ListConfig] = Field(default_factory=dict)
 
     @field_validator("caldav_url", mode="before")
@@ -54,6 +68,47 @@ class RemindersConfig(BaseSettings):
         if v and not v.startswith(("http://", "https://")):
             raise ValueError("CalDAV URL must start with http:// or https://")
         return v
+
+    @field_validator("sync_mode", mode="before")
+    @classmethod
+    def validate_sync_mode(cls, v: str) -> str:
+        """Validate sync mode."""
+        valid_modes = {"auto", "manual"}
+        v = v.lower()
+        if v not in valid_modes:
+            raise ValueError(f"Sync mode must be one of: {', '.join(valid_modes)}")
+        return v
+
+    def get_caldav_password(self) -> str | None:
+        """
+        Get CalDAV password from keyring or config.
+
+        Priority:
+        1. System keyring (if username is configured)
+        2. Config/environment variable (fallback)
+
+        Returns:
+            Password if found, None otherwise
+        """
+        # Try keyring first (most secure)
+        if self.caldav_username:
+            try:
+                from icloudbridge.utils.credentials import CredentialStore
+
+                cred_store = CredentialStore()
+                password = cred_store.get_caldav_password(self.caldav_username)
+                if password:
+                    logger.debug("Using CalDAV password from system keyring")
+                    return password
+            except Exception as e:
+                logger.warning(f"Failed to retrieve password from keyring: {e}")
+
+        # Fallback to config/env var
+        if self.caldav_password:
+            logger.debug("Using CalDAV password from config/environment")
+            return self.caldav_password
+
+        return None
 
 
 class GeneralConfig(BaseSettings):
@@ -123,8 +178,8 @@ class AppConfig(BaseSettings):
 
         config_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Convert to dict, handling Path objects
-        config_dict = self.model_dump(mode="json")
+        # Convert to dict, handling Path objects and excluding None values
+        config_dict = self.model_dump(mode="json", exclude_none=True)
 
         with open(config_path, "wb") as f:
             tomli_w.dump(config_dict, f)

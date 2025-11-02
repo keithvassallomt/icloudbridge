@@ -62,6 +62,69 @@ class NotesSyncEngine:
         await self.markdown_adapter.ensure_folder_exists()
         logger.info("Sync engine initialized")
 
+    async def migrate_root_notes_to_folder(self) -> int:
+        """
+        Automatically migrate root-level markdown notes to the "Notes" folder.
+
+        This handles the case where NextCloud or other services allow notes
+        in the root folder, but Apple Notes requires all notes to be in folders.
+
+        Returns:
+            Number of notes migrated
+
+        Raises:
+            RuntimeError: If migration fails
+        """
+        try:
+            # List notes in base folder (root level)
+            root_notes = await self.markdown_adapter.list_notes(folder_name=None)
+
+            if not root_notes:
+                logger.debug("No root-level notes found, skipping migration")
+                return 0
+
+            logger.info(f"Found {len(root_notes)} note(s) in root folder, migrating to 'Notes' folder...")
+
+            # Ensure "Notes" subfolder exists
+            notes_folder = self.markdown_adapter.base_path / "Notes"
+            await self.markdown_adapter.ensure_folder_exists(notes_folder)
+
+            # Move each root note to "Notes" subfolder
+            migrated_count = 0
+            for note_path in root_notes:
+                try:
+                    # Construct destination path
+                    dest_path = notes_folder / note_path.name
+
+                    # Move the file
+                    note_path.rename(dest_path)
+                    logger.info(f"Migrated '{note_path.name}' to Notes folder")
+
+                    # Update database mapping if exists
+                    mapping = await self.db.get_mapping_by_remote_path(str(note_path))
+                    if mapping:
+                        await self.db.update_mapping(
+                            mapping["local_uuid"],
+                            str(dest_path),
+                            mapping["last_synced"],
+                        )
+                        logger.debug(f"Updated database mapping for '{note_path.name}'")
+
+                    migrated_count += 1
+
+                except Exception as e:
+                    logger.warning(f"Failed to migrate '{note_path.name}': {e}")
+                    continue
+
+            if migrated_count > 0:
+                logger.info(f"Successfully migrated {migrated_count} note(s) to 'Notes' folder")
+
+            return migrated_count
+
+        except Exception as e:
+            logger.error(f"Failed to migrate root notes: {e}")
+            raise RuntimeError(f"Failed to migrate root notes: {e}") from e
+
     async def sync_folder(
         self,
         folder_name: str,
@@ -417,7 +480,7 @@ class NotesSyncEngine:
             existing_note_name: Existing note name (if updating), None if creating
 
         Returns:
-            UUID of the note (only available for new notes from AppleScript return)
+            UUID of the note (for new notes)
             For updates, returns None since we already know the UUID
         """
         # Convert markdown to HTML for Apple Notes
@@ -434,16 +497,13 @@ class NotesSyncEngine:
             )
             return None  # UUID already known
         else:
-            # Create new note
-            await self.notes_adapter.create_note(
+            # Create new note and get its UUID
+            note_uuid, _mod_date = await self.notes_adapter.create_note(
                 folder_name=folder_name,
                 note_title=note_name,
                 body_html=body_html,
             )
-            # TODO: Get UUID from created note (AppleScript doesn't return it yet)
-            # For now, we'll need to fetch the note list again or modify AppleScript
-            # This is a known limitation - will address in future iteration
-            return "TEMP_UUID"  # Placeholder for now
+            return note_uuid
 
     async def list_folders(self) -> list[dict]:
         """
@@ -487,6 +547,24 @@ class NotesSyncEngine:
             "total_mappings": len(all_mappings),
             "folders": [],  # TODO: Break down by folder
         }
+
+    async def reset_database(self) -> None:
+        """
+        Reset the sync database by clearing all note mappings.
+
+        This does NOT delete any notes - it only clears the sync tracking database.
+        After reset, the next sync will treat all notes as "new".
+
+        Raises:
+            RuntimeError: If reset fails
+        """
+        try:
+            logger.warning("Resetting sync database - all mappings will be cleared")
+            await self.db.clear_all_mappings()
+            logger.info("Database reset complete")
+        except Exception as e:
+            logger.error(f"Failed to reset database: {e}")
+            raise RuntimeError(f"Failed to reset database: {e}") from e
 
     async def cleanup_orphaned_mappings(self) -> int:
         """

@@ -37,8 +37,9 @@ httpx = "^0.26.0"
 markdown-it-py = "^3.0.0"
 html-to-markdown = "^2.5.0"
 keyring = "^24.3.0"
-pyobjc-framework-EventKit = "^10.1"
-pyobjc-framework-Cocoa = "^10.1"
+pyobjc-framework-EventKit = "^12.0"
+pyobjc-framework-Cocoa = "^12.0"
+tomli-w = "^1.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

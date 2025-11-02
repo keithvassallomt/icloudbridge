@@ -59,34 +59,20 @@ CREATE_NOTE_SCRIPT = """
 on run argv
     set {note_folder, note_name, export_file} to {item 1, item 2, item 3} of argv
 
-    tell application "Finder"
-        set input_file to POSIX file export_file
-        set input_lines to read input_file as «class utf8» using delimiter linefeed
-    end tell
+    -- Read the entire HTML content from file
+    set html_content to read POSIX file export_file as «class utf8»
 
     tell application "Notes"
         tell folder note_folder
             set theNote to make new note
             tell theNote
-                set note_body to "<h1>" & note_name & "</h1>"
-                repeat with note_line in input_lines
-                    if note_line contains "<img" then
-                        -- Image Attachment: extract src and add to note
-                        set sed_extract to "echo '" & note_line & "' | sed -n 's/.*src=\\"\\([^\\"]*\\)\\".*/\\1/p'"
-                        set image_url to do shell script sed_extract
-                        set theFile to (image_url) as POSIX file
-                        make new attachment at end of attachments with data theFile
-                        set note_body to note_body & "<div><img style=\\"max-width: 100%; max-height: 100%;\\" src=\\"" & image_url & "\\"/><br></div>"
-                    else
-                        -- Normal line
-                        set note_body to note_body & note_line
-                    end if
-                end repeat
-                set body to note_body
+                -- Set body directly (title already in content from markdown converter)
+                set body to html_content
             end tell
         end tell
     end tell
-    return modification date of theNote
+    -- Return UUID and modification date separated by |||
+    return (id of theNote) & "|||" & (modification date of theNote)
 end run
 """
 
@@ -95,30 +81,15 @@ UPDATE_NOTE_SCRIPT = """
 on run argv
     set {note_folder, note_name, export_file} to {item 1, item 2, item 3} of argv
 
-    tell application "Finder"
-        set input_file to POSIX file export_file
-        set input_lines to read input_file as «class utf8» using delimiter linefeed
-    end tell
+    -- Read the entire HTML content from file
+    set html_content to read POSIX file export_file as «class utf8»
 
     tell application "Notes"
         tell folder note_folder
             set theNote to note note_name
             tell theNote
-                set note_body to "<h1>" & note_name & "</h1>"
-                repeat with note_line in input_lines
-                    if note_line contains "<img" then
-                        -- Image Attachment: extract src and add to note
-                        set sed_extract to "echo '" & note_line & "' | sed -n 's/.*src=\\"\\([^\\"]*\\)\\".*/\\1/p'"
-                        set image_url to do shell script sed_extract
-                        set theFile to (image_url) as POSIX file
-                        make new attachment at end of attachments with data theFile
-                        set note_body to note_body & "<div><img style=\\"max-width: 100%; max-height: 100%;\\" src=\\"" & image_url & "\\"/><br></div>"
-                    else
-                        -- Normal line
-                        set note_body to note_body & note_line
-                    end if
-                end repeat
-                set body to note_body
+                -- Set body directly (title already in content from markdown converter)
+                set body to html_content
             end tell
         end tell
     end tell
@@ -223,6 +194,7 @@ class NotesAdapter:
         Apple Notes returns dates in different formats depending on locale:
         - US format: "Monday, January 1, 2024 at 10:30:00 AM"
         - UK/EU format: "Monday, 18 February 2023 at 14:24:28"
+        - Sometimes prefixed with "date ": "date Sunday, 2 November 2025 at 09:44:05"
 
         Args:
             date_str: Date string from AppleScript
@@ -231,6 +203,9 @@ class NotesAdapter:
             Parsed datetime object
         """
         try:
+            # Remove "date " prefix if present
+            date_str = re.sub(r"^date\s+", "", date_str, flags=re.IGNORECASE)
+
             # Remove day of week prefix (e.g., "Monday, ")
             date_str = re.sub(r"^[A-Za-z]+,\s+", "", date_str)
 
@@ -393,7 +368,7 @@ class NotesAdapter:
 
     async def create_note(
         self, folder_name: str, note_title: str, body_html: str
-    ) -> datetime:
+    ) -> tuple[str, datetime]:
         """
         Create a new note in Apple Notes.
 
@@ -403,7 +378,7 @@ class NotesAdapter:
             body_html: HTML content for the note body
 
         Returns:
-            Modification date of the created note
+            Tuple of (note_uuid, modification_date)
 
         Raises:
             RuntimeError: If note creation fails
@@ -423,10 +398,16 @@ class NotesAdapter:
                 CREATE_NOTE_SCRIPT, folder_name, note_title, temp_path
             )
 
-            # Parse returned modification date
-            mod_date = self._parse_apple_date(result)
-            logger.info(f"Created note: {note_title} in {folder_name}")
-            return mod_date
+            # Parse returned UUID and modification date (separated by |||)
+            parts = result.split("|||")
+            if len(parts) != 2:
+                raise RuntimeError(f"Unexpected AppleScript return format: {result}")
+
+            note_uuid = parts[0].strip()
+            mod_date = self._parse_apple_date(parts[1].strip())
+
+            logger.info(f"Created note: {note_title} in {folder_name} (UUID: {note_uuid})")
+            return note_uuid, mod_date
 
         except Exception as e:
             logger.error(f"Failed to create note {note_title}: {e}")

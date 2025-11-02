@@ -81,6 +81,11 @@ def markdown_to_html(markdown: str, note_title: str = "", attachment_paths: dict
     # Convert Markdown to HTML
     html = md_parser.render(markdown)
 
+    # Strip the first <h1> tag (note title) - Apple Notes will display this in the body
+    # AND use it as the note title, causing duplication. We strip it here, and the
+    # note title will be set separately via the AppleScript note_title parameter.
+    html = re.sub(r"^<h1>.*?</h1>\s*", "", html, count=1, flags=re.DOTALL)
+
     # Handle image attachments - convert to file:// URLs for Apple Notes
     if attachment_paths:
         for md_ref, file_path in attachment_paths.items():
@@ -101,10 +106,6 @@ def markdown_to_html(markdown: str, note_title: str = "", attachment_paths: dict
             )
 
             html = pattern.sub(replacement, html)
-
-    # Add note title as first line (Apple Notes expects this)
-    if note_title:
-        html = f"<h1>{note_title}</h1>\n{html}"
 
     # Replace empty lines with <br> tags (Apple Notes rendering)
     lines = html.split("\n")

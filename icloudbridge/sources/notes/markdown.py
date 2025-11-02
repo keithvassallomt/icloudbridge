@@ -192,8 +192,8 @@ class MarkdownAdapter:
             # Convert HTML to Markdown
             markdown_body = html_to_markdown(body_html)
 
-            # Add note title as first line (standard markdown format)
-            markdown_content = f"# {note_name}\n\n{markdown_body}"
+            # Note: Title is already in the body from Apple Notes, don't duplicate it
+            markdown_content = markdown_body
 
             # Handle attachments if provided
             attachment_paths = {}
@@ -261,8 +261,8 @@ class MarkdownAdapter:
 
             # Otherwise, overwrite in place
             markdown_body = html_to_markdown(body_html)
-            actual_name = note_name if note_name else file_path.stem
-            markdown_content = f"# {actual_name}\n\n{markdown_body}"
+            # Note: Title is already in the body from Apple Notes, don't duplicate it
+            markdown_content = markdown_body
 
             # Handle attachments
             if attachments:

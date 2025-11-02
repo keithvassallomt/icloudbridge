@@ -13,6 +13,7 @@ from rich.table import Table
 
 from icloudbridge import __version__
 from icloudbridge.core.config import load_config
+from icloudbridge.core.reminders_sync import RemindersSyncEngine
 from icloudbridge.core.sync import NotesSyncEngine
 
 # Create Typer app
@@ -91,9 +92,41 @@ def config(
         "-s",
         help="Show current configuration",
     ),
+    init: bool = typer.Option(
+        False,
+        "--init",
+        "-i",
+        help="Create a default configuration file",
+    ),
 ) -> None:
     """Manage configuration."""
     cfg = ctx.obj["config"]
+
+    if init:
+        # Create default config file
+        config_path = cfg.default_config_path
+
+        if config_path.exists():
+            console.print(f"[yellow]Config file already exists:[/yellow] {config_path}")
+            overwrite = typer.confirm("Overwrite existing config?")
+            if not overwrite:
+                console.print("[dim]Config creation cancelled[/dim]")
+                raise typer.Exit(0)
+
+        # Create config with example values
+        try:
+            cfg.save_to_file(config_path)
+            console.print(f"[green]✓ Config file created:[/green] {config_path}")
+            console.print("\n[cyan]Example configuration:[/cyan]")
+            console.print(f"[dim]{config_path}[/dim]\n")
+            console.print("[yellow]Edit this file to configure iCloudBridge.[/yellow]")
+            console.print("[dim]See the documentation for all available options.[/dim]")
+        except ImportError:
+            console.print("[red]Error: tomli_w not installed[/red]")
+            console.print("[dim]Install with: pip install tomli-w[/dim]")
+            raise typer.Exit(1)
+
+        return
 
     if show:
         table = Table(title="iCloudBridge Configuration")
@@ -137,6 +170,9 @@ def config(
         )
         console.print(
             "\n[dim]Use --show to display full configuration[/dim]",
+        )
+        console.print(
+            "[dim]Use --init to create a default config file[/dim]",
         )
 
 
@@ -216,6 +252,12 @@ def notes_sync(
             db_path=cfg.db_path,
         )
         await sync_engine.initialize()
+
+        # Automatically migrate any root-level notes to "Notes" folder
+        if not dry_run:
+            migrated = await sync_engine.migrate_root_notes_to_folder()
+            if migrated > 0:
+                console.print(f"[yellow]Migrated {migrated} root-level note(s) to 'Notes' folder[/yellow]\n")
 
         # Get folders to sync
         if folder:
@@ -429,6 +471,53 @@ def notes_status(ctx: typer.Context) -> None:
         raise typer.Exit(1) from e
 
 
+@notes_app.command("reset")
+def notes_reset(
+    ctx: typer.Context,
+    confirm: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt",
+    ),
+) -> None:
+    """Reset the sync database (clears all note mappings)."""
+    cfg = ctx.obj["config"]
+
+    # Confirm with user
+    if not confirm:
+        console.print("[yellow]⚠ Warning: This will clear all note sync mappings![/yellow]")
+        console.print("[dim]Your notes will NOT be deleted, but the sync engine will treat")
+        console.print("everything as 'new' on the next sync.[/dim]\n")
+
+        response = typer.confirm("Are you sure you want to reset the database?")
+        if not response:
+            console.print("[dim]Reset cancelled[/dim]")
+            raise typer.Exit(0)
+
+    async def run_reset():
+        # Initialize sync engine
+        sync_engine = NotesSyncEngine(
+            markdown_base_path=cfg.notes.remote_folder or Path("/tmp"),
+            db_path=cfg.db_path,
+        )
+        await sync_engine.initialize()
+
+        # Clear all mappings
+        await sync_engine.reset_database()
+
+        console.print("[green]✓ Database reset successfully[/green]")
+        console.print("[dim]Run 'icloudbridge notes sync' to start fresh[/dim]")
+
+    # Run async reset
+    try:
+        asyncio.run(run_reset())
+    except Exception as e:
+        console.print(f"[red]Failed to reset database: {e}[/red]")
+        logging.exception("Reset operation failed")
+        raise typer.Exit(1) from e
+
+
 # Reminders subcommand group
 reminders_app = typer.Typer(help="Manage reminders synchronization")
 app.add_typer(reminders_app, name="reminders")
@@ -437,29 +526,398 @@ app.add_typer(reminders_app, name="reminders")
 @reminders_app.command("sync")
 def reminders_sync(
     ctx: typer.Context,
+    apple_calendar: Optional[str] = typer.Option(
+        None,
+        "--apple-calendar",
+        "-a",
+        help="Apple Reminders calendar/list to sync (manual mode)",
+    ),
+    caldav_calendar: Optional[str] = typer.Option(
+        None,
+        "--caldav-calendar",
+        "-c",
+        help="CalDAV calendar to sync with (manual mode)",
+    ),
+    auto: bool = typer.Option(
+        None,
+        "--auto/--no-auto",
+        help="Auto-discover and sync all calendars (default: from config)",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
         "-n",
         help="Preview changes without applying them",
     ),
+    skip_deletions: bool = typer.Option(
+        False,
+        "--skip-deletions",
+        help="Skip all deletion operations",
+    ),
+    deletion_threshold: int = typer.Option(
+        5,
+        "--deletion-threshold",
+        help="Max deletions before confirmation (use -1 to disable)",
+    ),
 ) -> None:
-    """Synchronize reminders."""
-    console.print("[yellow]Reminders sync not yet implemented[/yellow]")
+    """
+    Synchronize reminders between Apple Reminders and CalDAV.
+
+    By default (auto mode), syncs all calendars:
+    - "Reminders" → "tasks" (NextCloud default)
+    - Other Apple calendars → CalDAV calendars with matching names
+
+    Use --apple-calendar and --caldav-calendar for manual single-calendar sync.
+    """
+    cfg = ctx.obj["config"]
+
+    # Check if reminders sync is enabled
+    if not cfg.reminders.enabled:
+        console.print("[red]Reminders sync is not enabled in configuration[/red]")
+        console.print("[dim]Enable it in your config file or use environment variables[/dim]")
+        raise typer.Exit(1)
+
+    # Check if CalDAV is configured
+    if not cfg.reminders.caldav_url:
+        console.print("[red]CalDAV URL is not configured[/red]")
+        console.print("[dim]Set ICLOUDBRIDGE_REMINDERS__CALDAV_URL in your config[/dim]")
+        raise typer.Exit(1)
+
+    # Get password from keyring or config
+    caldav_password = cfg.reminders.get_caldav_password()
+
+    if not cfg.reminders.caldav_username or not caldav_password:
+        console.print("[red]CalDAV credentials not configured[/red]")
+        console.print("[dim]Set username with ICLOUDBRIDGE_REMINDERS__CALDAV_USERNAME[/dim]")
+        console.print("[dim]Set password with: icloudbridge reminders set-password[/dim]")
+        raise typer.Exit(1)
+
+    # Determine sync mode
+    use_auto = auto if auto is not None else (cfg.reminders.sync_mode == "auto")
+
+    # Manual mode: specific calendar pair
+    if apple_calendar and caldav_calendar:
+        use_auto = False
+
     if dry_run:
-        console.print("[dim]Dry run mode enabled[/dim]")
+        console.print("[cyan]DRY RUN MODE: Previewing changes only[/cyan]\n")
+
+    async def run_sync():
+        # Initialize sync engine
+        sync_engine = RemindersSyncEngine(
+            caldav_url=cfg.reminders.caldav_url,
+            caldav_username=cfg.reminders.caldav_username,
+            caldav_password=caldav_password,
+            db_path=cfg.db_path,
+        )
+        await sync_engine.initialize()
+
+        try:
+            if use_auto:
+                # Auto mode: discover and sync all calendars
+                console.print("[bold cyan]Auto Mode:[/bold cyan] Discovering and syncing all calendars\n")
+
+                all_stats = await sync_engine.discover_and_sync_all(
+                    base_mappings=cfg.reminders.calendar_mappings,
+                    dry_run=dry_run,
+                    skip_deletions=skip_deletions,
+                    deletion_threshold=deletion_threshold,
+                )
+
+                # Show summary table
+                table = Table(title="Sync Results")
+                table.add_column("Calendar Pair", style="cyan")
+                table.add_column("Created", style="green", justify="right")
+                table.add_column("Updated", style="yellow", justify="right")
+                table.add_column("Deleted", style="red", justify="right")
+                table.add_column("Unchanged", style="dim", justify="right")
+                table.add_column("Errors", style="red bold", justify="right")
+
+                total_stats = {
+                    "created": 0,
+                    "updated": 0,
+                    "deleted": 0,
+                    "unchanged": 0,
+                    "errors": 0,
+                }
+
+                for pair_name, stats in all_stats.items():
+                    created = stats['created_local'] + stats['created_remote']
+                    updated = stats['updated_local'] + stats['updated_remote']
+                    deleted = stats['deleted_local'] + stats['deleted_remote']
+
+                    total_stats["created"] += created
+                    total_stats["updated"] += updated
+                    total_stats["deleted"] += deleted
+                    total_stats["unchanged"] += stats['unchanged']
+                    total_stats["errors"] += stats['errors']
+
+                    table.add_row(
+                        pair_name,
+                        str(created),
+                        str(updated),
+                        str(deleted),
+                        str(stats['unchanged']),
+                        str(stats['errors']) if stats['errors'] > 0 else "-",
+                    )
+
+                console.print(table)
+                console.print(f"\n[bold green]Total:[/bold green] {total_stats['created']} created, "
+                             f"{total_stats['updated']} updated, {total_stats['deleted']} deleted, "
+                             f"{total_stats['unchanged']} unchanged")
+                if total_stats['errors'] > 0:
+                    console.print(f"[red]Errors: {total_stats['errors']}[/red]")
+
+            else:
+                # Manual mode: single calendar pair
+                # Use legacy config or CLI args
+                if not apple_calendar:
+                    apple_calendar = cfg.reminders.apple_calendar
+                if not caldav_calendar:
+                    caldav_calendar = cfg.reminders.caldav_calendar
+
+                if not apple_calendar or not caldav_calendar:
+                    console.print("[red]Manual mode requires --apple-calendar and --caldav-calendar[/red]")
+                    console.print("[dim]Or use auto mode with --auto (or set sync_mode=auto in config)[/dim]")
+                    raise typer.Exit(1)
+
+                console.print(f"[cyan]Manual Mode:[/cyan] Syncing {apple_calendar} → {caldav_calendar}\n")
+
+                stats = await sync_engine.sync_calendar(
+                    apple_calendar_name=apple_calendar,
+                    caldav_calendar_name=caldav_calendar,
+                    dry_run=dry_run,
+                    skip_deletions=skip_deletions,
+                    deletion_threshold=deletion_threshold,
+                )
+
+                # Show stats
+                console.print(f"\n[bold green]Sync completed![/bold green]")
+                console.print(f"  Created in Apple Reminders: {stats['created_local']}")
+                console.print(f"  Created in CalDAV: {stats['created_remote']}")
+                console.print(f"  Updated in Apple Reminders: {stats['updated_local']}")
+                console.print(f"  Updated in CalDAV: {stats['updated_remote']}")
+                console.print(f"  Deleted from Apple Reminders: {stats['deleted_local']}")
+                console.print(f"  Deleted from CalDAV: {stats['deleted_remote']}")
+                console.print(f"  Unchanged: {stats['unchanged']}")
+                if stats['errors'] > 0:
+                    console.print(f"  [red]Errors: {stats['errors']}[/red]")
+
+        except Exception as e:
+            console.print(f"[red]Sync failed: {e}[/red]")
+            raise typer.Exit(1)
+
+    asyncio.run(run_sync())
 
 
 @reminders_app.command("list")
 def reminders_list(ctx: typer.Context) -> None:
-    """List local reminder lists."""
-    console.print("[yellow]Reminders list not yet implemented[/yellow]")
+    """List Apple Reminders calendars/lists."""
+    cfg = ctx.obj["config"]
+
+    if not cfg.reminders.enabled:
+        console.print("[red]Reminders sync is not enabled in configuration[/red]")
+        raise typer.Exit(1)
+
+    async def list_calendars():
+        from icloudbridge.sources.reminders.eventkit import RemindersAdapter
+
+        adapter = RemindersAdapter()
+        await adapter.request_access()
+
+        calendars = await adapter.list_calendars()
+
+        if not calendars:
+            console.print("[yellow]No reminder calendars found[/yellow]")
+            return
+
+        table = Table(title="Apple Reminders Calendars")
+        table.add_column("Name", style="cyan", no_wrap=True)
+        table.add_column("UUID", style="dim")
+
+        for cal in calendars:
+            table.add_row(cal.title, cal.uuid)
+
+        console.print(table)
+
+    asyncio.run(list_calendars())
 
 
 @reminders_app.command("status")
 def reminders_status(ctx: typer.Context) -> None:
     """Show reminders sync status."""
-    console.print("[yellow]Reminders status not yet implemented[/yellow]")
+    cfg = ctx.obj["config"]
+
+    # Check configuration
+    console.print("[bold]Reminders Sync Status[/bold]\n")
+
+    if cfg.reminders.enabled:
+        console.print("✓ Reminders sync enabled", style="green")
+    else:
+        console.print("✗ Reminders sync disabled", style="red")
+        return
+
+    if cfg.reminders.caldav_url:
+        console.print(f"✓ CalDAV URL: {cfg.reminders.caldav_url}", style="green")
+    else:
+        console.print("✗ CalDAV URL not configured", style="red")
+
+    if cfg.reminders.caldav_username:
+        console.print(f"✓ CalDAV username: {cfg.reminders.caldav_username}", style="green")
+
+        # Check password source
+        password = cfg.reminders.get_caldav_password()
+        if password:
+            from icloudbridge.utils.credentials import CredentialStore
+
+            cred_store = CredentialStore()
+            if cred_store.has_caldav_password(cfg.reminders.caldav_username):
+                console.print("✓ CalDAV password: stored in system keyring (secure)", style="green")
+            else:
+                console.print(
+                    "✓ CalDAV password: configured in config/env (consider using keyring)",
+                    style="yellow",
+                )
+        else:
+            console.print("✗ CalDAV password not configured", style="red")
+    else:
+        console.print("✗ CalDAV username not configured", style="red")
+
+    if cfg.reminders.apple_calendar:
+        console.print(f"✓ Apple calendar: {cfg.reminders.apple_calendar}", style="green")
+    else:
+        console.print("ℹ Apple calendar not configured (can specify with --apple-calendar)", style="yellow")
+
+    if cfg.reminders.caldav_calendar:
+        console.print(f"✓ CalDAV calendar: {cfg.reminders.caldav_calendar}", style="green")
+    else:
+        console.print("ℹ CalDAV calendar not configured (can specify with --caldav-calendar)", style="yellow")
+
+    console.print("\n[dim]Status: Ready[/dim]")
+
+
+@reminders_app.command("reset")
+def reminders_reset(
+    ctx: typer.Context,
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt",
+    ),
+) -> None:
+    """Reset reminders sync database (clear all mappings)."""
+    cfg = ctx.obj["config"]
+
+    if not yes:
+        console.print("[yellow]This will clear all reminder sync mappings from the database.[/yellow]")
+        console.print("[dim]Your reminders will NOT be deleted, only the sync tracking.[/dim]\n")
+        confirmed = typer.confirm("Are you sure you want to continue?")
+        if not confirmed:
+            console.print("[dim]Cancelled[/dim]")
+            raise typer.Exit(0)
+
+    async def reset_db():
+        sync_engine = RemindersSyncEngine(
+            caldav_url=cfg.reminders.caldav_url or "http://dummy.url",
+            caldav_username=cfg.reminders.caldav_username or "dummy",
+            caldav_password=cfg.reminders.caldav_password or "dummy",
+            db_path=cfg.db_path,
+        )
+        await sync_engine.db.initialize()
+        await sync_engine.reset_database()
+        console.print("[green]✓ Database reset complete[/green]")
+
+    asyncio.run(reset_db())
+
+
+@reminders_app.command("set-password")
+def reminders_set_password(
+    ctx: typer.Context,
+    username: Optional[str] = typer.Option(
+        None,
+        "--username",
+        "-u",
+        help="CalDAV username (default: from config)",
+    ),
+) -> None:
+    """Store CalDAV password securely in system keyring."""
+    from icloudbridge.utils.credentials import CredentialStore
+
+    cfg = ctx.obj["config"]
+
+    # Use config username if not specified
+    if not username:
+        username = cfg.reminders.caldav_username
+        if not username:
+            console.print("[red]Username not specified and not found in config[/red]")
+            console.print("[dim]Use --username or set ICLOUDBRIDGE_REMINDERS__CALDAV_USERNAME[/dim]")
+            raise typer.Exit(1)
+
+    # Prompt for password (hidden input)
+    password = typer.prompt(f"Enter CalDAV password for {username}", hide_input=True)
+    password_confirm = typer.prompt("Confirm password", hide_input=True)
+
+    if password != password_confirm:
+        console.print("[red]Passwords do not match[/red]")
+        raise typer.Exit(1)
+
+    # Store in keyring
+    try:
+        cred_store = CredentialStore()
+        cred_store.set_caldav_password(username, password)
+        console.print(f"[green]✓ Password stored securely for user: {username}[/green]")
+        console.print("[dim]You can now remove CALDAV_PASSWORD from your config/environment[/dim]")
+    except Exception as e:
+        console.print(f"[red]Failed to store password: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@reminders_app.command("delete-password")
+def reminders_delete_password(
+    ctx: typer.Context,
+    username: Optional[str] = typer.Option(
+        None,
+        "--username",
+        "-u",
+        help="CalDAV username (default: from config)",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt",
+    ),
+) -> None:
+    """Delete CalDAV password from system keyring."""
+    from icloudbridge.utils.credentials import CredentialStore
+
+    cfg = ctx.obj["config"]
+
+    # Use config username if not specified
+    if not username:
+        username = cfg.reminders.caldav_username
+        if not username:
+            console.print("[red]Username not specified and not found in config[/red]")
+            console.print("[dim]Use --username or set ICLOUDBRIDGE_REMINDERS__CALDAV_USERNAME[/dim]")
+            raise typer.Exit(1)
+
+    if not yes:
+        confirmed = typer.confirm(f"Delete stored password for {username}?")
+        if not confirmed:
+            console.print("[dim]Cancelled[/dim]")
+            raise typer.Exit(0)
+
+    # Delete from keyring
+    try:
+        cred_store = CredentialStore()
+        if cred_store.delete_caldav_password(username):
+            console.print(f"[green]✓ Password deleted for user: {username}[/green]")
+        else:
+            console.print(f"[yellow]No password found for user: {username}[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Failed to delete password: {e}[/red]")
+        raise typer.Exit(1)
 
 
 def main_entry() -> None:

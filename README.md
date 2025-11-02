@@ -263,7 +263,7 @@ ruff check --fix .
 
 ### Notes
 - Only image and URL attachments supported (Apple Notes limitation)
-- Checkable todo items convert to bullets
+- **Checkable todo items convert to bullets** - Apple Notes does not expose checklist/TODO status via AppleScript or safe database access. For TODO tracking, use Apple Reminders instead (Phase 3). See [DEVELOPMENT.md](DEVELOPMENT.md#4-apple-notes-checkliststodo-items-cannot-be-synced) for detailed investigation.
 - Modification dates reset on local updates
 
 ### Reminders

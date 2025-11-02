@@ -65,3 +65,7 @@ config.toml
 *.dmg
 *.pkg
 *.app
+
+# Development files
+TODO.txt
+DEVELOPMENT.md
