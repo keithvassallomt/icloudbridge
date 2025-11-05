@@ -94,6 +94,8 @@ class ConfigResponse(BaseModel):
     notes_remote_folder: str | None = None
     reminders_caldav_url: str | None = None
     reminders_caldav_username: str | None = None
+    reminders_sync_mode: str | None = None
+    reminders_calendar_mappings: dict[str, str] = Field(default_factory=dict)
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
 
@@ -112,6 +114,8 @@ class ConfigUpdateRequest(BaseModel):
         default=None,
         description="Password will be stored in system keyring",
     )
+    reminders_sync_mode: str | None = None
+    reminders_calendar_mappings: dict[str, str] | None = None
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
     passwords_vaultwarden_password: str | None = Field(

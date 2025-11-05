@@ -332,9 +332,9 @@ export default function Settings() {
                 <Label>Sync Mode</Label>
                 <select
                   className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                  value={formData.reminders_mode || 'auto'}
+                  value={formData.reminders_sync_mode || 'auto'}
                   onChange={(e) =>
-                    setFormData({ ...formData, reminders_mode: e.target.value as any })
+                    setFormData({ ...formData, reminders_sync_mode: e.target.value as any })
                   }
                 >
                   <option value="auto">Auto (iCloud)</option>
@@ -342,7 +342,7 @@ export default function Settings() {
                 </select>
               </div>
 
-              {formData.reminders_mode === 'manual' && (
+              {formData.reminders_sync_mode === 'manual' && (
                 <div className="space-y-2">
                   <Label htmlFor="caldav-url">CalDAV Server URL</Label>
                   <Input

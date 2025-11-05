@@ -186,6 +186,63 @@ class RemindersSyncEngine:
                 stats["deleted_local"] = len(sync_plan["delete_local"])
                 stats["deleted_remote"] = len(sync_plan["delete_remote"])
                 stats["unchanged"] = len(sync_plan["unchanged"])
+
+                # Extract reminder metadata for tooltips (includes completion status, due dates, recurrence)
+                stats["created_local_items"] = [
+                    {
+                        "title": r.summary,
+                        "completed": r.completed,
+                        "due_date": r.due_date.isoformat() if r.due_date else None,
+                        "is_recurring": len(r.recurrence_rules) > 0,
+                    }
+                    for r in sync_plan["create_local"]
+                ]
+                stats["created_remote_items"] = [
+                    {
+                        "title": r.title,
+                        "completed": r.completed,
+                        "due_date": r.due_date.isoformat() if r.due_date else None,
+                        "is_recurring": len(r.recurrence_rules) > 0,
+                    }
+                    for r in sync_plan["create_remote"]
+                ]
+                stats["updated_local_items"] = [
+                    {
+                        "title": r.summary,
+                        "completed": r.completed,
+                        "due_date": r.due_date.isoformat() if r.due_date else None,
+                        "is_recurring": len(r.recurrence_rules) > 0,
+                    }
+                    for _, r, _ in sync_plan["update_local"]
+                ]
+                stats["updated_remote_items"] = [
+                    {
+                        "title": r.title,
+                        "completed": r.completed,
+                        "due_date": r.due_date.isoformat() if r.due_date else None,
+                        "is_recurring": len(r.recurrence_rules) > 0,
+                    }
+                    for _, r, _ in sync_plan["update_remote"]
+                ]
+                stats["deleted_local_items"] = [
+                    {
+                        "title": r.title,
+                        "completed": r.completed,
+                        "due_date": r.due_date.isoformat() if r.due_date else None,
+                        "is_recurring": len(r.recurrence_rules) > 0,
+                    }
+                    for _, r in sync_plan["delete_local"]
+                ]
+                stats["deleted_remote_items"] = [
+                    {
+                        "title": r.summary,
+                        "completed": r.completed,
+                        "due_date": r.due_date.isoformat() if r.due_date else None,
+                        "is_recurring": len(r.recurrence_rules) > 0,
+                    }
+                    for _, r in sync_plan["delete_remote"]
+                ]
+
                 return stats
 
             stats = await self._execute_sync_plan(

@@ -27,6 +27,8 @@ async def get_config(config: ConfigDep):
         notes_remote_folder=str(config.notes.remote_folder) if config.notes.remote_folder else None,
         reminders_caldav_url=config.reminders.caldav_url,
         reminders_caldav_username=config.reminders.caldav_username,
+        reminders_sync_mode=config.reminders.sync_mode,
+        reminders_calendar_mappings=config.reminders.calendar_mappings or {},
         passwords_vaultwarden_url=config.passwords.vaultwarden_url,
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
     )
@@ -45,12 +47,22 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
     Returns:
         Updated configuration
     """
+    # Debug: Log the entire update request
+    print(f"[DEBUG] Received config update request: {update.model_dump(exclude_none=False)}")
+    logger.info(f"Received config update request: {update.model_dump(exclude_none=False)}")
+
     credential_store = CredentialStore()
 
     # Update general config
     if update.data_dir is not None:
         from pathlib import Path
+        from icloudbridge.utils.settings_db import set_config_path
+
         config.general.data_dir = Path(update.data_dir).expanduser()
+        # Store config file location in database as single source of truth
+        config_path = config.general.data_dir / "config.toml"
+        set_config_path(config_path)
+        print(f"[DEBUG] Stored config path in DB: {config_path}")
 
     # Update notes config
     if update.notes_enabled is not None:
@@ -62,24 +74,42 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
     # Update reminders config
     if update.reminders_enabled is not None:
         config.reminders.enabled = update.reminders_enabled
+        logger.info(f"Updated reminders enabled: {update.reminders_enabled}")
     if update.reminders_caldav_url is not None:
         config.reminders.caldav_url = update.reminders_caldav_url
+        logger.info(f"Updated CalDAV URL: {update.reminders_caldav_url}")
     if update.reminders_caldav_username is not None:
         config.reminders.caldav_username = update.reminders_caldav_username
+        logger.info(f"Updated CalDAV username: {update.reminders_caldav_username}")
+    if update.reminders_sync_mode is not None:
+        config.reminders.sync_mode = update.reminders_sync_mode
+        logger.info(f"Updated sync mode: {update.reminders_sync_mode}")
+    if update.reminders_calendar_mappings is not None:
+        config.reminders.calendar_mappings = update.reminders_calendar_mappings
+        logger.info(f"Updated calendar mappings: {update.reminders_calendar_mappings}")
+
+    # Store password AFTER username is set
+    print(f"[DEBUG] Checking password field: reminders_caldav_password = {update.reminders_caldav_password!r}")
     if update.reminders_caldav_password is not None:
+        print("[DEBUG] Password field is not None, attempting to store...")
         # Store password in keyring
         try:
             username = update.reminders_caldav_username or config.reminders.caldav_username
+            print(f"[DEBUG] Using username for password storage: {username}")
             if not username:
                 raise ValueError("CalDAV username is required to store password")
             credential_store.set_caldav_password(username, update.reminders_caldav_password)
+            print(f"[DEBUG] CalDAV password stored in keyring for user: {username}")
             logger.info(f"CalDAV password stored in keyring for user: {username}")
         except Exception as e:
+            print(f"[DEBUG] Failed to store CalDAV password in keyring: {e}")
             logger.error(f"Failed to store CalDAV password in keyring: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to store CalDAV password: {str(e)}"
             )
+    else:
+        print("[DEBUG] Password field is None, skipping password storage")
 
     # Update passwords config
     if update.passwords_enabled is not None:
@@ -108,7 +138,11 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
 
     # Save config to disk
     try:
+        print(f"[DEBUG SAVE] Before save - username: {config.reminders.caldav_username}")
+        print(f"[DEBUG SAVE] Before save - URL: {config.reminders.caldav_url}")
+        print(f"[DEBUG SAVE] Saving to: {config.default_config_path}")
         config.save_to_file(config.default_config_path)
+        print(f"[DEBUG SAVE] Config saved successfully")
 
         # Clear the cached config so next request gets updated version
         from icloudbridge.api.dependencies import get_config
@@ -129,6 +163,8 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
         notes_remote_folder=str(config.notes.remote_folder) if config.notes.remote_folder else None,
         reminders_caldav_url=config.reminders.caldav_url,
         reminders_caldav_username=config.reminders.caldav_username,
+        reminders_sync_mode=config.reminders.sync_mode,
+        reminders_calendar_mappings=config.reminders.calendar_mappings or {},
         passwords_vaultwarden_url=config.passwords.vaultwarden_url,
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
     )
@@ -195,11 +231,32 @@ async def test_connection(service: str, config: ConfigDep):
     Returns:
         Connection test result
     """
+    # Clear cache and reload config from database
+    from icloudbridge.api.dependencies import get_config
+    from icloudbridge.core.config import load_config
+    from icloudbridge.utils.settings_db import get_config_path
+
+    get_config.cache_clear()
+
+    # Get config path from database - single source of truth
+    config_file = get_config_path()
+    print(f"[DEBUG TEST] Config path from DB: {config_file}")
+
+    if config_file and config_file.exists():
+        print(f"[DEBUG TEST] Loading from: {config_file}")
+        config = load_config(config_file)
+    else:
+        print(f"[DEBUG TEST] Config path not found or doesn't exist, using defaults")
+        config = get_config()
+
     if service == "reminders":
         try:
             from icloudbridge.sources.reminders.caldav_adapter import CalDAVAdapter
 
+            print(f"[DEBUG TEST] Config username: {config.reminders.caldav_username}")
+            print(f"[DEBUG TEST] Config URL: {config.reminders.caldav_url}")
             password = config.reminders.get_caldav_password()
+            print(f"[DEBUG TEST] Retrieved password: {'<exists>' if password else '<none>'}")
             if not password:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,

@@ -173,7 +173,8 @@ class GeneralConfig(BaseSettings):
     data_dir: Path = Field(
         default_factory=lambda: Path.home() / "Library" / "Application Support" / "iCloudBridge"
     )
-    config_file: Path | None = None
+    # Runtime metadata - not serialized to config file (stored in settings DB instead)
+    config_file: Path | None = Field(default=None, exclude=True)
 
     @field_validator("log_level", mode="before")
     @classmethod

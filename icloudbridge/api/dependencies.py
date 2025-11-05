@@ -33,7 +33,11 @@ def get_config() -> AppConfig:
         This is cached to avoid reloading config on every request.
         Cache is cleared on config updates via the API.
     """
-    return load_config()
+    # Load config from the path stored in settings database
+    from icloudbridge.utils.settings_db import get_config_path
+
+    config_path = get_config_path()
+    return load_config(config_path)
 
 
 async def get_notes_sync_engine(config: Annotated[AppConfig, Depends(get_config)]) -> NotesSyncEngine:

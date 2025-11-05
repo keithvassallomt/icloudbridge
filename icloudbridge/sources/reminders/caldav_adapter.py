@@ -97,7 +97,10 @@ class CalDAVAdapter:
 
     async def list_calendars(self) -> list[dict[str, str]]:
         """
-        List all available calendars on the server.
+        List all available todo/task calendars on the server.
+
+        Only returns calendars that support VTODO components (tasks/reminders).
+        Filters out event-only calendars (VEVENT).
 
         Returns:
             List of dicts with 'name' and 'url' keys
@@ -107,7 +110,32 @@ class CalDAVAdapter:
 
         result = []
         for cal in self.calendars:
-            result.append({"name": cal.name, "url": str(cal.url)})
+            # Check if this calendar supports VTODO (tasks/reminders)
+            # We only want todo-capable calendars for reminders sync
+            try:
+                # Get supported calendar component set
+                supported_components = await asyncio.to_thread(
+                    lambda: getattr(cal, 'get_supported_components', lambda: None)()
+                )
+
+                # If we can't determine the supported components, try to check if it has todos
+                if supported_components is None:
+                    # Try to fetch todos to see if this is a todo-capable calendar
+                    # Some servers don't advertise component types properly
+                    todos = await asyncio.to_thread(lambda: cal.todos(include_completed=True))
+                    # If we can fetch todos without error, assume it's todo-capable
+                    result.append({"name": cal.name, "url": str(cal.url)})
+                elif "VTODO" in supported_components or "vtodo" in str(supported_components).lower():
+                    # Calendar explicitly supports todos
+                    result.append({"name": cal.name, "url": str(cal.url)})
+                # else: skip this calendar as it doesn't support todos
+
+            except Exception as e:
+                # If we can't determine, log and skip
+                logger.debug(f"Skipping calendar '{cal.name}': {e}")
+                continue
+
+        logger.info(f"Found {len(result)} todo-capable calendars out of {len(self.calendars)} total")
         return result
 
     async def create_calendar(self, calendar_name: str) -> bool:
@@ -172,8 +200,8 @@ class CalDAVAdapter:
             logger.warning(f"Calendar not found: {calendar_name}")
             return []
 
-        # Fetch all TODOs - run blocking operation in thread pool
-        todos = await asyncio.to_thread(target_calendar.todos)
+        # Fetch all TODOs including completed ones - run blocking operation in thread pool
+        todos = await asyncio.to_thread(target_calendar.todos, include_completed=True)
         result = []
 
         for todo in todos:

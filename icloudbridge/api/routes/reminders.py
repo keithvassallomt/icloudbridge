@@ -18,33 +18,73 @@ router = APIRouter()
 
 @router.get("/calendars")
 async def list_calendars(engine: RemindersSyncEngineDep):
-    """List all Apple Reminders calendars.
+    """List all Apple Reminders lists.
 
     Returns:
-        List of calendar names with reminder counts
+        List of reminder list names with reminder counts
     """
     try:
-        # Get Apple calendars
+        # Get Apple Reminders lists
         from icloudbridge.sources.reminders.eventkit import RemindersAdapter
 
         adapter = RemindersAdapter()
         await adapter.request_access()
-        calendars = adapter.list_calendars()
+        calendars = await adapter.list_calendars()  # Fixed: added await
 
-        return {
-            "calendars": [
-                {
-                    "title": cal["title"],
-                    "calendar_identifier": cal["calendar_identifier"],
-                }
-                for cal in calendars
-            ]
-        }
+        # Count reminders for each list
+        result = []
+        for cal in calendars:
+            reminders = await adapter.get_reminders(calendar_id=cal.uuid)
+            result.append({
+                "name": cal.title,  # Fixed: use 'name' to match frontend
+                "reminder_count": len(reminders),  # Fixed: actually count reminders
+            })
+
+        return {"calendars": result}
     except Exception as e:
-        logger.error(f"Failed to list calendars: {e}")
+        logger.error(f"Failed to list reminder lists: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to list calendars: {str(e)}"
+            detail=f"Failed to list reminder lists: {str(e)}"
+        )
+
+
+@router.get("/caldav-calendars")
+async def list_caldav_calendars(config: ConfigDep):
+    """List all CalDAV calendars available on the configured server.
+
+    Returns:
+        List of CalDAV calendar names
+    """
+    try:
+        from icloudbridge.sources.reminders.caldav_adapter import CalDAVAdapter
+
+        # Get CalDAV credentials
+        caldav_password = config.reminders.get_caldav_password()
+        if not caldav_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="CalDAV credentials not configured. Please set up credentials first."
+            )
+
+        # Connect to CalDAV server
+        adapter = CalDAVAdapter(
+            config.reminders.caldav_url,
+            config.reminders.caldav_username,
+            caldav_password,
+        )
+        await adapter.connect()
+        calendars = await adapter.list_calendars()
+
+        # Return just the calendar names for autocomplete
+        return {"calendars": [cal["name"] for cal in calendars]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to list CalDAV calendars: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list CalDAV calendars: {str(e)}"
         )
 
 
@@ -78,27 +118,60 @@ async def sync_reminders(
         # Perform sync based on mode
         if request.auto:
             # Auto mode - sync all calendars
-            result = await engine.discover_and_sync_all(
+            per_calendar_results = await engine.discover_and_sync_all(
                 base_mappings=config.reminders.calendar_mappings,
                 dry_run=request.dry_run,
                 skip_deletions=request.skip_deletions,
                 deletion_threshold=request.deletion_threshold,
             )
+
+            # Return per-calendar stats with details
+            result = {
+                "calendars_synced": len(per_calendar_results),
+                "per_calendar": per_calendar_results,  # Keep detailed breakdown
+            }
+
         else:
-            # Manual mode - sync specific calendar pair
-            if not request.apple_calendar or not request.caldav_calendar:
+            # Manual mode - sync calendars based on saved mappings
+            mappings = config.reminders.calendar_mappings or {}
+
+            if not mappings:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="apple_calendar and caldav_calendar required for manual mode"
+                    detail="No calendar mappings configured for manual mode. Please configure mappings first."
                 )
 
-            result = await engine.sync_calendar(
-                apple_calendar_name=request.apple_calendar,
-                caldav_calendar_name=request.caldav_calendar,
-                dry_run=request.dry_run,
-                skip_deletions=request.skip_deletions,
-                deletion_threshold=request.deletion_threshold,
-            )
+            # Sync each mapped calendar pair
+            all_stats = {
+                "calendars_synced": 0,
+                "total_created": 0,
+                "total_updated": 0,
+                "total_deleted": 0,
+                "total_unchanged": 0,
+            }
+
+            for apple_calendar, caldav_calendar in mappings.items():
+                try:
+                    result = await engine.sync_calendar(
+                        apple_calendar_name=apple_calendar,
+                        caldav_calendar_name=caldav_calendar,
+                        dry_run=request.dry_run,
+                        skip_deletions=request.skip_deletions,
+                        deletion_threshold=request.deletion_threshold,
+                    )
+
+                    # Aggregate stats
+                    all_stats["calendars_synced"] += 1
+                    all_stats["total_created"] += result.get("created", 0)
+                    all_stats["total_updated"] += result.get("updated", 0)
+                    all_stats["total_deleted"] += result.get("deleted", 0)
+                    all_stats["total_unchanged"] += result.get("unchanged", 0)
+
+                except Exception as e:
+                    logger.error(f"Failed to sync {apple_calendar} → {caldav_calendar}: {e}")
+                    # Continue with other calendars even if one fails
+
+            result = all_stats
 
         duration = time.time() - start_time
 
@@ -110,8 +183,31 @@ async def sync_reminders(
             stats_json=json.dumps(result),
         )
 
+        # Create a descriptive message based on the sync results
+        calendars_count = result.get("calendars_synced", 0)
+
+        # Build message with statistics (handle both auto and manual mode results)
+        if "total_created" in result:
+            # Manual mode with aggregated stats
+            msg_parts = []
+            if result.get("total_created", 0) > 0:
+                msg_parts.append(f"created {result['total_created']}")
+            if result.get("total_updated", 0) > 0:
+                msg_parts.append(f"updated {result['total_updated']}")
+            if result.get("total_deleted", 0) > 0:
+                msg_parts.append(f"deleted {result['total_deleted']}")
+
+            if msg_parts:
+                message = f"Successfully synced {calendars_count} calendar(s): {', '.join(msg_parts)} reminder(s)"
+            else:
+                message = f"Successfully synced {calendars_count} calendar(s), no changes needed"
+        else:
+            # Auto mode or simple result
+            message = f"Successfully synced {calendars_count} calendar(s)"
+
         return {
             "status": "success",
+            "message": message,
             "duration_seconds": duration,
             "stats": result,
         }

@@ -31,11 +31,19 @@ export interface AppConfig {
   icloud_username: string;
   notes_enabled: boolean;
   notes_folder: string;
+  notes_remote_folder?: string;
   reminders_enabled: boolean;
-  reminders_mode: 'auto' | 'manual';
+  reminders_sync_mode?: 'auto' | 'manual';
   reminders_caldav_url?: string;
+  reminders_caldav_username?: string;
+  reminders_caldav_password?: string;
+  reminders_calendar_mappings?: Record<string, string>;
+  reminders_use_nextcloud?: boolean;
+  reminders_nextcloud_url?: string;
   passwords_enabled: boolean;
   passwords_vaultwarden_url?: string;
+  passwords_vaultwarden_email?: string;
+  passwords_vaultwarden_password?: string;
   data_dir: string;
   config_file?: string;
 }
@@ -60,9 +68,12 @@ export interface NotesSyncRequest {
 }
 
 export interface RemindersSyncRequest {
-  mode?: 'auto' | 'manual';
-  caldav_url?: string;
+  auto?: boolean;
+  apple_calendar?: string;
+  caldav_calendar?: string;
   dry_run?: boolean;
+  skip_deletions?: boolean;
+  deletion_threshold?: number;
 }
 
 export interface PasswordsSyncRequest {
@@ -151,6 +162,16 @@ export interface NotesFolder {
 export interface RemindersCalendar {
   name: string;
   reminder_count: number;
+}
+
+export interface RemindersStatusResponse {
+  enabled: boolean;
+  caldav_url: string | null;
+  caldav_username: string | null;
+  has_password: boolean;
+  sync_mode: string | null;
+  total_mappings: number;
+  last_sync: SyncLog | null;
 }
 
 // WebSocket Messages

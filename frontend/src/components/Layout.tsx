@@ -31,9 +31,11 @@ export default function Layout() {
   } = useAppStore();
   const { setActiveSync, clearActiveSync, addLog, addScheduleRun } = useSyncStore();
 
-  // WebSocket connection
+  // WebSocket connection for real-time updates (optional)
   const { isConnected } = useWebSocket({
     autoConnect: true,
+    maxReconnectAttempts: 3, // Reduce reconnection attempts to avoid noise
+    reconnectInterval: 10000, // Wait 10s between reconnection attempts
     onOpen: () => setWsConnected(true),
     onClose: () => setWsConnected(false),
     onSyncProgress: (service, data) => {

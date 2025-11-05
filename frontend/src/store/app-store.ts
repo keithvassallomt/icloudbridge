@@ -83,6 +83,7 @@ export const useAppStore = create<AppState>()(
         setIsFirstRun: (isFirstRun) => set({ isFirstRun }),
         wizardCompleted: false,
         setWizardCompleted: (completed) => set({ wizardCompleted: completed }),
+        resetWizard: () => set({ wizardCompleted: false, isFirstRun: true }),
 
         // WebSocket connection
         wsConnected: false,

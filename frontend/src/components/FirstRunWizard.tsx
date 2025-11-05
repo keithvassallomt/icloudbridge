@@ -38,7 +38,6 @@ export default function FirstRunWizard() {
     notes_enabled: true,
     notes_folder: '~/Documents/Notes',
     reminders_enabled: false,
-    reminders_mode: 'auto',
     reminders_use_nextcloud: true,
     reminders_nextcloud_url: '',
     reminders_caldav_url: '',
@@ -71,27 +70,75 @@ export default function FirstRunWizard() {
       setError(null);
       setTestResult(null);
 
-      // First update the config
-      await apiClient.updateConfig(formData);
+      // Build config update with only enabled services' credentials
+      const configUpdate: Partial<AppConfig> = {
+        notes_enabled: formData.notes_enabled,
+        notes_folder: formData.notes_folder,
+        notes_remote_folder: formData.notes_remote_folder,
+        data_dir: formData.data_dir,
+      };
 
-      // Determine which service to test based on what's enabled
-      let service = '';
+      // Only include reminders config if enabled
       if (formData.reminders_enabled) {
-        service = 'reminders';
-      } else if (formData.passwords_enabled) {
-        service = 'passwords';
+        configUpdate.reminders_enabled = true;
+        configUpdate.reminders_caldav_url = formData.reminders_caldav_url;
+        configUpdate.reminders_caldav_username = formData.reminders_caldav_username;
+        configUpdate.reminders_caldav_password = formData.reminders_caldav_password;
+        configUpdate.reminders_use_nextcloud = formData.reminders_use_nextcloud;
+        configUpdate.reminders_nextcloud_url = formData.reminders_nextcloud_url;
+      } else {
+        configUpdate.reminders_enabled = false;
       }
 
-      if (!service) {
+      // Only include passwords config if enabled
+      if (formData.passwords_enabled) {
+        configUpdate.passwords_enabled = true;
+        configUpdate.passwords_vaultwarden_url = formData.passwords_vaultwarden_url;
+        configUpdate.passwords_vaultwarden_email = formData.passwords_vaultwarden_email;
+        configUpdate.passwords_vaultwarden_password = formData.passwords_vaultwarden_password;
+      } else {
+        configUpdate.passwords_enabled = false;
+      }
+
+      // Save credentials for enabled services
+      console.log('Sending config update:', JSON.stringify(configUpdate, null, 2));
+      await apiClient.updateConfig(configUpdate);
+
+      // Determine which services to test based on what's enabled
+      const servicesToTest: string[] = [];
+      if (formData.reminders_enabled) {
+        servicesToTest.push('reminders');
+      }
+      if (formData.passwords_enabled) {
+        servicesToTest.push('passwords');
+      }
+
+      if (servicesToTest.length === 0) {
         setError('Please enable at least one service (Reminders or Passwords) to test connection');
         return;
       }
 
-      // Then test connection
-      const result = await apiClient.testConnection(service);
-      setTestResult(result);
+      // Test each enabled service
+      const results = await Promise.all(
+        servicesToTest.map(async (service) => {
+          const result = await apiClient.testConnection(service);
+          return { service, ...result };
+        })
+      );
 
-      if (result.success) {
+      // Check if all tests passed
+      const allSuccess = results.every(r => r.success);
+      const messages = results.map(r => {
+        const serviceName = r.service === 'reminders' ? 'CalDAV (Reminders)' : 'VaultWarden (Passwords)';
+        return `${serviceName}: ${r.message}`;
+      }).join('\n');
+
+      setTestResult({
+        success: allSuccess,
+        message: messages,
+      });
+
+      if (allSuccess) {
         // Auto-advance after successful test
         setTimeout(() => {
           handleNext();
@@ -111,10 +158,39 @@ export default function FirstRunWizard() {
       setLoading(true);
       setError(null);
 
-      // Save configuration including credentials
-      // The backend will automatically store passwords in keyring
+      // Build config update with only enabled services' credentials
+      const configUpdate: Partial<AppConfig> = {
+        notes_enabled: formData.notes_enabled,
+        notes_folder: formData.notes_folder,
+        notes_remote_folder: formData.notes_remote_folder,
+        data_dir: formData.data_dir,
+      };
+
+      // Only include reminders config if enabled
+      if (formData.reminders_enabled) {
+        configUpdate.reminders_enabled = true;
+        configUpdate.reminders_caldav_url = formData.reminders_caldav_url;
+        configUpdate.reminders_caldav_username = formData.reminders_caldav_username;
+        configUpdate.reminders_caldav_password = formData.reminders_caldav_password;
+        configUpdate.reminders_use_nextcloud = formData.reminders_use_nextcloud;
+        configUpdate.reminders_nextcloud_url = formData.reminders_nextcloud_url;
+      } else {
+        configUpdate.reminders_enabled = false;
+      }
+
+      // Only include passwords config if enabled
+      if (formData.passwords_enabled) {
+        configUpdate.passwords_enabled = true;
+        configUpdate.passwords_vaultwarden_url = formData.passwords_vaultwarden_url;
+        configUpdate.passwords_vaultwarden_email = formData.passwords_vaultwarden_email;
+        configUpdate.passwords_vaultwarden_password = formData.passwords_vaultwarden_password;
+      } else {
+        configUpdate.passwords_enabled = false;
+      }
+
+      // Save configuration - backend will automatically store passwords in keyring
       console.log('Saving configuration...');
-      const config = await apiClient.updateConfig(formData);
+      const config = await apiClient.updateConfig(configUpdate);
       console.log('Configuration saved successfully:', config);
       setConfig(config);
 
@@ -479,7 +555,14 @@ export default function FirstRunWizard() {
       case 'test':
         // Determine what services need testing
         const needsTest = formData.reminders_enabled || formData.passwords_enabled;
-        const testService = formData.reminders_enabled ? 'CalDAV (Reminders)' : 'VaultWarden (Passwords)';
+        let testService = '';
+        if (formData.reminders_enabled && formData.passwords_enabled) {
+          testService = 'CalDAV (Reminders) and VaultWarden (Passwords)';
+        } else if (formData.reminders_enabled) {
+          testService = 'CalDAV (Reminders)';
+        } else if (formData.passwords_enabled) {
+          testService = 'VaultWarden (Passwords)';
+        }
 
         return (
           <div className="space-y-4 py-4">

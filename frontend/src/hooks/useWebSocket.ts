@@ -161,7 +161,9 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
       };
 
       ws.onclose = () => {
-        console.log('WebSocket disconnected');
+        if (import.meta.env.DEV) {
+          console.log('WebSocket disconnected');
+        }
         setIsConnected(false);
         setIsConnecting(false);
         clearPingInterval();
@@ -170,19 +172,24 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
         // Attempt to reconnect
         if (reconnectAttemptsRef.current < maxReconnectAttempts) {
           reconnectAttemptsRef.current++;
-          console.log(
-            `Reconnecting... (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`
-          );
+          if (import.meta.env.DEV) {
+            console.log(
+              `WebSocket reconnecting... (attempt ${reconnectAttemptsRef.current}/${maxReconnectAttempts})`
+            );
+          }
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
           }, reconnectInterval);
         } else {
-          setError('Max reconnection attempts reached');
+          setError('WebSocket unavailable');
         }
       };
 
       ws.onerror = (event) => {
-        console.error('WebSocket error:', event);
+        // Only log WebSocket errors in development to avoid console noise
+        if (import.meta.env.DEV) {
+          console.warn('WebSocket connection failed (real-time updates unavailable)');
+        }
         setError('WebSocket connection error');
         onError?.(event);
       };

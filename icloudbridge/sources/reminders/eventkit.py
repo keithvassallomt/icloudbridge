@@ -77,14 +77,31 @@ class ReminderCalendar:
 class RemindersAdapter:
     """Adapter for interfacing with Apple Reminders via EventKit."""
 
+    # Class-level shared EventKit store to avoid hitting Apple's instance limit
+    _shared_store: EKEventStore | None = None
+    _access_granted: bool = False
+    _store_lock = asyncio.Lock()
+
     def __init__(self):
-        """Initialize the EventKit store."""
-        self.store = EKEventStore.alloc().init()
-        self._access_granted = False
+        """Initialize the EventKit store (reuses shared instance)."""
+        # Use the shared store instance to avoid creating too many EKEventStore instances
+        # Apple limits the number of EKEventStore instances per process
+        if RemindersAdapter._shared_store is None:
+            RemindersAdapter._shared_store = EKEventStore.alloc().init()
+            logger.debug("Created shared EKEventStore instance")
+
+        self.store = RemindersAdapter._shared_store
+
+    @classmethod
+    def reset_shared_store(cls) -> None:
+        """Reset the shared EventKit store. Useful for cleanup or testing."""
+        cls._shared_store = None
+        cls._access_granted = False
+        logger.debug("Reset shared EKEventStore instance")
 
     async def request_access(self) -> bool:
         """Request access to Reminders. Returns True if granted."""
-        if self._access_granted:
+        if RemindersAdapter._access_granted:
             return True
 
         # Create a future to wait for the callback
@@ -107,12 +124,12 @@ class RemindersAdapter:
         self.store.requestFullAccessToRemindersWithCompletion_(callback)
 
         # Wait for callback to complete
-        self._access_granted = await future
-        return self._access_granted
+        RemindersAdapter._access_granted = await future
+        return RemindersAdapter._access_granted
 
     async def list_calendars(self) -> list[ReminderCalendar]:
         """List all reminder calendars/lists."""
-        if not self._access_granted:
+        if not RemindersAdapter._access_granted:
             await self.request_access()
 
         calendars = self.store.calendarsForEntityType_(EKEntityTypeReminder)
@@ -139,7 +156,7 @@ class RemindersAdapter:
         Returns:
             ReminderCalendar object if created successfully, None otherwise
         """
-        if not self._access_granted:
+        if not RemindersAdapter._access_granted:
             await self.request_access()
 
         try:
@@ -199,7 +216,7 @@ class RemindersAdapter:
         Returns:
             List of EventKitReminder objects
         """
-        if not self._access_granted:
+        if not RemindersAdapter._access_granted:
             await self.request_access()
 
         # Find the calendar
@@ -346,7 +363,7 @@ class RemindersAdapter:
         Returns:
             The created EventKitReminder object
         """
-        if not self._access_granted:
+        if not RemindersAdapter._access_granted:
             await self.request_access()
 
         # Find the calendar
@@ -467,7 +484,7 @@ class RemindersAdapter:
         Returns:
             The updated EventKitReminder object
         """
-        if not self._access_granted:
+        if not RemindersAdapter._access_granted:
             await self.request_access()
 
         # Fetch the reminder by UUID
@@ -576,7 +593,7 @@ class RemindersAdapter:
         Returns:
             True if deleted successfully, False otherwise
         """
-        if not self._access_granted:
+        if not RemindersAdapter._access_granted:
             await self.request_access()
 
         # Fetch the reminder by UUID
