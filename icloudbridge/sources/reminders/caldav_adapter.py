@@ -383,6 +383,8 @@ class CalDAVAdapter:
         url: str | None = None,
         alarms: list[CalDAVAlarm] | None = None,
         recurrence_rules: list[CalDAVRecurrence] | None = None,
+        creation_date: datetime | None = None,
+        modification_date: datetime | None = None,
     ) -> CalDAVReminder | None:
         """
         Create a new TODO in the specified calendar.
@@ -398,6 +400,8 @@ class CalDAVAdapter:
             url: URL to attach
             alarms: List of alarms to add
             recurrence_rules: List of recurrence rules to add
+            creation_date: Creation date (defaults to now if not provided)
+            modification_date: Last modification date (defaults to now if not provided)
 
         Returns:
             Created CalDAVReminder object or None if failed
@@ -448,8 +452,14 @@ class CalDAVAdapter:
             todo.add("due", due_date)
         if url:
             todo.add("url", url)
-        todo.add("created", datetime.now())
-        todo.add("last-modified", datetime.now())
+
+        # Use provided timestamps or default to now
+        # This preserves Apple Reminder timestamps when syncing from Apple → CalDAV
+        created_time = creation_date if creation_date is not None else datetime.now()
+        modified_time = modification_date if modification_date is not None else datetime.now()
+
+        todo.add("created", created_time)
+        todo.add("last-modified", modified_time)
         todo.add("dtstamp", datetime.now())
 
         # Add alarms
@@ -486,9 +496,19 @@ class CalDAVAdapter:
         # Save to CalDAV server - run blocking operation in thread pool
         try:
             ical_data = cal.to_ical().decode("utf-8")
+
+            # Debug: Log what we're sending
+            logger.debug(f"Creating TODO with CREATED={created_time}, LAST-MODIFIED={modified_time}")
+
             created_todo = await asyncio.to_thread(target_calendar.save_todo, ical_data)
             logger.info(f"Created TODO: {summary}")
-            return self._parse_todo(created_todo)
+
+            # Debug: Check what the server actually saved
+            parsed = self._parse_todo(created_todo)
+            if parsed:
+                logger.debug(f"Server returned CREATED={parsed.created}, LAST-MODIFIED={parsed.last_modified}")
+
+            return parsed
         except Exception as e:
             logger.error(f"Failed to create TODO: {e}")
             return None
@@ -504,6 +524,7 @@ class CalDAVAdapter:
         url: str | None = None,
         alarms: list[CalDAVAlarm] | None = None,
         recurrence_rules: list[CalDAVRecurrence] | None = None,
+        modification_date: datetime | None = None,
     ) -> CalDAVReminder | None:
         """
         Update an existing TODO by its CalDAV URL.
@@ -518,6 +539,7 @@ class CalDAVAdapter:
             url: New URL (if provided)
             alarms: New list of alarms (if provided, replaces existing)
             recurrence_rules: New list of recurrence rules (if provided, replaces existing)
+            modification_date: Last modification date (defaults to now if not provided)
 
         Returns:
             Updated CalDAVReminder object or None if failed
@@ -599,15 +621,29 @@ class CalDAVAdapter:
                     vtodo.add("rrule", rrule_dict)
 
             # Update last-modified timestamp
-            vtodo["LAST-MODIFIED"] = datetime.now()
+            # Use provided timestamp or default to now
+            # This preserves Apple Reminder timestamps when syncing from Apple → CalDAV
+            modified_time = modification_date if modification_date is not None else datetime.now()
+            vtodo["LAST-MODIFIED"] = modified_time
 
             # Save changes - run blocking operation in thread pool
             ical_data = cal.to_ical().decode("utf-8")
+
+            # Debug: Log what we're sending
+            logger.debug(f"Setting LAST-MODIFIED to: {modified_time}")
+            logger.debug(f"iCalendar data being sent:\n{ical_data}")
+
             todo.data = ical_data
             await asyncio.to_thread(todo.save)
 
             logger.info(f"Updated TODO: {caldav_url}")
-            return self._parse_todo(todo)
+
+            # Debug: Re-fetch to see what the server actually saved
+            updated_todo = self._parse_todo(todo)
+            if updated_todo:
+                logger.debug(f"Server returned LAST-MODIFIED: {updated_todo.last_modified}")
+
+            return updated_todo
 
         except Exception as e:
             logger.error(f"Failed to update TODO: {e}")

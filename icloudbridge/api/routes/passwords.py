@@ -4,6 +4,7 @@ import json
 import logging
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
@@ -239,8 +240,8 @@ async def sync_passwords(
         # Update sync log with success
         await sync_logs_db.update_log(
             log_id=log_id,
-            status="success",
-            duration_seconds=duration,
+            status="completed",
+            duration_seconds=round(duration, 0),
             stats_json=json.dumps(result),
         )
 
@@ -264,8 +265,8 @@ async def sync_passwords(
         # Update sync log with error
         await sync_logs_db.update_log(
             log_id=log_id,
-            status="error",
-            duration_seconds=duration,
+            status="failed",
+            duration_seconds=round(duration, 0),
             error_message=error_msg,
         )
 
@@ -289,6 +290,54 @@ async def get_status(passwords_db: PasswordsDBDep, config: ConfigDep):
     await sync_logs_db.initialize()
     logs = await sync_logs_db.get_logs(service="passwords", limit=1)
 
+    # Transform last sync log to match frontend expectations
+    last_sync = None
+    if logs:
+        log = logs[0]
+        sync_stats = {}
+        if log.get("stats_json"):
+            try:
+                sync_stats = json.loads(log["stats_json"])
+            except json.JSONDecodeError:
+                pass
+
+        # Build message
+        message = ""
+        if log["status"] == "failed":
+            message = log.get("error_message", "Sync failed")
+        elif sync_stats:
+            push_stats = sync_stats.get("push", {})
+            pull_stats = sync_stats.get("pull", {})
+            msg_parts = []
+            if push_stats.get("pushed", 0) > 0:
+                msg_parts.append(f"pushed {push_stats['pushed']} to VaultWarden")
+            if pull_stats.get("pulled", 0) > 0:
+                msg_parts.append(f"pulled {pull_stats['pulled']} from VaultWarden")
+
+            if msg_parts:
+                message = f"Synced: {', '.join(msg_parts)}"
+            else:
+                message = "Synced, no changes needed"
+        else:
+            message = "Sync operation completed"
+
+        # Convert timestamps to ISO strings
+        started_at = datetime.fromtimestamp(log["started_at"]).isoformat() if log.get("started_at") else None
+        completed_at = datetime.fromtimestamp(log["completed_at"]).isoformat() if log.get("completed_at") else None
+
+        last_sync = {
+            "id": log["id"],
+            "service": log["service"],
+            "operation": log["sync_type"],
+            "status": log["status"],
+            "message": message,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_seconds": log.get("duration_seconds"),
+            "stats": sync_stats,
+            "error_message": log.get("error_message"),
+        }
+
     # Check if credentials are available
     credential_store = CredentialStore()
     has_credentials = credential_store.has_vaultwarden_credentials(config.passwords.vaultwarden_email or "")
@@ -300,7 +349,7 @@ async def get_status(passwords_db: PasswordsDBDep, config: ConfigDep):
         "has_credentials": has_credentials,
         "total_entries": stats.get("total", 0),
         "by_source": stats.get("by_source", {}),
-        "last_sync": logs[0] if logs else None,
+        "last_sync": last_sync,
     }
 
 
@@ -328,8 +377,56 @@ async def get_history(
         offset=offset,
     )
 
+    # Transform logs to match frontend expectations
+    transformed_logs = []
+    for log in logs:
+        # Parse stats from JSON
+        stats = {}
+        if log.get("stats_json"):
+            try:
+                stats = json.loads(log["stats_json"])
+            except json.JSONDecodeError:
+                pass
+
+        # Build descriptive message from stats
+        message = ""
+        if log["status"] == "failed":
+            message = log.get("error_message", "Sync failed")
+        elif stats:
+            push_stats = stats.get("push", {})
+            pull_stats = stats.get("pull", {})
+            msg_parts = []
+            if push_stats.get("pushed", 0) > 0:
+                msg_parts.append(f"pushed {push_stats['pushed']} to VaultWarden")
+            if pull_stats.get("pulled", 0) > 0:
+                msg_parts.append(f"pulled {pull_stats['pulled']} from VaultWarden")
+
+            if msg_parts:
+                message = f"Synced: {', '.join(msg_parts)}"
+            else:
+                message = "Synced, no changes needed"
+        else:
+            message = "Sync operation completed"
+
+        # Convert Unix timestamps (seconds) to ISO strings
+        started_at = datetime.fromtimestamp(log["started_at"]).isoformat() if log.get("started_at") else None
+        completed_at = datetime.fromtimestamp(log["completed_at"]).isoformat() if log.get("completed_at") else None
+
+        transformed_logs.append({
+            "id": log["id"],
+            "service": log["service"],
+            "operation": log["sync_type"],
+            "status": log["status"],
+            "message": message,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_seconds": log.get("duration_seconds"),
+            "stats": stats,
+            "error_message": log.get("error_message"),
+        })
+
     return {
-        "logs": logs,
+        "logs": transformed_logs,
         "limit": limit,
         "offset": offset,
     }

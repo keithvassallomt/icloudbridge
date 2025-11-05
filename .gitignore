@@ -69,3 +69,7 @@ config.toml
 # Development files
 TODO.txt
 DEVELOPMENT.md
+check_call_mum.py
+test_timestamp_sync.py
+next.md
+next.log

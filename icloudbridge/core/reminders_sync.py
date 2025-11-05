@@ -457,12 +457,14 @@ class RemindersSyncEngine:
                 )
 
                 # Add to database
+                # Use the created Apple reminder's modification date as last_sync
+                # This represents when the Apple reminder was created from the CalDAV source
                 await self.db.add_mapping(
                     local_uuid=created.uuid,
                     remote_uid=remote_todo.uid,
                     local_title=created.title,
                     remote_caldav_url=remote_todo.caldav_url,
-                    last_sync=datetime.now(),
+                    last_sync=created.modification_date,
                 )
 
                 stats["created_local"] += 1
@@ -493,16 +495,20 @@ class RemindersSyncEngine:
                     url=local_reminder.url,
                     alarms=alarms,
                     recurrence_rules=recurrence_rules,
+                    creation_date=local_reminder.creation_date,
+                    modification_date=local_reminder.modification_date,
                 )
 
                 if created:
                     # Add to database
+                    # Use the Apple reminder's modification date as last_sync
+                    # This represents the source modification time we synced to CalDAV
                     await self.db.add_mapping(
                         local_uuid=local_reminder.uuid,
                         remote_uid=created.uid,
                         local_title=local_reminder.title,
                         remote_caldav_url=created.caldav_url,
-                        last_sync=datetime.now(),
+                        last_sync=local_reminder.modification_date,
                     )
 
                     stats["created_remote"] += 1
@@ -537,11 +543,13 @@ class RemindersSyncEngine:
                 )
 
                 # Update database timestamp
+                # Use the updated Apple reminder's modification date as last_sync
+                # This represents when the Apple reminder was updated from the CalDAV source
                 await self.db.update_mapping(
                     local_uuid=local_uuid,
                     remote_uid=remote_todo.uid,
                     remote_caldav_url=remote_todo.caldav_url,
-                    last_sync=datetime.now(),
+                    last_sync=updated.modification_date,
                 )
 
                 stats["updated_local"] += 1
@@ -570,15 +578,18 @@ class RemindersSyncEngine:
                     url=local_reminder.url,
                     alarms=alarms,
                     recurrence_rules=recurrence_rules,
+                    modification_date=local_reminder.modification_date,
                 )
 
                 if updated:
                     # Update database timestamp
+                    # Use the Apple reminder's modification date as last_sync
+                    # This represents the source modification time we synced to CalDAV
                     await self.db.update_mapping(
                         local_uuid=local_reminder.uuid,
                         remote_uid=remote_uid,
                         remote_caldav_url=updated.caldav_url,
-                        last_sync=datetime.now(),
+                        last_sync=local_reminder.modification_date,
                     )
 
                     stats["updated_remote"] += 1

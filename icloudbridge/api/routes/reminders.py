@@ -3,6 +3,7 @@
 import json
 import logging
 import time
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -102,15 +103,18 @@ async def sync_reminders(
     Returns:
         Sync results with statistics
     """
-    # Create sync log entry
-    sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
-    await sync_logs_db.initialize()
+    # Create sync log entry ONLY if not a dry run
+    log_id = None
+    sync_logs_db = None
+    if not request.dry_run:
+        sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
+        await sync_logs_db.initialize()
 
-    log_id = await sync_logs_db.create_log(
-        service="reminders",
-        sync_type="manual",
-        status="running",
-    )
+        log_id = await sync_logs_db.create_log(
+            service="reminders",
+            sync_type="manual",
+            status="running",
+        )
 
     start_time = time.time()
 
@@ -175,13 +179,14 @@ async def sync_reminders(
 
         duration = time.time() - start_time
 
-        # Update sync log with success
-        await sync_logs_db.update_log(
-            log_id=log_id,
-            status="success",
-            duration_seconds=duration,
-            stats_json=json.dumps(result),
-        )
+        # Update sync log with success (only if not dry run)
+        if sync_logs_db and log_id:
+            await sync_logs_db.update_log(
+                log_id=log_id,
+                status="completed",
+                duration_seconds=round(duration, 0),
+                stats_json=json.dumps(result),
+            )
 
         # Create a descriptive message based on the sync results
         calendars_count = result.get("calendars_synced", 0)
@@ -218,13 +223,14 @@ async def sync_reminders(
 
         logger.error(f"Reminders sync failed: {error_msg}")
 
-        # Update sync log with error
-        await sync_logs_db.update_log(
-            log_id=log_id,
-            status="error",
-            duration_seconds=duration,
-            error_message=error_msg,
-        )
+        # Update sync log with error (only if not dry run)
+        if sync_logs_db and log_id:
+            await sync_logs_db.update_log(
+                log_id=log_id,
+                status="failed",
+                duration_seconds=round(duration, 0),
+                error_message=error_msg,
+            )
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -246,6 +252,58 @@ async def get_status(reminders_db: RemindersDBDep, config: ConfigDep):
     await sync_logs_db.initialize()
     logs = await sync_logs_db.get_logs(service="reminders", limit=1)
 
+    # Transform last sync log to match frontend expectations
+    last_sync = None
+    if logs:
+        log = logs[0]
+        sync_stats = {}
+        if log.get("stats_json"):
+            try:
+                sync_stats = json.loads(log["stats_json"])
+            except json.JSONDecodeError:
+                pass
+
+        # Build message
+        message = ""
+        if log["status"] == "failed":
+            message = log.get("error_message", "Sync failed")
+        elif sync_stats:
+            calendars_count = sync_stats.get("calendars_synced", 0)
+            if "total_created" in sync_stats:
+                msg_parts = []
+                if sync_stats.get("total_created", 0) > 0:
+                    msg_parts.append(f"created {sync_stats['total_created']}")
+                if sync_stats.get("total_updated", 0) > 0:
+                    msg_parts.append(f"updated {sync_stats['total_updated']}")
+                if sync_stats.get("total_deleted", 0) > 0:
+                    msg_parts.append(f"deleted {sync_stats['total_deleted']}")
+
+                if msg_parts:
+                    message = f"Synced {calendars_count} calendar(s): {', '.join(msg_parts)} reminder(s)"
+                else:
+                    message = f"Synced {calendars_count} calendar(s), no changes needed"
+            else:
+                message = f"Synced {calendars_count} calendar(s)"
+        else:
+            message = "Sync operation completed"
+
+        # Convert timestamps to ISO strings
+        started_at = datetime.fromtimestamp(log["started_at"]).isoformat() if log.get("started_at") else None
+        completed_at = datetime.fromtimestamp(log["completed_at"]).isoformat() if log.get("completed_at") else None
+
+        last_sync = {
+            "id": log["id"],
+            "service": log["service"],
+            "operation": log["sync_type"],
+            "status": log["status"],
+            "message": message,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_seconds": log.get("duration_seconds"),
+            "stats": sync_stats,
+            "error_message": log.get("error_message"),
+        }
+
     # Check if password is available
     credential_store = CredentialStore()
     has_password = credential_store.has_caldav_password(config.reminders.caldav_username or "")
@@ -257,7 +315,7 @@ async def get_status(reminders_db: RemindersDBDep, config: ConfigDep):
         "has_password": has_password,
         "sync_mode": config.reminders.sync_mode,
         "total_mappings": stats.get("total", 0),
-        "last_sync": logs[0] if logs else None,
+        "last_sync": last_sync,
     }
 
 
@@ -285,8 +343,63 @@ async def get_history(
         offset=offset,
     )
 
+    # Transform logs to match frontend expectations
+    transformed_logs = []
+    for log in logs:
+        # Parse stats from JSON
+        stats = {}
+        if log.get("stats_json"):
+            try:
+                stats = json.loads(log["stats_json"])
+            except json.JSONDecodeError:
+                pass
+
+        # Build descriptive message from stats
+        message = ""
+        if log["status"] == "failed":
+            message = log.get("error_message", "Sync failed")
+        elif stats:
+            # Build message from stats
+            calendars_count = stats.get("calendars_synced", 0)
+            if "total_created" in stats:
+                # Manual mode with aggregated stats
+                msg_parts = []
+                if stats.get("total_created", 0) > 0:
+                    msg_parts.append(f"created {stats['total_created']}")
+                if stats.get("total_updated", 0) > 0:
+                    msg_parts.append(f"updated {stats['total_updated']}")
+                if stats.get("total_deleted", 0) > 0:
+                    msg_parts.append(f"deleted {stats['total_deleted']}")
+
+                if msg_parts:
+                    message = f"Synced {calendars_count} calendar(s): {', '.join(msg_parts)} reminder(s)"
+                else:
+                    message = f"Synced {calendars_count} calendar(s), no changes needed"
+            else:
+                # Auto mode or simple result
+                message = f"Synced {calendars_count} calendar(s)"
+        else:
+            message = "Sync operation completed"
+
+        # Convert Unix timestamps (seconds) to ISO strings
+        started_at = datetime.fromtimestamp(log["started_at"]).isoformat() if log.get("started_at") else None
+        completed_at = datetime.fromtimestamp(log["completed_at"]).isoformat() if log.get("completed_at") else None
+
+        transformed_logs.append({
+            "id": log["id"],
+            "service": log["service"],
+            "operation": log["sync_type"],
+            "status": log["status"],
+            "message": message,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_seconds": log.get("duration_seconds"),
+            "stats": stats,
+            "error_message": log.get("error_message"),
+        })
+
     return {
-        "logs": logs,
+        "logs": transformed_logs,
         "limit": limit,
         "offset": offset,
     }
