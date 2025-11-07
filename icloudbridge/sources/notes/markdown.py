@@ -16,6 +16,7 @@ import aiofiles
 import aiofiles.os
 
 from icloudbridge.utils.converters import (
+    contains_markdown_checklist,
     extract_attachment_references,
     html_to_markdown,
     markdown_to_html,
@@ -40,6 +41,15 @@ class MarkdownNote:
         """Initialize attachments list if None."""
         if self.attachments is None:
             self.attachments = []
+
+
+@dataclass
+class PreparedAppleNote:
+    name: str
+    html_content: str
+    markdown_body: str
+    has_checklist: bool
+    attachment_paths: dict[str, Path]
 
 
 class MarkdownAdapter:
@@ -342,7 +352,7 @@ class MarkdownAdapter:
             logger.error(f"Failed to copy attachment {source_path}: {e}")
             raise RuntimeError(f"Failed to copy attachment '{source_path.name}': {e}") from e
 
-    async def get_note_for_apple_notes(self, file_path: Path) -> tuple[str, str, dict[str, Path]]:
+    async def get_note_for_apple_notes(self, file_path: Path) -> PreparedAppleNote:
         """
         Read a markdown file and prepare it for Apple Notes.
 
@@ -352,10 +362,7 @@ class MarkdownAdapter:
             file_path: Path to markdown file
 
         Returns:
-            Tuple of (note_name, body_html, attachment_paths)
-            - note_name: Name extracted from file
-            - body_html: HTML converted from markdown
-            - attachment_paths: Dict mapping markdown refs to file paths
+            PreparedAppleNote describing the converted HTML plus metadata
 
         Raises:
             RuntimeError: If reading/conversion fails
@@ -374,12 +381,20 @@ class MarkdownAdapter:
                     if attachment_file.exists():
                         attachment_paths[ref] = attachment_file
 
-            # Convert markdown to HTML
-            body_html = markdown_to_html(
-                note.body_markdown, note.name, attachment_paths if attachment_paths else None
+            has_checklist = contains_markdown_checklist(note.body_markdown)
+            html_body = markdown_to_html(
+                note.body_markdown,
+                note.name,
+                attachment_paths if attachment_paths else None,
             )
 
-            return note.name, body_html, attachment_paths
+            return PreparedAppleNote(
+                name=note.name,
+                html_content=html_body,
+                markdown_body=note.body_markdown,
+                has_checklist=has_checklist,
+                attachment_paths=attachment_paths,
+            )
 
         except Exception as e:
             logger.error(f"Failed to prepare note for Apple Notes {file_path}: {e}")

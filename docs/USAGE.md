@@ -105,6 +105,17 @@ icloudbridge notes sync [OPTIONS]
 | `--deletion-threshold` | | INT | Max deletions before confirmation (-1 to disable) | 5 |
 | `--rich-notes / --no-rich-notes` | | flag | After sync, export read-only RichNotes snapshots | false |
 
+> **Note**: The sync engine now **always** copies the Apple Notes database and feeds the Ruby-based
+> rich-notes ripper to obtain HTML bodies. Grant `tools/note_db_copy/copy_note_db.py` Full Disk
+> Access on macOS. The `--rich-notes` flag simply adds an extra read-only `RichNotes/` export and no
+> longer toggles the sync source. The system "Recently Deleted" folder is ignored automatically and
+> cannot be synced. If you install the `CheckListBuilder` Shortcut (override with
+> `ICLOUDBRIDGE_NOTES__CHECKLIST_SHORTCUT`) and the companion `NoteContentBuilder` Shortcut
+> (override with `ICLOUDBRIDGE_NOTES__CONTENT_SHORTCUT`), iCloudBridge routes Markdown checklists and
+> non-checklist content through those shortcuts to produce real Apple Notes checklists. This requires
+> the macOS `shortcuts` CLI; if the shortcuts are missing or fail, we gracefully fall back to plain
+> bullets.
+
 **Examples**:
 
 ```bash
@@ -138,6 +149,7 @@ export ICLOUDBRIDGE_NOTES__REMOTE_FOLDER=~/Nextcloud/Notes
 - Root-level notes auto-migrated to "Notes" folder (Apple Notes requires folders)
 - SQLite database tracks sync state (UUID → path mappings)
 - First `<h1>` tag is used as note title (to avoid duplication)
+- Rich bodies and checklists come from the ripper snapshot (`icloudbridge/core/rich_notes_capture.py`)
 
 ### `notes list`
 

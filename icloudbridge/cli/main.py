@@ -440,6 +440,15 @@ def notes_sync(
 
         console.print(table)
 
+        if sync_engine.shortcut_calls:
+            console.print("\n[dim]Shortcut invocations this run:[/dim]")
+            for entry in sync_engine.shortcut_calls:
+                temp_info = entry.get("temp_path") or "-"
+                console.print(
+                    f"  - {entry['shortcut']} (folder='{entry['folder']}', note='{entry['title']}', temp={temp_info})",
+                    style="dim",
+                )
+
         if dry_run:
             console.print("\n[yellow]This was a dry run. No changes were made.[/yellow]")
             console.print("[dim]Run without --dry-run to apply these changes.[/dim]")

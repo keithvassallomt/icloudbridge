@@ -104,10 +104,10 @@ icloudbridge config --show
 ### 3. Synchronize
 
 ```bash
-# Sync notes
+# Sync notes (rich export is now the default source)
 icloudbridge notes sync
 
-# Sync notes and export rich snapshots (read-only)
+# Sync notes and also export a read-only RichNotes/ snapshot
 icloudbridge notes sync --rich-notes
 
 # Sync notes (dry run)
@@ -122,6 +122,18 @@ icloudbridge notes list
 # List reminder lists
 icloudbridge reminders list
 ```
+
+Every notes sync now stages content through the Ruby-based rich-notes ripper, which copies
+`NoteStore.sqlite` via `tools/note_db_copy/copy_note_db.py`. Make sure that helper script has Full
+Disk Access on macOS; the legacy plain AppleScript extraction flow has been removed. Apple Notes'
+"Recently Deleted" system folder is automatically ignored and cannot be synced. If you want
+Markdown checklists (`- [ ] Task`) to stay as true Apple Notes checklists when syncing back, install
+the `CheckListBuilder` Shortcut (or point `ICLOUDBRIDGE_NOTES__CHECKLIST_SHORTCUT` to your own) plus
+the companion `NoteContentBuilder` Shortcut (override via
+`ICLOUDBRIDGE_NOTES__CONTENT_SHORTCUT`). iCloudBridge will route checklist blocks through
+CheckListBuilder, feed the rest of the note through NoteContentBuilder, splice the RTF output
+together, and hand the combined RTF to Apple Notes. The macOS `shortcuts` CLI must be available for
+both shortcuts.
 
 ## Architecture
 

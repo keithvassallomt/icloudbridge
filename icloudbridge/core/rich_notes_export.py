@@ -5,15 +5,15 @@ import asyncio
 import json
 import logging
 import shutil
-import subprocess
-import tempfile
 from pathlib import Path
 from typing import Any
-import re
-from html import unescape
 
-from icloudbridge.scripts.rich_notes import run_rich_ripper
-from icloudbridge.utils.converters import html_to_markdown
+from icloudbridge.core.rich_notes_capture import (
+    RichNotesCapture,
+    extract_note_content,
+    lookup_note_entry,
+)
+from icloudbridge.utils.converters import html_to_markdown, normalize_checklists_html
 from icloudbridge.utils.db import NotesDB
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ class RichNotesExporter:
         self.notes_db_path = notes_db_path
         self.remote_folder = remote_folder
         self.repo_root = Path(__file__).resolve().parents[2]
+        self._capture = RichNotesCapture(repo_root=self.repo_root)
 
     async def _load_mappings(self) -> list[dict[str, Any]]:
         db = NotesDB(self.notes_db_path)
@@ -72,7 +73,7 @@ class RichNotesExporter:
         return body
 
     def _convert_to_markdown(self, html: str, note_entry: dict[str, Any], original_path: Path) -> str:
-        html = self._prepare_checklist_html(html)
+        html = normalize_checklists_html(html)
         markdown = html_to_markdown(html)
         checkbox_items = self._extract_checklist_items(note_entry)
 
@@ -85,28 +86,6 @@ class RichNotesExporter:
             return self._merge_checklists(markdown, checkbox_items)
 
         return markdown
-
-    @staticmethod
-    def _prepare_checklist_html(html: str) -> str:
-        """Rewrite checklist list items so markdown shows - [x]/[ ]."""
-
-        def replace_li(match: re.Match[str]) -> str:
-            classes = match.group("classes") or ""
-            inner = match.group("inner") or ""
-            class_tokens = {token.strip() for token in classes.split() if token.strip()}
-            marker = "[x] " if "checked" in class_tokens else "[ ] "
-            # Strip inner HTML tags to keep plaintext content inline
-            text = re.sub(r"<[^>]+>", " ", inner)
-            text = unescape(text)
-            text = re.sub(r"\s+", " ", text).strip()
-            logger.debug("Checklist item raw=%r cleaned=%r", inner[:80], text)
-            return f"<li>{marker}{text}</li>"
-
-        pattern = re.compile(
-            r"<li\s+class=\"(?P<classes>[^\"]*)\"[^>]*>(?P<inner>.*?)</li>",
-            re.DOTALL,
-        )
-        return pattern.sub(replace_li, html)
 
     def _merge_checklists(self, markdown: str, checkbox_items: list[tuple[str, str]]) -> str:
         if not checkbox_items:
@@ -198,25 +177,14 @@ class RichNotesExporter:
             logger.warning("No note mappings exist; skipping rich notes export")
             return
 
-        with tempfile.TemporaryDirectory() as tmp_str:
-            tmp_dir = Path(tmp_str)
-            local_store = tmp_dir / "NoteStore.sqlite"
-            ripper_output = tmp_dir / "ripper_output"
-            ripper_output.mkdir(parents=True, exist_ok=True)
-
-            self._copy_note_store(local_store)
-            self._run_ripper(local_store, ripper_output)
-
-            json_file = self._find_json(ripper_output)
-            data = json.loads(json_file.read_text(encoding="utf-8"))
-            indexes = self._build_note_indexes(data.get("notes", {}))
+        indexes = self._capture.capture_indexes()
 
         rich_root = self.remote_folder / "RichNotes"
         selected_notes: list[tuple[Path, dict[str, Any]]] = []
 
         for mapping in mappings:
             uuid = mapping["local_uuid"]
-            note_entry = self._lookup_note_entry(uuid, indexes)
+            note_entry = lookup_note_entry(uuid, indexes)
             if not note_entry:
                 continue
             remote_path = Path(mapping["remote_path"])
@@ -246,7 +214,7 @@ class RichNotesExporter:
             folder = rich_root / relative_path.parent
             folder.mkdir(parents=True, exist_ok=True)
             target = folder / f"{relative_path.stem}_rich.md"
-            html = self._extract_note_content(note_entry)
+            html = extract_note_content(note_entry)
             logger.info("Exporting rich note: %s", relative_path)
             logger.debug("Relative path stem: %s", relative_path.stem)
             if relative_path.stem.lower() == "scratch":
@@ -274,70 +242,3 @@ class RichNotesExporter:
             "- ♻️ Any edits inside `RichNotes/` will be overwritten on the next export.\n"
         )
         (rich_root / "README.md").write_text(content, encoding="utf-8")
-
-    def _build_note_indexes(self, notes_section: Any) -> dict[str, Any]:
-        by_uuid: dict[str, dict[str, Any]] = {}
-        by_primary: dict[int, dict[str, Any]] = {}
-        by_note_id: dict[int, dict[str, Any]] = {}
-
-        if isinstance(notes_section, dict):
-            for key, entry in notes_section.items():
-                if not isinstance(entry, dict):
-                    continue
-                uuid = entry.get("uuid") or key
-                if uuid:
-                    by_uuid[str(uuid)] = entry
-
-                pk = entry.get("primary_key")
-                if isinstance(pk, int):
-                    by_primary[pk] = entry
-
-                note_id = entry.get("note_id")
-                if isinstance(note_id, int):
-                    by_note_id[note_id] = entry
-
-        return {
-            "by_uuid": by_uuid,
-            "by_primary": by_primary,
-            "by_note_id": by_note_id,
-        }
-
-    def _lookup_note_entry(self, local_uuid: str, indexes: dict[str, Any]) -> dict[str, Any] | None:
-        entry = indexes["by_uuid"].get(local_uuid)
-        if entry:
-            return entry
-
-        pk = self._extract_primary_key(local_uuid)
-        if pk is not None:
-            entry = indexes["by_primary"].get(pk)
-            if entry:
-                return entry
-
-        note_id = self._extract_note_id(local_uuid)
-        if note_id is not None:
-            entry = indexes["by_note_id"].get(note_id)
-            if entry:
-                return entry
-
-        return None
-
-    @staticmethod
-    def _extract_primary_key(coredata_id: str) -> int | None:
-        if "/p" not in coredata_id:
-            return None
-        suffix = coredata_id.rsplit("/p", 1)[-1]
-        try:
-            return int(suffix)
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _extract_note_id(coredata_id: str) -> int | None:
-        # Some IDs have the format .../ICNote/<number>
-        suffix = coredata_id.rsplit("/", 1)[-1]
-        if suffix.startswith("p"):
-            suffix = suffix[1:]
-        try:
-            return int(suffix)
-        except ValueError:
-            return None

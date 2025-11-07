@@ -6,6 +6,8 @@ from pathlib import Path
 
 from icloudbridge.sources.notes.applescript import AppleScriptNote, NotesAdapter
 from icloudbridge.sources.notes.markdown import MarkdownAdapter, MarkdownNote
+from icloudbridge.sources.notes.shortcuts import NotesShortcutAdapter
+from icloudbridge.utils.converters import split_markdown_segments
 from icloudbridge.utils.db import NotesDB
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,8 @@ class NotesSyncEngine:
         """
         self.notes_adapter = NotesAdapter()
         self.markdown_adapter = MarkdownAdapter(markdown_base_path)
+        self.shortcut_calls: list[dict[str, str | None]] = []
+        self.shortcuts = NotesShortcutAdapter(self.shortcut_calls)
         self.db = NotesDB(db_path)
 
     async def initialize(self) -> None:
@@ -176,6 +180,9 @@ class NotesSyncEngine:
         }
 
         try:
+            if self.notes_adapter.is_ignored_folder(folder_name):
+                raise RuntimeError(f"Folder '{folder_name}' cannot be synced (ignored by design)")
+
             # Step 1: Fetch all notes from Apple Notes
             logger.debug(f"Fetching notes from Apple Notes folder: {folder_name}")
             apple_notes = await self.notes_adapter.get_notes(folder_name)
@@ -301,9 +308,14 @@ class NotesSyncEngine:
                                     f"Conflict (remote wins): {apple_note.name} "
                                     f"(local: {local_modified}, remote: {remote_modified})"
                                 )
-                                await self._pull_from_remote(
-                                    md_note, folder_name, apple_note.name
+                                new_uuid = await self._pull_from_remote(
+                                    md_note,
+                                    folder_name,
+                                    apple_note.name,
+                                    uuid,
                                 )
+                                if new_uuid:
+                                    uuid = new_uuid
                             stats["updated_local"] += 1
 
                         # Update mapping with current timestamp
@@ -338,7 +350,14 @@ class NotesSyncEngine:
                             logger.info(f"[DRY RUN] Would update local: {apple_note.name}")
                         else:
                             logger.info(f"Remote changed: {apple_note.name}")
-                            await self._pull_from_remote(md_note, folder_name, apple_note.name)
+                            new_uuid = await self._pull_from_remote(
+                                md_note,
+                                folder_name,
+                                apple_note.name,
+                                uuid,
+                            )
+                            if new_uuid:
+                                uuid = new_uuid
                             await self.db.upsert_mapping(
                                 local_uuid=uuid,
                                 local_name=apple_note.name,
@@ -470,6 +489,7 @@ class NotesSyncEngine:
         md_note: MarkdownNote,
         folder_name: str,
         existing_note_name: str | None,
+        existing_note_uuid: str | None = None,
     ) -> str | None:
         """
         Pull a markdown note to Apple Notes (create or update).
@@ -483,27 +503,47 @@ class NotesSyncEngine:
             UUID of the note (for new notes)
             For updates, returns None since we already know the UUID
         """
-        # Convert markdown to HTML for Apple Notes
-        note_name, body_html, _attachment_paths = (
-            await self.markdown_adapter.get_note_for_apple_notes(md_note.file_path)
-        )
+        prepared_note = await self.markdown_adapter.get_note_for_apple_notes(md_note.file_path)
+
+        if prepared_note.has_checklist:
+            logger.debug(
+                "Detected checklist note '%s' in folder '%s'; using Shortcut pipeline",
+                md_note.name,
+                folder_name,
+            )
+            await self.shortcuts.upsert_note(folder_name, md_note.name)
+            new_uuid = await self.notes_adapter.get_note_uuid(folder_name, md_note.name)
+            if not new_uuid:
+                raise RuntimeError(
+                    f"Unable to locate note '{md_note.name}' in folder '{folder_name}' after shortcut upsert"
+                )
+
+            segments = split_markdown_segments(prepared_note.markdown_body)
+            if not segments:
+                await self.shortcuts.append_content(folder_name, md_note.name, prepared_note.markdown_body)
+            else:
+                for segment_type, block in segments:
+                    if segment_type == "checklist":
+                        await self.shortcuts.append_checklist(folder_name, md_note.name, block)
+                    else:
+                        await self.shortcuts.append_content(folder_name, md_note.name, block)
+
+            return new_uuid
 
         if existing_note_name:
-            # Update existing note
             await self.notes_adapter.update_note(
                 folder_name=folder_name,
                 note_name=existing_note_name,
-                body_html=body_html,
+                body_html=prepared_note.html_content,
             )
-            return None  # UUID already known
-        else:
-            # Create new note and get its UUID
-            note_uuid, _mod_date = await self.notes_adapter.create_note(
-                folder_name=folder_name,
-                note_title=note_name,
-                body_html=body_html,
-            )
-            return note_uuid
+            return existing_note_uuid
+
+        note_uuid, _mod_date = await self.notes_adapter.create_note(
+            folder_name=folder_name,
+            note_title=prepared_note.name,
+            body_html=prepared_note.html_content,
+        )
+        return note_uuid
 
     async def list_folders(self) -> list[dict]:
         """

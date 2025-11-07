@@ -7,6 +7,13 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
+
+from icloudbridge.core.rich_notes_capture import (
+    RichNotesCapture,
+    extract_note_content,
+    lookup_note_entry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +83,7 @@ on run argv
 end run
 """
 
+
 # AppleScript to update an existing note
 UPDATE_NOTE_SCRIPT = """
 on run argv
@@ -96,6 +104,7 @@ on run argv
     return modification date of theNote
 end run
 """
+
 
 # AppleScript to delete a note
 DELETE_NOTE_SCRIPT = """
@@ -143,8 +152,15 @@ class AppleScriptFolder:
     note_count: int = 0
 
 
+IGNORED_FOLDER_NAMES = {"Recently Deleted"}
+
+
 class NotesAdapter:
     """Adapter for interfacing with Apple Notes via AppleScript."""
+
+    def __init__(self) -> None:
+        self._rich_indexes: dict[str, dict[str, Any]] | None = None
+        self._rich_capture = RichNotesCapture()
 
     @staticmethod
     async def _run_applescript(script: str, *args: str) -> str:
@@ -270,6 +286,10 @@ class NotesAdapter:
             except Exception as e:
                 raise RuntimeError(f"Failed to launch Apple Notes: {e}") from e
 
+    @staticmethod
+    def is_ignored_folder(folder_name: str) -> bool:
+        return folder_name.strip() in IGNORED_FOLDER_NAMES
+
     async def list_folders(self) -> list[AppleScriptFolder]:
         """
         Get all note folders from Apple Notes.
@@ -297,10 +317,14 @@ class NotesAdapter:
                 parts = folder_str.split("~~")
                 if len(parts) == 2:
                     folder_uuid, folder_name = parts
+                    folder_name = folder_name.strip()
+                    if self.is_ignored_folder(folder_name):
+                        logger.debug("Skipping ignored folder: %s", folder_name)
+                        continue
                     folders.append(
                         AppleScriptFolder(
                             uuid=folder_uuid.strip(),
-                            name=folder_name.strip(),
+                            name=folder_name,
                         )
                     )
 
@@ -310,6 +334,45 @@ class NotesAdapter:
         except Exception as e:
             logger.error(f"Failed to list folders: {e}")
             raise RuntimeError(f"Failed to list note folders: {e}") from e
+
+    async def get_note_uuid(self, folder_name: str, note_name: str) -> str | None:
+        """Return the UUID for the given note name inside the specified folder."""
+
+        notes = await self.get_notes(folder_name)
+        for note in notes:
+            if note.name == note_name:
+                return note.uuid
+        return None
+
+    async def ensure_rich_cache(self) -> None:
+        """Ensure the rich-note cache is populated."""
+        if self._rich_indexes is None:
+            await self.refresh_rich_cache()
+
+    async def refresh_rich_cache(self) -> None:
+        """Run the rich-notes ripper and cache the resulting indexes."""
+
+        loop = asyncio.get_running_loop()
+
+        def _capture() -> dict[str, dict[str, Any]]:
+            logger.info("Capturing rich Apple Notes snapshot via ripper")
+            return self._rich_capture.capture_indexes()
+
+        self._rich_indexes = await loop.run_in_executor(None, _capture)
+        logger.info("Loaded %d rich notes", len(self._rich_indexes["by_uuid"]))
+
+    def clear_rich_cache(self) -> None:
+        """Drop the cached ripper output (e.g., between sync runs)."""
+
+        self._rich_indexes = None
+
+    def _rich_body_for_uuid(self, note_uuid: str) -> str | None:
+        if not self._rich_indexes:
+            return None
+        entry = lookup_note_entry(note_uuid, self._rich_indexes)
+        if not entry:
+            return None
+        return extract_note_content(entry)
 
     async def get_notes(self, folder_name: str) -> list[AppleScriptNote]:
         """
@@ -328,6 +391,7 @@ class NotesAdapter:
             RuntimeError: If fetching notes fails
         """
         await self.ensure_notes_running()
+        await self.ensure_rich_cache()
 
         try:
             output = await self._run_applescript(GET_NOTES_SCRIPT, folder_name)
@@ -349,13 +413,22 @@ class NotesAdapter:
                 if len(parts) == 5:
                     uuid, name, created_str, modified_str, body_html = parts
 
+                    uuid = uuid.strip()
+                    rich_body = self._rich_body_for_uuid(uuid)
+                    if not rich_body:
+                        logger.warning(
+                            "Rich note body missing for %s; falling back to AppleScript HTML",
+                            uuid,
+                        )
+                        rich_body = body_html
+
                     notes.append(
                         AppleScriptNote(
-                            uuid=uuid.strip(),
+                            uuid=uuid,
                             name=name.strip(),
                             created_date=self._parse_apple_date(created_str.strip()),
                             modified_date=self._parse_apple_date(modified_str.strip()),
-                            body_html=body_html,  # Keep as-is, may have newlines
+                            body_html=rich_body,
                         )
                     )
 
@@ -417,6 +490,7 @@ class NotesAdapter:
             # Clean up temp file
             Path(temp_path).unlink(missing_ok=True)
 
+
     async def update_note(
         self, folder_name: str, note_name: str, body_html: str
     ) -> datetime:
@@ -461,6 +535,7 @@ class NotesAdapter:
         finally:
             # Clean up temp file
             Path(temp_path).unlink(missing_ok=True)
+
 
     async def delete_note(self, folder_name: str, note_name: str) -> bool:
         """
