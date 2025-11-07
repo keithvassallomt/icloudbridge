@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from icloudbridge.utils.converters import add_markdown_soft_breaks
 logger = logging.getLogger(__name__)
 
 
@@ -38,7 +39,8 @@ class NotesShortcutAdapter:
         )
 
     async def append_content(self, folder: str, title: str, markdown_block: str) -> None:
-        payload = f"{folder}\n{title}\n{markdown_block.rstrip()}\n"
+        normalized_block = add_markdown_soft_breaks(markdown_block)
+        payload = f"{folder}\n{title}\n{normalized_block.rstrip()}\n"
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,

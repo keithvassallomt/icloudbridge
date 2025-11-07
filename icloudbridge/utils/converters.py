@@ -14,6 +14,18 @@ from markdown_it import MarkdownIt
 logger = logging.getLogger(__name__)
 
 CHECKLIST_LINE_RE = re.compile(r"\s*[-*]\s+\[[ xX]\]")
+SOFT_BREAK_SKIP_RE = re.compile(
+    r"""
+    ^\s*(
+        (?:\#{1,6}\s)      |  # headings
+        (?:[-*+]\s)        |  # unordered lists
+        (?:\d+\.\s)        |  # ordered lists
+        (?:```+)           |  # fenced code
+        (?:~~~+)              # alt fenced code
+    )
+    """,
+    re.VERBOSE,
+)
 
 
 def normalize_checklists_html(html: str) -> str:
@@ -61,8 +73,9 @@ def markdown_to_html(markdown: str, note_title: str = "", attachment_paths: dict
     if not markdown or not markdown.strip():
         return f"<h1>{note_title}</h1>" if note_title else ""
 
-    md_parser = MarkdownIt()
+    md_parser = MarkdownIt("commonmark", {"breaks": True})
     html = md_parser.render(markdown)
+    html = re.sub(r"</p>\s*<p>", "</p><br><p>", html)
 
     if attachment_paths:
         for md_ref, file_path in attachment_paths.items():
@@ -189,3 +202,51 @@ def _normalize_heading_text(text: str) -> str:
     cleaned = re.sub(r"[*_`~]", "", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.casefold()
+
+
+def add_markdown_soft_breaks(markdown: str) -> str:
+    if not markdown:
+        return markdown
+
+    lines = markdown.splitlines()
+    if len(lines) == 1:
+        return markdown
+
+    result: list[str] = []
+    in_fence = False
+    fence_marker: str | None = None
+
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        result.append(line)
+
+        fence_trigger = stripped.startswith("```") or stripped.startswith("~~~")
+        if fence_trigger:
+            marker = "```" if stripped.startswith("```") else "~~~"
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif marker == fence_marker:
+                in_fence = False
+                fence_marker = None
+            continue
+
+        if in_fence or not stripped:
+            continue
+
+        if SOFT_BREAK_SKIP_RE.match(line.lstrip()):
+            continue
+
+        if idx == len(lines) - 1:
+            continue
+
+        next_line = lines[idx + 1]
+        if not next_line.strip():
+            continue
+
+        if line.endswith("  "):
+            continue
+
+        result[-1] = f"{line}  "
+
+    return "\n".join(result)
