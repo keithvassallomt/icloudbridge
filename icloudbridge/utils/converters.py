@@ -40,6 +40,8 @@ def html_to_markdown(html: str) -> str:
         newline_style="spaces",  # Use two spaces for line breaks
         code_language="",  # Default code language if not specified
         wrap_width=0,  # Don't wrap lines (preserve formatting)
+        bullets="-*+",  # Prefer hyphen bullets so checklists look like - [ ]
+        escape_misc=False,  # Keep literal [] so we can rewrite checklists cleanly
     )
 
     # Clean up excessive newlines (Apple Notes adds lots of <br>)

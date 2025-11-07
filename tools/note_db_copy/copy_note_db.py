@@ -20,6 +20,13 @@ def copy_notestore(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
 
+    # Copy accompanying WAL/SHM files if present to preserve recent changes
+    for suffix in ["-wal", "-shm"]:
+        src_sidecar = source.with_name(source.name + suffix)
+        if src_sidecar.exists():
+            dest_sidecar = destination.with_name(destination.name + suffix)
+            shutil.copy2(src_sidecar, dest_sidecar)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Copy NoteStore.sqlite into the repo")

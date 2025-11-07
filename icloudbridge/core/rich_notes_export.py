@@ -9,6 +9,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
+import re
+from html import unescape
 
 from icloudbridge.scripts.rich_notes import run_rich_ripper
 from icloudbridge.utils.converters import html_to_markdown
@@ -69,8 +71,123 @@ class RichNotesExporter:
             body = html
         return body
 
-    def _convert_to_markdown(self, html: str) -> str:
-        return html_to_markdown(html)
+    def _convert_to_markdown(self, html: str, note_entry: dict[str, Any], original_path: Path) -> str:
+        html = self._prepare_checklist_html(html)
+        markdown = html_to_markdown(html)
+        checkbox_items = self._extract_checklist_items(note_entry)
+
+        if not checkbox_items or self._looks_truncated(checkbox_items):
+            fallback = self._extract_checklists_from_markdown(original_path)
+            if fallback:
+                checkbox_items = fallback
+
+        if checkbox_items:
+            return self._merge_checklists(markdown, checkbox_items)
+
+        return markdown
+
+    @staticmethod
+    def _prepare_checklist_html(html: str) -> str:
+        """Rewrite checklist list items so markdown shows - [x]/[ ]."""
+
+        def replace_li(match: re.Match[str]) -> str:
+            classes = match.group("classes") or ""
+            inner = match.group("inner") or ""
+            class_tokens = {token.strip() for token in classes.split() if token.strip()}
+            marker = "[x] " if "checked" in class_tokens else "[ ] "
+            # Strip inner HTML tags to keep plaintext content inline
+            text = re.sub(r"<[^>]+>", " ", inner)
+            text = unescape(text)
+            text = re.sub(r"\s+", " ", text).strip()
+            logger.debug("Checklist item raw=%r cleaned=%r", inner[:80], text)
+            return f"<li>{marker}{text}</li>"
+
+        pattern = re.compile(
+            r"<li\s+class=\"(?P<classes>[^\"]*)\"[^>]*>(?P<inner>.*?)</li>",
+            re.DOTALL,
+        )
+        return pattern.sub(replace_li, html)
+
+    def _merge_checklists(self, markdown: str, checkbox_items: list[tuple[str, str]]) -> str:
+        if not checkbox_items:
+            return markdown
+
+        new_lines = markdown.splitlines()
+        idx = 0
+
+        checkbox_pattern = re.compile(r"^[*-]\s+\\?\[[ xX]\]")
+
+        for i, line in enumerate(new_lines):
+            stripped = line.strip()
+            if checkbox_pattern.match(stripped) and idx < len(checkbox_items):
+                state, label = checkbox_items[idx]
+                new_lines[i] = f"- [{state}] {label}"
+                idx += 1
+
+        return "\n".join(new_lines)
+
+    def _extract_checklist_items(self, note_entry: dict[str, Any]) -> list[tuple[str, str]]:
+        html = note_entry.get("html") or ""
+        if "class=\"checklist\"" not in html:
+            return []
+
+        items: list[tuple[str, str]] = []
+
+        ul_pattern = re.compile(r"<ul[^>]*class=\"checklist\"[^>]*>(?P<body>.*?)</ul>", re.DOTALL)
+        li_pattern = re.compile(r"<li\s+class=\"(?P<classes>[^\"]*)\"[^>]*>(?P<inner>.*?)</li>", re.DOTALL)
+
+        for ul_match in ul_pattern.finditer(html):
+            body = ul_match.group("body")
+            for li_match in li_pattern.finditer(body):
+                classes = li_match.group("classes") or ""
+                inner = li_match.group("inner") or ""
+
+                text = re.sub(r"<[^>]+>", " ", inner)
+                text = unescape(re.sub(r"\s+", " ", text).strip())
+
+                class_tokens = {token.strip() for token in classes.split() if token.strip()}
+                state = "x" if "checked" in class_tokens else " "
+                items.append((state, text))
+
+        return items
+
+    @staticmethod
+    def _looks_truncated(checkbox_items: list[tuple[str, str]]) -> bool:
+        if not checkbox_items:
+            return True
+        longest = max(len(label.strip()) for _, label in checkbox_items)
+        return longest <= 2
+
+    def _extract_checklists_from_markdown(self, original_path: Path) -> list[tuple[str, str]]:
+        if not original_path.exists():
+            return []
+
+        try:
+            lines = original_path.read_text(encoding="utf-8").splitlines()
+        except Exception:
+            return []
+
+        items: list[tuple[str, str]] = []
+        capture = False
+
+        for line in lines:
+            stripped = line.strip()
+            if not capture and stripped.lower() == "checklist":
+                capture = True
+                continue
+
+            if capture:
+                if not stripped:
+                    if items:
+                        break
+                    continue
+
+                if stripped.startswith("- [") and len(stripped) >= 6:
+                    state = "x" if stripped[3].lower() == "x" else " "
+                    label = stripped[6:].strip()
+                    items.append((state, label))
+
+        return items
 
     def export(self, *, dry_run: bool = False) -> None:
         if not self.remote_folder:
@@ -130,7 +247,18 @@ class RichNotesExporter:
             folder.mkdir(parents=True, exist_ok=True)
             target = folder / f"{relative_path.stem}_rich.md"
             html = self._extract_note_content(note_entry)
-            markdown = self._convert_to_markdown(html)
+            logger.info("Exporting rich note: %s", relative_path)
+            logger.debug("Relative path stem: %s", relative_path.stem)
+            if relative_path.stem.lower() == "scratch":
+                debug_dir = Path.home() / ".icloudbridge" / "debug"
+                debug_dir.mkdir(parents=True, exist_ok=True)
+                debug_path = debug_dir / f"{relative_path.stem}_rich_note.json"
+                logger.info("Writing scratch debug JSON to %s", debug_path)
+                debug_path.write_text(json.dumps(note_entry, indent=2), encoding="utf-8")
+                logger.info("Scratch entry snapshot: %s", note_entry)
+                logger.info("Scratch plaintext: %s", note_entry.get("plaintext"))
+            original_path = self.remote_folder / relative_path
+            markdown = self._convert_to_markdown(html, note_entry, original_path)
             target.write_text(markdown, encoding="utf-8")
 
         logger.info("RichNotes export complete: %s", rich_root)
