@@ -200,7 +200,7 @@ class MarkdownAdapter:
             file_path = target_folder / safe_filename
 
             # Convert HTML to Markdown
-            markdown_body = html_to_markdown(body_html)
+            markdown_body = html_to_markdown(body_html, note_name)
 
             # Note: Title is already in the body from Apple Notes, don't duplicate it
             markdown_content = markdown_body
@@ -270,7 +270,7 @@ class MarkdownAdapter:
                 return new_path
 
             # Otherwise, overwrite in place
-            markdown_body = html_to_markdown(body_html)
+            markdown_body = html_to_markdown(body_html, note_name or file_path.stem)
             # Note: Title is already in the body from Apple Notes, don't duplicate it
             markdown_content = markdown_body
 

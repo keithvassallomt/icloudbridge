@@ -76,6 +76,7 @@ on run argv
                 -- Set body directly (title already in content from markdown converter)
                 set body to html_content
             end tell
+            set name of theNote to note_name
         end tell
     end tell
     -- Return UUID and modification date separated by |||
@@ -99,6 +100,7 @@ on run argv
                 -- Set body directly (title already in content from markdown converter)
                 set body to html_content
             end tell
+            set name of theNote to note_name
         end tell
     end tell
     return modification date of theNote

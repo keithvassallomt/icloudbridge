@@ -36,12 +36,11 @@ def normalize_checklists_html(html: str) -> str:
     return pattern.sub(replace, html)
 
 
-def html_to_markdown(html: str) -> str:
+def html_to_markdown(html: str, note_title: str | None = None) -> str:
     if not html or not html.strip():
-        return ""
+        return f"# {note_title}".strip() if note_title else ""
 
-    html_cleaned = re.sub(r"^<h1>.*?</h1>\s*", "", html, count=1, flags=re.DOTALL)
-    html_cleaned = normalize_checklists_html(html_cleaned)
+    html_cleaned = normalize_checklists_html(html)
 
     markdown = convert_to_markdown(
         html_cleaned,
@@ -54,7 +53,8 @@ def html_to_markdown(html: str) -> str:
     )
 
     markdown = re.sub(r"\n{3,}", "\n\n", markdown)
-    return markdown.strip()
+    markdown = markdown.strip()
+    return _ensure_heading(markdown, note_title)
 
 
 def markdown_to_html(markdown: str, note_title: str = "", attachment_paths: dict | None = None) -> str:
@@ -63,7 +63,6 @@ def markdown_to_html(markdown: str, note_title: str = "", attachment_paths: dict
 
     md_parser = MarkdownIt()
     html = md_parser.render(markdown)
-    html = re.sub(r"^<h1>.*?</h1>\s*", "", html, count=1, flags=re.DOTALL)
 
     if attachment_paths:
         for md_ref, file_path in attachment_paths.items():
@@ -153,3 +152,40 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
             sanitized = sanitized[:max_length]
 
     return sanitized
+
+
+def _ensure_heading(markdown: str, note_title: str | None) -> str:
+    if not note_title:
+        return markdown
+
+    lines = markdown.splitlines()
+    first_idx = next((idx for idx, line in enumerate(lines) if line.strip()), None)
+
+    normalized_title = _normalize_heading_text(note_title)
+    if first_idx is None:
+        return f"# {note_title}"
+
+    normalized_first = _normalize_heading_text(lines[first_idx])
+    if normalized_first != normalized_title:
+        return markdown
+
+    if lines[first_idx].lstrip().startswith("#"):
+        return markdown
+
+    lines[first_idx] = f"# {note_title}"
+
+    insert_idx = first_idx + 1
+    if insert_idx == len(lines):
+        lines.append("")
+    elif lines[insert_idx].strip():
+        lines.insert(insert_idx, "")
+
+    return "\n".join(lines).strip()
+
+
+def _normalize_heading_text(text: str) -> str:
+    cleaned = text.strip()
+    cleaned = re.sub(r"^[#>*\s]+", "", cleaned)
+    cleaned = re.sub(r"[*_`~]", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.casefold()
