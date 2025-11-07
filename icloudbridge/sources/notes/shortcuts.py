@@ -44,7 +44,7 @@ class NotesShortcutAdapter:
     async def append_content(self, folder: str, title: str, markdown_block: str) -> None:
         normalized_block = add_markdown_soft_breaks(markdown_block)
         normalized_block = insert_markdown_blank_line_markers(normalized_block)
-        payload = f"{folder}\n{title}\n\n{normalized_block.rstrip()}\n"
+        payload = f"{folder}\n{title}\n\n{normalized_block.rstrip('\n')}\n"
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,

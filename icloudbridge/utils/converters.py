@@ -245,10 +245,10 @@ def add_markdown_soft_breaks(markdown: str) -> str:
         if not next_line.strip():
             continue
 
-        if line.rstrip().endswith("<br>"):
+        if line.endswith("  "):
             continue
 
-        result[-1] = f"{line.rstrip()}<br>"
+        result[-1] = f"{line.rstrip()}  "
 
     return "\n".join(result)
 

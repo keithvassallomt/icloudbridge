@@ -185,6 +185,7 @@ class NotesSyncEngine:
 
             # Step 1: Fetch all notes from Apple Notes
             logger.debug(f"Fetching notes from Apple Notes folder: {folder_name}")
+            await self.notes_adapter.refresh_rich_cache()
             apple_notes = await self.notes_adapter.get_notes(folder_name)
             logger.info(f"Found {len(apple_notes)} notes in Apple Notes")
 
@@ -512,6 +513,7 @@ class NotesSyncEngine:
                 folder_name,
             )
             await self.shortcuts.upsert_note(folder_name, md_note.name)
+            self.notes_adapter.clear_rich_cache()
             new_uuid = await self.notes_adapter.get_note_uuid(folder_name, md_note.name)
             if not new_uuid:
                 raise RuntimeError(
