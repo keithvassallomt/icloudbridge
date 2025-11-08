@@ -1,15 +1,25 @@
 """Core synchronization logic for Apple Notes ↔ Markdown."""
 
 import asyncio
+import base64
 import logging
+import mimetypes
+import os
+import re
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 from icloudbridge.sources.notes.applescript import AppleScriptNote, NotesAdapter
 from icloudbridge.sources.notes.markdown import MarkdownAdapter, MarkdownNote
 from icloudbridge.sources.notes.shortcuts import NotesShortcutAdapter
-from icloudbridge.utils.converters import split_markdown_segments, strip_leading_heading
+from icloudbridge.utils.converters import (
+    sanitize_filename,
+    split_markdown_segments,
+    strip_leading_heading,
+)
 from icloudbridge.utils.db import NotesDB
+from icloudbridge.utils.slugs import generate_attachment_slug
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +68,7 @@ class NotesSyncEngine:
         self.shortcuts = NotesShortcutAdapter(self.shortcut_calls)
         self.use_shortcut_pipeline = prefer_shortcuts
         self.db = NotesDB(db_path)
+        self._temp_attachment_files: set[Path] = set()
 
     async def initialize(self) -> None:
         """
@@ -260,6 +271,7 @@ class NotesSyncEngine:
                 if mapping:
                     # Note is already mapped - check if it needs updating
                     remote_path = Path(mapping["remote_path"])
+                    attachment_slug = mapping.get("attachment_slug") if mapping else None
                     processed_local_uuids.add(uuid)
                     processed_remote_paths.add(str(remote_path))
 
@@ -299,9 +311,13 @@ class NotesSyncEngine:
                                     f"Conflict (local wins): {apple_note.name} "
                                     f"(local: {local_modified}, remote: {remote_modified})"
                                 )
-                                await self._push_to_remote(
-                                    apple_note, remote_path, markdown_subfolder
+                                updated_path, attachment_slug = await self._push_to_remote(
+                                    apple_note,
+                                    remote_path,
+                                    markdown_subfolder,
+                                    md_note,
                                 )
+                                remote_path = updated_path
                             stats["updated_remote"] += 1
                         else:
                             # Remote is newer - pull from remote
@@ -330,6 +346,7 @@ class NotesSyncEngine:
                                 local_folder_uuid="",  # We don't track folder UUID yet
                                 remote_path=remote_path,
                                 timestamp=datetime.now().timestamp(),
+                                attachment_slug=attachment_slug,
                             )
 
                     elif local_modified > last_sync:
@@ -338,13 +355,20 @@ class NotesSyncEngine:
                             logger.info(f"[DRY RUN] Would update remote: {apple_note.name}")
                         else:
                             logger.info(f"Local changed: {apple_note.name}")
-                            await self._push_to_remote(apple_note, remote_path, markdown_subfolder)
+                            updated_path, attachment_slug = await self._push_to_remote(
+                                apple_note,
+                                remote_path,
+                                markdown_subfolder,
+                                md_note,
+                            )
+                            remote_path = updated_path
                             await self.db.upsert_mapping(
                                 local_uuid=uuid,
                                 local_name=apple_note.name,
                                 local_folder_uuid="",
                                 remote_path=remote_path,
                                 timestamp=datetime.now().timestamp(),
+                                attachment_slug=md_note.metadata.get("attachment_slug", attachment_slug),
                             )
                         stats["updated_remote"] += 1
 
@@ -368,6 +392,7 @@ class NotesSyncEngine:
                                 local_folder_uuid="",
                                 remote_path=remote_path,
                                 timestamp=datetime.now().timestamp(),
+                                attachment_slug=attachment_slug,
                             )
                         stats["updated_local"] += 1
 
@@ -384,8 +409,10 @@ class NotesSyncEngine:
                         remote_path = Path(f"{apple_note.name}.md")
                     else:
                         logger.info(f"New local note: {apple_note.name}")
-                        remote_path = await self._push_to_remote(
-                            apple_note, None, markdown_subfolder
+                        remote_path, attachment_slug = await self._push_to_remote(
+                            apple_note,
+                            None,
+                            markdown_subfolder,
                         )
                         await self.db.upsert_mapping(
                             local_uuid=uuid,
@@ -393,6 +420,7 @@ class NotesSyncEngine:
                             local_folder_uuid="",
                             remote_path=remote_path,
                             timestamp=datetime.now().timestamp(),
+                            attachment_slug=attachment_slug,
                         )
                     processed_local_uuids.add(uuid)
                     processed_remote_paths.add(str(remote_path))
@@ -432,6 +460,7 @@ class NotesSyncEngine:
                                 local_folder_uuid="",
                                 remote_path=Path(remote_path_str),
                                 timestamp=datetime.now().timestamp(),
+                                attachment_slug=md_note.metadata.get("attachment_slug"),
                             )
                     stats["created_local"] += 1
 
@@ -451,13 +480,16 @@ class NotesSyncEngine:
         except Exception as e:
             logger.error(f"Sync failed for folder {folder_name}: {e}")
             raise RuntimeError(f"Sync failed for folder '{folder_name}': {e}") from e
+        finally:
+            self.notes_adapter.clear_rich_cache(cleanup_workspace=True)
 
     async def _push_to_remote(
         self,
         apple_note: AppleScriptNote,
         existing_path: Path | None,
         markdown_subfolder: str | None,
-    ) -> Path:
+        existing_md_note: MarkdownNote | None = None,
+    ) -> tuple[Path, str]:
         """
         Push an Apple Note to markdown (create or update).
 
@@ -467,26 +499,181 @@ class NotesSyncEngine:
             markdown_subfolder: Subfolder for markdown files
 
         Returns:
-            Path to the created/updated markdown file
+            Tuple of (path to the markdown file, attachment slug used)
         """
+
+        slug = await self._determine_attachment_slug(apple_note, existing_path, existing_md_note)
+        metadata = {"attachment_slug": slug}
+        body_html, attachments = self._prepare_note_html_with_attachments(apple_note, slug)
+
         if existing_path:
-            # Update existing file
-            return await self.markdown_adapter.update_note(
+            updated_path = await self.markdown_adapter.update_note(
                 file_path=existing_path,
-                body_html=apple_note.body_html,
+                body_html=body_html,
                 note_name=apple_note.name,
                 modified_date=apple_note.modified_date,
-                attachments=None,  # TODO: Handle attachments in future
+                attachments=attachments,
+                metadata=metadata,
             )
-        else:
-            # Create new file
-            return await self.markdown_adapter.write_note(
-                note_name=apple_note.name,
-                body_html=apple_note.body_html,
-                folder_name=markdown_subfolder,
-                modified_date=apple_note.modified_date,
-                attachments=None,  # TODO: Handle attachments in future
-            )
+            self._cleanup_temp_attachment_files()
+            return updated_path, slug
+
+        new_path = await self.markdown_adapter.write_note(
+            note_name=apple_note.name,
+            body_html=body_html,
+            folder_name=markdown_subfolder,
+            modified_date=apple_note.modified_date,
+            attachments=attachments,
+            metadata=metadata,
+        )
+        self._cleanup_temp_attachment_files()
+        return new_path, slug
+
+    async def _determine_attachment_slug(
+        self,
+        apple_note: AppleScriptNote,
+        existing_path: Path | None,
+        existing_md_note: MarkdownNote | None,
+    ) -> str:
+        if existing_md_note and existing_md_note.metadata.get("attachment_slug"):
+            return existing_md_note.metadata["attachment_slug"]
+
+        if existing_path:
+            slug = await self.markdown_adapter.get_attachment_slug(existing_path)
+            if slug:
+                return slug
+
+        mapping = await self.db.get_mapping(apple_note.uuid)
+        if mapping and mapping.get("attachment_slug"):
+            return mapping["attachment_slug"]
+
+        return generate_attachment_slug(apple_note.name)
+
+    def _prepare_note_html_with_attachments(
+        self,
+        apple_note: AppleScriptNote,
+        slug: str,
+    ) -> tuple[str, dict[str, Path]]:
+        if not apple_note.attachments:
+            return apple_note.body_html, {}
+
+        uuid_map: dict[str, dict[str, str | bool]] = {}
+        attachment_sources: dict[str, Path] = {}
+        used_names: set[str] = set()
+
+        for attachment in apple_note.attachments:
+            safe_name = self._unique_attachment_name(attachment.filename, used_names)
+            relative_path = f".attachments.{slug}/{safe_name}"
+            attachment_sources[relative_path] = attachment.source_path
+            uuid_map[attachment.uuid] = {
+                "path": relative_path,
+                "is_image": attachment.is_image(),
+                "filename": safe_name,
+            }
+
+        rewritten_html = self._rewrite_attachment_sources(apple_note.body_html, uuid_map)
+        rewritten_html = self._rewrite_data_uri_images(
+            rewritten_html,
+            slug,
+            used_names,
+            attachment_sources,
+        )
+        return rewritten_html, attachment_sources
+
+    def _unique_attachment_name(self, filename: str, used_names: set[str]) -> str:
+        safe_name = sanitize_filename(filename or "attachment")
+        if not safe_name:
+            safe_name = "attachment"
+
+        base, ext = os.path.splitext(safe_name)
+        candidate = safe_name
+        counter = 1
+        while candidate.lower() in used_names:
+            candidate = f"{base}-{counter}{ext}"
+            counter += 1
+        used_names.add(candidate.lower())
+        return candidate
+
+    def _rewrite_attachment_sources(
+        self,
+        body_html: str,
+        uuid_map: dict[str, dict[str, str | bool]],
+    ) -> str:
+        if not body_html or not uuid_map:
+            return body_html
+
+        img_pattern = re.compile(
+            r'(?P<full><img[^>]*data-apple-notes-zidentifier="(?P<uuid>[^"]+)"[^>]*>)',
+            re.IGNORECASE,
+        )
+        anchor_pattern = re.compile(
+            r'(?P<full><a[^>]*data-apple-notes-zidentifier="(?P<uuid>[^"]+)"[^>]*>.*?</a>)',
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        def _replace_attr(tag_html: str, attr: str, new_value: str) -> str:
+            attr_pattern = re.compile(rf'({attr}\s*=\s*")([^"]*)(")', re.IGNORECASE)
+            if attr_pattern.search(tag_html):
+                return attr_pattern.sub(rf'\1{new_value}\3', tag_html, count=1)
+            return tag_html
+
+        def _apply(pattern: re.Pattern[str], html: str, *, anchor: bool = False) -> str:
+            def repl(match: re.Match[str]) -> str:
+                uuid = match.group("uuid")
+                info = uuid_map.get(uuid)
+                if not info:
+                    return match.group("full")
+                relative = info["path"]
+                tag_html = match.group("full")
+                if anchor and info.get("is_image"):
+                    alt = info.get("filename") or ""
+                    return f'<img data-apple-notes-zidentifier="{uuid}" src="{relative}" alt="{alt}">'  # noqa: E501
+                attr_name = "href" if anchor else "src"
+                return _replace_attr(tag_html, attr_name, relative)
+
+            return pattern.sub(repl, html)
+
+        html = _apply(img_pattern, body_html)
+        html = _apply(anchor_pattern, html, anchor=True)
+        return html
+
+    def _rewrite_data_uri_images(
+        self,
+        body_html: str,
+        slug: str,
+        used_names: set[str],
+        attachment_sources: dict[str, Path],
+    ) -> str:
+        if not body_html:
+            return body_html
+
+        pattern = re.compile(
+            r'(<img[^>]*src=")data:(?P<mime>[^;]+);base64,(?P<data>[^"]+)(")',
+            re.IGNORECASE,
+        )
+
+        def repl(match: re.Match[str]) -> str:
+            mime = match.group("mime").lower()
+            data = match.group("data")
+            try:
+                binary = base64.b64decode(data)
+            except Exception:
+                return match.group(0)
+            ext = mimetypes.guess_extension(mime) or ".bin"
+            temp_file = Path(tempfile.NamedTemporaryFile(delete=False, suffix=ext).name)
+            temp_file.write_bytes(binary)
+            safe_name = self._unique_attachment_name(f"inline{ext}", used_names)
+            relative = f".attachments.{slug}/{safe_name}"
+            attachment_sources[relative] = temp_file
+            self._temp_attachment_files.add(temp_file)
+            return f'{match.group(1)}{relative}{match.group(4)}'
+
+        return pattern.sub(repl, body_html)
+
+    def _cleanup_temp_attachment_files(self) -> None:
+        for temp_file in list(self._temp_attachment_files):
+            temp_file.unlink(missing_ok=True)
+        self._temp_attachment_files.clear()
 
     async def _pull_from_remote(
         self,
@@ -533,7 +720,10 @@ class NotesSyncEngine:
                     f"Unable to locate note '{md_note.name}' in folder '{folder_name}' after shortcut upsert"
                 )
 
-            markdown_body = strip_leading_heading(prepared_note.markdown_body, md_note.name)
+            source_markdown = (
+                prepared_note.markdown_with_inline_attachments or prepared_note.markdown_body
+            )
+            markdown_body = strip_leading_heading(source_markdown, md_note.name)
             segments = split_markdown_segments(markdown_body)
             if not segments:
                 await self.shortcuts.append_content(folder_name, md_note.name, markdown_body)

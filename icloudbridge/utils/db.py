@@ -46,6 +46,7 @@ class NotesDB:
                     local_folder_uuid TEXT NOT NULL,
                     remote_path TEXT NOT NULL,
                     last_sync_timestamp REAL NOT NULL,
+                    attachment_slug TEXT,
                     UNIQUE(local_uuid, remote_path)
                 )
                 """
@@ -68,6 +69,15 @@ class NotesDB:
 
             await db.commit()
             logger.debug(f"Database initialized at {self.db_path}")
+
+            # Ensure attachment_slug column exists for pre-existing databases
+            db.row_factory = aiosqlite.Row
+            async with db.execute("PRAGMA table_info(note_mapping)") as cursor:
+                columns = {row["name"] for row in await cursor.fetchall()}
+            if "attachment_slug" not in columns:
+                await db.execute("ALTER TABLE note_mapping ADD COLUMN attachment_slug TEXT")
+                await db.commit()
+                logger.debug("Added attachment_slug column to note_mapping table")
 
     async def get_mapping(self, local_uuid: str) -> dict | None:
         """
@@ -122,6 +132,7 @@ class NotesDB:
         local_folder_uuid: str,
         remote_path: Path,
         timestamp: float,
+        attachment_slug: str | None = None,
     ) -> None:
         """
         Create or update a note mapping.
@@ -137,14 +148,15 @@ class NotesDB:
             await db.execute(
                 """
                 INSERT INTO note_mapping
-                (local_uuid, local_name, local_folder_uuid, remote_path, last_sync_timestamp)
-                VALUES (?, ?, ?, ?, ?)
+                (local_uuid, local_name, local_folder_uuid, remote_path, last_sync_timestamp, attachment_slug)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(local_uuid, remote_path) DO UPDATE SET
                     local_name = excluded.local_name,
                     local_folder_uuid = excluded.local_folder_uuid,
-                    last_sync_timestamp = excluded.last_sync_timestamp
+                    last_sync_timestamp = excluded.last_sync_timestamp,
+                    attachment_slug = excluded.attachment_slug
                 """,
-                (local_uuid, local_name, local_folder_uuid, str(remote_path), timestamp),
+                (local_uuid, local_name, local_folder_uuid, str(remote_path), timestamp, attachment_slug),
             )
             await db.commit()
             logger.debug(f"Upserted mapping: {local_uuid} -> {remote_path}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -18,20 +19,28 @@ class RichNotesCapture:
 
     def __init__(self, *, repo_root: Path | None = None) -> None:
         self.repo_root = repo_root or Path(__file__).resolve().parents[2]
+        self._active_dir: Path | None = None
+        self._output_dir: Path | None = None
+        self._workspaces: list[Path] = []
+        self._container_dir: Path | None = None
 
     def capture_indexes(self) -> dict[str, dict[str, Any]]:
         """Return lookup indexes for all rich notes currently on disk."""
-        with tempfile.TemporaryDirectory() as tmp_str:
-            tmp_dir = Path(tmp_str)
-            local_store = tmp_dir / "NoteStore.sqlite"
-            ripper_output = tmp_dir / "ripper_output"
-            ripper_output.mkdir(parents=True, exist_ok=True)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="icloudbridge_notes_rip_"))
+        self._active_dir = tmp_dir
+        self._workspaces.append(tmp_dir)
 
-            self._copy_note_store(local_store)
-            self._run_ripper(local_store, ripper_output)
+        ripper_output = tmp_dir / "ripper_output"
+        ripper_output.mkdir(parents=True, exist_ok=True)
+        self._output_dir = ripper_output
 
-            json_file = self._find_json(ripper_output)
-            data = json.loads(json_file.read_text(encoding="utf-8"))
+        container_dir = tmp_dir / "notes_container"
+        self._container_dir = container_dir
+        note_store = self._copy_notes_container(container_dir)
+        self._run_ripper(note_store, ripper_output)
+
+        json_file = self._find_json(ripper_output)
+        data = json.loads(json_file.read_text(encoding="utf-8"))
 
         return build_note_indexes(data.get("notes", {}))
 
@@ -40,19 +49,65 @@ class RichNotesCapture:
         indexes = self.capture_indexes()
         return indexes["by_uuid"]
 
-    def _copy_note_store(self, destination: Path) -> None:
+    def resolve_attachment_path(self, relative_path: str | None) -> Path | None:
+        """Translate a ripper-provided attachment path into a real file path."""
+
+        if not relative_path:
+            return None
+
+        candidate = Path(relative_path)
+        if candidate.is_absolute() and candidate.exists():
+            return candidate
+
+        if not self._output_dir:
+            return None
+
+        rel = Path(relative_path.lstrip("/\\"))
+        candidate = self._output_dir / rel
+        if candidate.exists():
+            return candidate
+
+        return None
+
+    def cleanup(self) -> None:
+        """Remove the most recent ripper workspace (if any)."""
+
+        for workspace in list(self._workspaces):
+            if workspace.exists():
+                try:
+                    shutil.rmtree(workspace)
+                except OSError as exc:
+                    logger.debug("Failed to remove ripper workspace %s: %s", workspace, exc)
+        self._workspaces.clear()
+        self._active_dir = None
+        self._output_dir = None
+        self._container_dir = None
+
+    def _copy_notes_container(self, destination: Path) -> Path:
         script = self.repo_root / "tools" / "note_db_copy" / "copy_note_db.py"
         cmd = [
             "/usr/bin/python3",
             str(script),
+            "--mode",
+            "container",
             "--dest",
             str(destination),
+            "--source",
+            str(Path.home() / "Library/Group Containers/group.com.apple.notes"),
         ]
-        logger.info("Copying Apple Notes database -> %s", destination)
+        logger.info("Copying Apple Notes container -> %s", destination)
         subprocess.run(cmd, check=True)
+        note_store = destination / "NoteStore.sqlite"
+        if not note_store.exists():
+            raise FileNotFoundError(f"NoteStore.sqlite not found in copied container {destination}")
+        return note_store
 
     def _run_ripper(self, db_path: Path, output_dir: Path) -> None:
-        args = ["--file", str(db_path), "--output-dir", str(output_dir)]
+        args = ["--output-dir", str(output_dir)]
+        if self._container_dir and self._container_dir.exists():
+            args.extend(["--mac", str(self._container_dir)])
+        else:
+            args.extend(["--file", str(db_path)])
         logger.info("Running rich notes ripper (output=%s)", output_dir)
         run_rich_ripper(args)
 

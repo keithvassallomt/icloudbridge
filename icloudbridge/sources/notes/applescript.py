@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -134,6 +134,26 @@ end tell
 
 
 @dataclass
+class AppleNoteAttachment:
+    uuid: str
+    filename: str
+    source_path: Path
+    uti: str | None = None
+    conforms_to: str | None = None
+
+    def is_image(self) -> bool:
+        candidates = [self.uti or "", self.conforms_to or ""]
+        lowered = " ".join(candidates).lower()
+        if "image" in lowered:
+            return True
+        filename = (self.filename or "").lower()
+        for ext in [".png", ".jpg", ".jpeg", ".gif", ".heic", ".heif", ".webp", ".avif", ".tiff", ".svg"]:
+            if filename.endswith(ext):
+                return True
+        return False
+
+
+@dataclass
 class AppleScriptNote:
     """Represents a note from Apple Notes.app."""
 
@@ -143,6 +163,7 @@ class AppleScriptNote:
     modified_date: datetime
     body_html: str
     folder_uuid: str | None = None
+    attachments: list[AppleNoteAttachment] = field(default_factory=list)
 
 
 @dataclass
@@ -363,21 +384,53 @@ class NotesAdapter:
         self._rich_indexes = await loop.run_in_executor(None, _capture)
         logger.info("Loaded %d rich notes", len(self._rich_indexes["by_uuid"]))
 
-    def clear_rich_cache(self) -> None:
-        """Drop the cached ripper output (e.g., between sync runs)."""
+    def clear_rich_cache(self, *, cleanup_workspace: bool = False) -> None:
+        """Drop the cached ripper output (optionally removing temp files)."""
 
         self._rich_indexes = None
+        if cleanup_workspace:
+            self._rich_capture.cleanup()
 
-    def _rich_body_for_uuid(self, note_uuid: str) -> str | None:
+    def _rich_entry_for_uuid(self, note_uuid: str) -> dict[str, Any] | None:
         if not self._rich_indexes:
             return None
-        entry = lookup_note_entry(note_uuid, self._rich_indexes)
+        return lookup_note_entry(note_uuid, self._rich_indexes)
+
+    def _rich_body_for_uuid(self, note_uuid: str) -> str | None:
+        entry = self._rich_entry_for_uuid(note_uuid)
         if not entry:
             return None
         return extract_note_content(entry)
 
-    async def _retry_rich_body(self, note_uuid: str) -> str | None:
-        """Retry capturing the rich body for a UUID if the cache missed."""
+    def _rich_attachments_for_entry(self, note_entry: dict[str, Any] | None) -> list[AppleNoteAttachment]:
+        attachments: list[AppleNoteAttachment] = []
+        if not note_entry:
+            return attachments
+
+        embedded = note_entry.get("embedded_objects") or []
+        for obj in embedded:
+            if not isinstance(obj, dict):
+                continue
+            attachment_uuid = str(obj.get("uuid")) if obj.get("uuid") else None
+            backup_location = obj.get("backup_location") or obj.get("filepath")
+            source_path = self._rich_capture.resolve_attachment_path(backup_location)
+            if not (attachment_uuid and source_path and source_path.exists()):
+                continue
+            filename = obj.get("filename") or source_path.name
+            attachments.append(
+                AppleNoteAttachment(
+                    uuid=attachment_uuid,
+                    filename=filename,
+                    source_path=source_path,
+                    uti=obj.get("type"),
+                    conforms_to=obj.get("conforms_to"),
+                )
+            )
+
+        return attachments
+
+    async def _retry_rich_entry(self, note_uuid: str) -> dict[str, Any] | None:
+        """Retry capturing the rich entry for a UUID if the cache missed."""
 
         for attempt in range(3):
             if attempt:
@@ -385,7 +438,7 @@ class NotesAdapter:
                 self.clear_rich_cache()
                 await self.refresh_rich_cache()
 
-            entry = self._rich_body_for_uuid(note_uuid)
+            entry = self._rich_entry_for_uuid(note_uuid)
             if entry:
                 return entry
 
@@ -431,16 +484,22 @@ class NotesAdapter:
                     uuid, name, created_str, modified_str, body_html = parts
 
                     uuid = uuid.strip()
-                    rich_body = self._rich_body_for_uuid(uuid)
+                    entry = self._rich_entry_for_uuid(uuid)
+                    rich_body = extract_note_content(entry) if entry else None
+                    attachments = self._rich_attachments_for_entry(entry)
                     if not rich_body:
                         logger.info("Rich snapshot miss for %s; refreshing ripper cache", uuid)
-                        rich_body = await self._retry_rich_body(uuid)
+                        entry = await self._retry_rich_entry(uuid)
+                        if entry:
+                            rich_body = extract_note_content(entry)
+                            attachments = self._rich_attachments_for_entry(entry)
                     if not rich_body:
                         logger.warning(
                             "Rich note body missing for %s; falling back to AppleScript HTML",
                             uuid,
                         )
                         rich_body = body_html
+                        attachments = []
 
                     notes.append(
                         AppleScriptNote(
@@ -449,6 +508,7 @@ class NotesAdapter:
                             created_date=self._parse_apple_date(created_str.strip()),
                             modified_date=self._parse_apple_date(modified_str.strip()),
                             body_html=rich_body,
+                            attachments=attachments,
                         )
                     )
 

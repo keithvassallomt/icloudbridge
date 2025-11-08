@@ -20,12 +20,37 @@ def _build_ripper_command(extra_args: list[str]) -> tuple[list[str], dict[str, s
 
     env = os.environ.copy()
     env["BUNDLE_GEMFILE"] = str(gemfile)
+    patch_file = ripper_dir / "compat" / "rubygems_patch.rb"
+    rubyopt = env.get("RUBYOPT", "").strip()
+    if patch_file.exists():
+        injection = f"-r{patch_file}"
+        env["RUBYOPT"] = f"{rubyopt} {injection}".strip()
+
+    bundle_exe = env.get("ICLOUDBRIDGE_BUNDLE_PATH")
+    if bundle_exe:
+        bundle_cmd = [bundle_exe]
+        bundle_dir = Path(bundle_exe).parent
+        env["PATH"] = f"{bundle_dir}:{env.get('PATH', '')}"
+    else:
+        candidate_paths = [
+            Path("/opt/homebrew/opt/ruby/bin/bundle"),
+            Path.home() / ".rbenv" / "shims" / "bundle",
+            Path("/opt/homebrew/bin/bundle"),
+            Path("/usr/local/bin/bundle"),
+            Path.home() / ".rubies" / "ruby-3.3.1" / "bin" / "bundle",
+        ]
+        bundle_path = next((p for p in candidate_paths if p.exists()), None)
+        if bundle_path:
+            bundle_cmd = [str(bundle_path)]
+            env["PATH"] = f"{bundle_path.parent}:{env.get('PATH', '')}"
+        else:
+            bundle_cmd = ["bundle"]
 
     # Always force single output folder (-g) and UUID identifiers for stability.
     forced_flags = ["-g", "--uuid"]
 
     cmd = [
-        "bundle",
+        *bundle_cmd,
         "exec",
         "ruby",
         str(script),

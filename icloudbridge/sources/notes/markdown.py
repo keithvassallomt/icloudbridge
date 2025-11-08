@@ -5,10 +5,13 @@ It's designed to be extensible - other destination adapters (API-based, etc.) ca
 be added later by following the same interface pattern.
 """
 
+import base64
+import json
 import logging
+import mimetypes
 import os
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +28,9 @@ from icloudbridge.utils.converters import (
 
 logger = logging.getLogger(__name__)
 
+_METADATA_PREFIX = "<!-- icloudbridge-metadata "
+_METADATA_SUFFIX = "-->"
+
 
 @dataclass
 class MarkdownNote:
@@ -35,12 +41,8 @@ class MarkdownNote:
     modified_date: datetime
     body_markdown: str
     file_path: Path
-    attachments: list[str] = None  # List of attachment file paths
-
-    def __post_init__(self):
-        """Initialize attachments list if None."""
-        if self.attachments is None:
-            self.attachments = []
+    attachments: list[str] = field(default_factory=list)
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -48,6 +50,7 @@ class PreparedAppleNote:
     name: str
     html_content: str
     markdown_body: str
+    markdown_with_inline_attachments: str
     has_checklist: bool
     attachment_paths: dict[str, Path]
 
@@ -135,6 +138,8 @@ class MarkdownAdapter:
             async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
                 content = await f.read()
 
+            metadata, body = self._split_metadata(content)
+
             # Get file metadata
             stat = await aiofiles.os.stat(file_path)
             created_date = datetime.fromtimestamp(stat.st_ctime)
@@ -144,15 +149,16 @@ class MarkdownAdapter:
             note_name = file_path.stem  # Filename without .md extension
 
             # Extract attachment references
-            attachments = extract_attachment_references(content)
+            attachments = extract_attachment_references(body)
 
             return MarkdownNote(
                 name=note_name,
                 created_date=created_date,
                 modified_date=modified_date,
-                body_markdown=content,
+                body_markdown=body,
                 file_path=file_path,
                 attachments=attachments,
+                metadata=metadata,
             )
 
         except Exception as e:
@@ -166,6 +172,7 @@ class MarkdownAdapter:
         folder_name: str | None = None,
         modified_date: datetime | None = None,
         attachments: dict[str, Path] | None = None,
+        metadata: dict[str, str] | None = None,
     ) -> Path:
         """
         Write a note as a markdown file.
@@ -178,7 +185,8 @@ class MarkdownAdapter:
             folder_name: Optional subfolder name
             modified_date: Optional modification date to set on file
             attachments: Optional dict mapping attachment refs to source paths
-                        e.g., {'.attachments/uuid.png': Path('/path/to/image.png')}
+                        e.g., {'.attachments.slug/image.png': Path('/tmp/image.png')}
+            metadata: Optional metadata to embed (e.g., attachment slug)
 
         Returns:
             Path to the created/updated markdown file
@@ -203,18 +211,12 @@ class MarkdownAdapter:
             markdown_body = html_to_markdown(body_html, note_name)
 
             # Note: Title is already in the body from Apple Notes, don't duplicate it
-            markdown_content = markdown_body
+            markdown_content = self._apply_metadata(metadata or {}, markdown_body)
 
-            # Handle attachments if provided
-            attachment_paths = {}
             if attachments:
-                attachments_folder = target_folder / ".attachments"
-                await self.ensure_folder_exists(attachments_folder)
-
-                for ref, source_path in attachments.items():
-                    # Copy attachment to .attachments folder
-                    dest_path = await self._copy_attachment(source_path, attachments_folder)
-                    attachment_paths[ref] = dest_path
+                self._sync_attachments(target_folder, attachments)
+            elif metadata and metadata.get("attachment_slug"):
+                self._purge_attachment_folder(target_folder, metadata["attachment_slug"])
 
             # Write markdown file
             async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
@@ -239,6 +241,7 @@ class MarkdownAdapter:
         note_name: str | None = None,
         modified_date: datetime | None = None,
         attachments: dict[str, Path] | None = None,
+        metadata: dict[str, str] | None = None,
     ) -> Path:
         """
         Update an existing markdown file.
@@ -263,7 +266,12 @@ class MarkdownAdapter:
             if note_name and note_name != file_path.stem:
                 folder_name = file_path.parent.name if file_path.parent != self.base_path else None
                 new_path = await self.write_note(
-                    note_name, body_html, folder_name, modified_date, attachments
+                    note_name,
+                    body_html,
+                    folder_name,
+                    modified_date,
+                    attachments,
+                    metadata,
                 )
                 # Delete old file
                 await self.delete_note(file_path)
@@ -271,16 +279,12 @@ class MarkdownAdapter:
 
             # Otherwise, overwrite in place
             markdown_body = html_to_markdown(body_html, note_name or file_path.stem)
-            # Note: Title is already in the body from Apple Notes, don't duplicate it
-            markdown_content = markdown_body
+            markdown_content = self._apply_metadata(metadata or {}, markdown_body)
 
-            # Handle attachments
             if attachments:
-                attachments_folder = file_path.parent / ".attachments"
-                await self.ensure_folder_exists(attachments_folder)
-
-                for _ref, source_path in attachments.items():
-                    await self._copy_attachment(source_path, attachments_folder)
+                self._sync_attachments(file_path.parent, attachments)
+            elif metadata and metadata.get("attachment_slug"):
+                self._purge_attachment_folder(file_path.parent, metadata["attachment_slug"])
 
             # Write file
             async with aiofiles.open(file_path, "w", encoding="utf-8") as f:
@@ -324,33 +328,103 @@ class MarkdownAdapter:
             logger.error(f"Failed to delete markdown file {file_path}: {e}")
             raise RuntimeError(f"Failed to delete note '{file_path.name}': {e}") from e
 
-    async def _copy_attachment(self, source_path: Path, dest_folder: Path) -> Path:
-        """
-        Copy an attachment file to the destination folder.
+    def _sync_attachments(
+        self,
+        base_folder: Path,
+        attachments: dict[str, Path],
+    ) -> None:
+        if not attachments:
+            return
 
-        Args:
-            source_path: Path to source attachment file
-            dest_folder: Destination folder (e.g., .attachments/)
+        preserved: set[Path] = set()
+        folders: set[Path] = set()
+        base_folder = base_folder.resolve()
 
-        Returns:
-            Path to the copied file
+        for relative_ref, source_path in attachments.items():
+            if not source_path or not source_path.exists():
+                logger.debug("Skipping missing attachment source %s", source_path)
+                continue
 
-        Raises:
-            RuntimeError: If copy fails
-        """
-        try:
-            # Keep original filename
-            dest_path = dest_folder / source_path.name
+            dest_path = self._resolve_attachment_destination(base_folder, relative_ref)
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-            # Copy file (synchronous for now, aiofiles doesn't have copy)
             shutil.copy2(source_path, dest_path)
+            preserved.add(dest_path.resolve())
+            folders.add(dest_path.parent)
+            logger.debug("Copied attachment %s -> %s", source_path, dest_path)
 
-            logger.debug(f"Copied attachment: {source_path.name}")
-            return dest_path
+        for folder in folders:
+            if not folder.exists():
+                continue
+            for existing in folder.iterdir():
+                if existing.is_file() and existing.resolve() not in preserved:
+                    existing.unlink(missing_ok=True)
+                    logger.debug("Removed stale attachment %s", existing)
 
-        except Exception as e:
-            logger.error(f"Failed to copy attachment {source_path}: {e}")
-            raise RuntimeError(f"Failed to copy attachment '{source_path.name}': {e}") from e
+    def _purge_attachment_folder(self, base_folder: Path, slug: str) -> None:
+        if not slug:
+            return
+        folder = (base_folder.resolve()) / f".attachments.{slug}"
+        if folder.exists() and folder.is_dir():
+            shutil.rmtree(folder)
+            logger.debug("Removed attachment folder %s", folder)
+
+    def _resolve_attachment_destination(self, base_folder: Path, relative_ref: str) -> Path:
+        relative = Path(relative_ref.lstrip("/\\"))
+        dest_path = (base_folder / relative).resolve()
+        if not dest_path.is_relative_to(base_folder):
+            raise RuntimeError(f"Attachment path {relative_ref} escapes target folder {base_folder}")
+        return dest_path
+
+    def _split_metadata(self, content: str) -> tuple[dict[str, str], str]:
+        working = content.lstrip("\ufeff")
+        if not working.startswith(_METADATA_PREFIX):
+            return {}, content
+
+        end_idx = working.find(_METADATA_SUFFIX)
+        if end_idx == -1:
+            return {}, content
+
+        raw = working[len(_METADATA_PREFIX) : end_idx].strip()
+        remainder = working[end_idx + len(_METADATA_SUFFIX) :].lstrip("\n")
+        try:
+            metadata = json.loads(raw) if raw else {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+        except json.JSONDecodeError:
+            metadata = {}
+        return metadata, remainder
+
+    def _apply_metadata(self, metadata: dict[str, str], body: str) -> str:
+        if not metadata:
+            return body
+
+        payload = json.dumps(metadata, separators=(",", ":"), sort_keys=True)
+        header = f"{_METADATA_PREFIX}{payload} {_METADATA_SUFFIX}\n\n"
+        return header + body.lstrip("\n")
+
+    def _inline_markdown_attachments(self, markdown: str, attachment_paths: dict[str, Path]) -> str:
+        if not attachment_paths:
+            return markdown
+
+        inlined = markdown
+        for ref, file_path in attachment_paths.items():
+            if not file_path.exists():
+                continue
+            mime, _ = mimetypes.guess_type(str(file_path))
+            if not mime:
+                mime = "application/octet-stream"
+            encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+            data_uri = f"data:{mime};base64,{encoded}"
+            inlined = inlined.replace(ref, data_uri)
+        return inlined
+
+    async def get_attachment_slug(self, file_path: Path) -> str | None:
+        try:
+            note = await self.read_note(file_path)
+        except FileNotFoundError:
+            return None
+        return note.metadata.get("attachment_slug")
 
     async def get_note_for_apple_notes(self, file_path: Path) -> PreparedAppleNote:
         """
@@ -374,12 +448,11 @@ class MarkdownAdapter:
             # Build attachment paths dict
             attachment_paths = {}
             if note.attachments:
-                attachments_folder = file_path.parent / ".attachments"
                 for ref in note.attachments:
-                    # ref is like ".attachments/uuid.png"
-                    attachment_file = attachments_folder / Path(ref).name
+                    relative = Path(ref.lstrip("/\\"))
+                    attachment_file = (file_path.parent / relative)
                     if attachment_file.exists():
-                        attachment_paths[ref] = attachment_file
+                        attachment_paths[ref] = attachment_file.resolve()
 
             has_checklist = contains_markdown_checklist(note.body_markdown)
             html_body = markdown_to_html(
@@ -388,10 +461,13 @@ class MarkdownAdapter:
                 attachment_paths if attachment_paths else None,
             )
 
+            inlined_markdown = self._inline_markdown_attachments(note.body_markdown, attachment_paths)
+
             return PreparedAppleNote(
                 name=note.name,
                 html_content=html_body,
                 markdown_body=note.body_markdown,
+                markdown_with_inline_attachments=inlined_markdown,
                 has_checklist=has_checklist,
                 attachment_paths=attachment_paths,
             )
