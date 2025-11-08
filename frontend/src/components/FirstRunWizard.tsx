@@ -36,7 +36,7 @@ export default function FirstRunWizard() {
   // Form data
   const [formData, setFormData] = useState<Partial<AppConfig>>({
     notes_enabled: true,
-    notes_folder: '~/Documents/Notes',
+    notes_remote_folder: '~/Documents/Notes',
     reminders_enabled: false,
     reminders_use_nextcloud: true,
     reminders_nextcloud_url: '',
@@ -73,7 +73,6 @@ export default function FirstRunWizard() {
       // Build config update with only enabled services' credentials
       const configUpdate: Partial<AppConfig> = {
         notes_enabled: formData.notes_enabled,
-        notes_folder: formData.notes_folder,
         notes_remote_folder: formData.notes_remote_folder,
         data_dir: formData.data_dir,
       };
@@ -161,7 +160,6 @@ export default function FirstRunWizard() {
       // Build config update with only enabled services' credentials
       const configUpdate: Partial<AppConfig> = {
         notes_enabled: formData.notes_enabled,
-        notes_folder: formData.notes_folder,
         notes_remote_folder: formData.notes_remote_folder,
         data_dir: formData.data_dir,
       };
@@ -339,9 +337,9 @@ export default function FirstRunWizard() {
                       <Input
                         id="notes-folder"
                         placeholder="~/Documents/Notes"
-                        value={formData.notes_folder}
+                        value={formData.notes_remote_folder}
                         onChange={(e) =>
-                          setFormData({ ...formData, notes_folder: e.target.value })
+                          setFormData({ ...formData, notes_remote_folder: e.target.value })
                         }
                         className="flex-1"
                       />

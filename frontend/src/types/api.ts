@@ -28,9 +28,10 @@ export interface StatusResponse {
 
 // Configuration
 export interface AppConfig {
-  icloud_username: string;
+  data_dir: string;
+  config_file?: string;
+  icloud_username?: string;
   notes_enabled: boolean;
-  notes_folder: string;
   notes_remote_folder?: string;
   reminders_enabled: boolean;
   reminders_sync_mode?: 'auto' | 'manual';
@@ -44,8 +45,6 @@ export interface AppConfig {
   passwords_vaultwarden_url?: string;
   passwords_vaultwarden_email?: string;
   passwords_vaultwarden_password?: string;
-  data_dir: string;
-  config_file?: string;
 }
 
 export interface ConfigValidationResponse {

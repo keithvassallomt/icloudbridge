@@ -53,6 +53,7 @@ ruff = "^0.1.0"
 [tool.poetry.scripts]
 icloudbridge = "icloudbridge.cli.main:main_entry"
 notes-ripper = "icloudbridge.scripts.rich_notes:main"
+dev-server = "icloudbridge.scripts.dev_server:run"
 
 [build-system]
 requires = ["poetry-core"]

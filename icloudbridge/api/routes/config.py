@@ -21,6 +21,8 @@ async def get_config(config: ConfigDep):
     Returns the current configuration without sensitive data (passwords).
     """
     return ConfigResponse(
+        data_dir=str(config.general.data_dir),
+        config_file=str(config.default_config_path) if config.default_config_path else None,
         notes_enabled=config.notes.enabled,
         reminders_enabled=config.reminders.enabled,
         passwords_enabled=config.passwords.enabled,
@@ -157,6 +159,8 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
         )
 
     return ConfigResponse(
+        data_dir=str(config.general.data_dir),
+        config_file=str(config.default_config_path) if config.default_config_path else None,
         notes_enabled=config.notes.enabled,
         reminders_enabled=config.reminders.enabled,
         passwords_enabled=config.passwords.enabled,
@@ -216,6 +220,103 @@ async def validate_config(config: ConfigDep):
         "valid": len(errors) == 0,
         "errors": errors,
     }
+
+
+@router.post("/reset")
+async def reset_configuration(config: ConfigDep):
+    """Complete configuration reset.
+
+    This will:
+    - Delete all databases (notes.db, reminders.db, passwords.db)
+    - Clear all passwords from macOS Keychain
+    - Delete the configuration file
+    - Delete the data directory
+
+    WARNING: This action cannot be undone!
+    Note: Does NOT delete synced markdown files from the notes folder.
+
+    Returns:
+        Success message
+    """
+    import shutil
+    from pathlib import Path
+
+    logger.info("Starting complete configuration reset")
+
+    try:
+        credential_store = CredentialStore()
+
+        # 1. Delete passwords from keychain
+        logger.info("Deleting passwords from keychain")
+
+        # Delete CalDAV password if username exists
+        if config.reminders.caldav_username:
+            try:
+                credential_store.delete_caldav_password(config.reminders.caldav_username)
+                logger.info(f"Deleted CalDAV password for: {config.reminders.caldav_username}")
+            except Exception as e:
+                logger.warning(f"Failed to delete CalDAV password: {e}")
+
+        # Delete VaultWarden credentials if email exists
+        if config.passwords.vaultwarden_email:
+            try:
+                credential_store.delete_vaultwarden_credentials(config.passwords.vaultwarden_email)
+                logger.info(f"Deleted VaultWarden credentials for: {config.passwords.vaultwarden_email}")
+            except Exception as e:
+                logger.warning(f"Failed to delete VaultWarden credentials: {e}")
+
+        # 2. Get paths before we lose the config
+        data_dir = Path(config.general.data_dir).expanduser()
+        config_file = config.default_config_path
+
+        logger.info(f"Data directory: {data_dir}")
+        logger.info(f"Config file: {config_file}")
+
+        # 3. Delete individual database files first (in case data dir deletion fails)
+        if data_dir.exists():
+            logger.info("Deleting database files")
+            for db_file in ["notes.db", "reminders.db", "passwords.db", "settings.db"]:
+                db_path = data_dir / db_file
+                if db_path.exists():
+                    try:
+                        db_path.unlink()
+                        logger.info(f"Deleted: {db_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to delete {db_path}: {e}")
+
+        # 4. Delete the config file
+        if config_file and config_file.exists():
+            try:
+                config_file.unlink()
+                logger.info(f"Deleted config file: {config_file}")
+            except Exception as e:
+                logger.warning(f"Failed to delete config file: {e}")
+
+        # 5. Delete the entire data directory
+        if data_dir.exists():
+            try:
+                shutil.rmtree(data_dir)
+                logger.info(f"Deleted data directory: {data_dir}")
+            except Exception as e:
+                logger.warning(f"Failed to delete data directory: {e}")
+
+        # 6. Clear the cached config so next request gets defaults
+        from icloudbridge.api.dependencies import get_config
+        get_config.cache_clear()
+
+        logger.info("Configuration reset completed successfully")
+
+        return {
+            "status": "success",
+            "message": "Configuration has been completely reset. All databases, passwords, and configuration files have been deleted.",
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to reset configuration: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to reset configuration: {str(e)}"
+        )
 
 
 @router.post("/test-connection")

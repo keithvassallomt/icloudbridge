@@ -59,7 +59,7 @@ export default function Settings() {
   };
 
   const handleResetConfiguration = async () => {
-    if (!confirm('Are you sure you want to reset all configuration? This will clear all settings and restart the setup wizard. This action cannot be undone.')) {
+    if (!confirm('Are you sure you want to completely reset all configuration?\n\nThis will:\n- Delete all databases (notes, reminders, passwords)\n- Delete all sync history and state\n- Delete all passwords from macOS Keychain\n- Delete the configuration file\n- Delete the data directory\n\nNote: Your synced markdown files will NOT be deleted.\n\nThis action cannot be undone!')) {
       return;
     }
 
@@ -67,17 +67,8 @@ export default function Settings() {
       setLoading(true);
       setError(null);
 
-      // Disable all services and clear their settings to trigger first-run wizard
-      await apiClient.updateConfig({
-        notes_enabled: false,
-        notes_folder: '',
-        reminders_enabled: false,
-        reminders_caldav_url: '',
-        reminders_caldav_username: '',
-        passwords_enabled: false,
-        passwords_vaultwarden_url: '',
-        passwords_vaultwarden_email: '',
-      });
+      // Call the comprehensive reset endpoint
+      await apiClient.resetConfig();
 
       // Reset wizard state in Zustand
       resetWizard();
@@ -293,8 +284,8 @@ export default function Settings() {
               <Input
                 id="notes-folder"
                 placeholder="/path/to/notes"
-                value={formData.notes_folder || ''}
-                onChange={(e) => setFormData({ ...formData, notes_folder: e.target.value })}
+                value={formData.notes_remote_folder || ''}
+                onChange={(e) => setFormData({ ...formData, notes_remote_folder: e.target.value })}
               />
               <p className="text-xs text-muted-foreground">
                 Directory where markdown files will be stored
@@ -438,7 +429,9 @@ export default function Settings() {
               <div>
                 <Label className="text-destructive">Danger Zone</Label>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Permanently reset all configuration and restart the setup wizard
+                  Completely reset iCloudBridge by deleting all databases, sync history,
+                  keychain passwords, configuration files, and the data directory.
+                  Your synced markdown files will NOT be deleted.
                 </p>
               </div>
               <Button
@@ -447,7 +440,7 @@ export default function Settings() {
                 disabled={loading}
               >
                 <Trash2 className="w-4 h-4 mr-2" />
-                Reset All Configuration
+                Complete Reset
               </Button>
             </div>
           </div>

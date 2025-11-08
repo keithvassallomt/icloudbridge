@@ -88,6 +88,8 @@ class VersionResponse(BaseModel):
 class ConfigResponse(BaseModel):
     """Response model for configuration."""
 
+    data_dir: str
+    config_file: str | None = None
     notes_enabled: bool
     reminders_enabled: bool
     passwords_enabled: bool
