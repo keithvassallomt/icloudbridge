@@ -104,6 +104,7 @@ icloudbridge notes sync [OPTIONS]
 | `--skip-deletions` | | flag | Skip all deletion operations | false |
 | `--deletion-threshold` | | INT | Max deletions before confirmation (-1 to disable) | 5 |
 | `--rich-notes / --no-rich-notes` | | flag | After sync, export read-only RichNotes snapshots | false |
+| `--shortcut-push / --classic-push` | | flag | Choose Shortcut pipeline (default) or legacy AppleScript pipeline when pushing markdown to Apple Notes | shortcut-push |
 
 > **Note**: The sync engine now **always** copies the Apple Notes database and feeds the Ruby-based
 > rich-notes ripper to obtain HTML bodies. Grant `tools/note_db_copy/copy_note_db.py` Full Disk
@@ -114,7 +115,8 @@ icloudbridge notes sync [OPTIONS]
 > (override with `ICLOUDBRIDGE_NOTES__CONTENT_SHORTCUT`), iCloudBridge routes Markdown checklists and
 > non-checklist content through those shortcuts to produce real Apple Notes checklists. This requires
 > the macOS `shortcuts` CLI; if the shortcuts are missing or fail, we gracefully fall back to plain
-> bullets.
+> bullets. Shortcut push mode is now the default for every note; pass `--classic-push` (or set
+> `ICLOUDBRIDGE_NOTES__USE_SHORTCUTS_FOR_PUSH=false`) if you need the legacy AppleScript HTML path.
 
 **Examples**:
 

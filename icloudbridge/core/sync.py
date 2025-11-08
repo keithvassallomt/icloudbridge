@@ -43,6 +43,7 @@ class NotesSyncEngine:
         self,
         markdown_base_path: Path,
         db_path: Path,
+        prefer_shortcuts: bool = True,
     ):
         """
         Initialize the sync engine.
@@ -55,6 +56,7 @@ class NotesSyncEngine:
         self.markdown_adapter = MarkdownAdapter(markdown_base_path)
         self.shortcut_calls: list[dict[str, str | None]] = []
         self.shortcuts = NotesShortcutAdapter(self.shortcut_calls)
+        self.use_shortcut_pipeline = prefer_shortcuts
         self.db = NotesDB(db_path)
 
     async def initialize(self) -> None:
@@ -507,9 +509,11 @@ class NotesSyncEngine:
         """
         prepared_note = await self.markdown_adapter.get_note_for_apple_notes(md_note.file_path)
 
-        if prepared_note.has_checklist:
+        use_shortcuts = prepared_note.has_checklist or self.use_shortcut_pipeline
+
+        if use_shortcuts:
             logger.debug(
-                "Detected checklist note '%s' in folder '%s'; using Shortcut pipeline",
+                "Using Shortcut pipeline for note '%s' in folder '%s'",
                 md_note.name,
                 folder_name,
             )

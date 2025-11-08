@@ -28,6 +28,7 @@ class NotesConfig(BaseSettings):
     enabled: bool = True
     remote_folder: Path | None = None
     folders: dict[str, FolderConfig] = Field(default_factory=dict)
+    use_shortcuts_for_push: bool = True
 
     @field_validator("remote_folder", mode="before")
     @classmethod

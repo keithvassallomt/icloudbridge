@@ -294,6 +294,11 @@ def notes_sync(
         "--rich-notes/--no-rich-notes",
         help="After syncing, export rich notes snapshot into RichNotes/",
     ),
+    shortcut_push: Optional[bool] = typer.Option(
+        None,
+        "--shortcut-push/--classic-push",
+        help="Use the Shortcut pipeline (default) or legacy AppleScript pipeline when pushing markdown back to Apple Notes",
+    ),
 ) -> None:
     """Synchronize notes between Apple Notes and markdown files."""
     cfg = ctx.obj["config"]
@@ -315,9 +320,12 @@ def notes_sync(
 
     async def run_sync():
         # Initialize sync engine
+        prefer_shortcuts = shortcut_push if shortcut_push is not None else cfg.notes.use_shortcuts_for_push
+
         sync_engine = NotesSyncEngine(
             markdown_base_path=cfg.notes.remote_folder,
             db_path=cfg.notes_db_path,
+            prefer_shortcuts=prefer_shortcuts,
         )
         await sync_engine.initialize()
 
