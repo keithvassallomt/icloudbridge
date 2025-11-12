@@ -176,6 +176,25 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
                 detail=f"Failed to store VaultWarden credentials: {str(e)}"
             )
 
+    # Update photos config
+    if update.photos_enabled is not None:
+        config.photos.enabled = update.photos_enabled
+    if update.photos_default_album is not None:
+        # Use the provided value if non-empty, otherwise use default
+        config.photos.default_album = update.photos_default_album.strip() if update.photos_default_album else "iCloudBridge Imports"
+    if update.photo_sources is not None:
+        try:
+            config.photos.sources = {
+                name: PhotoSourceConfig(**src)
+                for name, src in update.photo_sources.items()
+            }
+        except Exception as exc:
+            logger.error(f"Invalid photo sources configuration: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid photo sources configuration: {exc}",
+            )
+
     # Save config to disk
     try:
         print(f"[DEBUG SAVE] Before save - username: {config.reminders.caldav_username}")
@@ -195,24 +214,6 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to save configuration: {str(e)}"
         )
-
-    # Update photos config
-    if update.photos_enabled is not None:
-        config.photos.enabled = update.photos_enabled
-    if update.photos_default_album is not None:
-        config.photos.default_album = update.photos_default_album
-    if update.photo_sources is not None:
-        try:
-            config.photos.sources = {
-                name: PhotoSourceConfig(**src)
-                for name, src in update.photo_sources.items()
-            }
-        except Exception as exc:
-            logger.error(f"Invalid photo sources configuration: {exc}")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid photo sources configuration: {exc}",
-            )
 
     return ConfigResponse(
         data_dir=str(config.general.data_dir),

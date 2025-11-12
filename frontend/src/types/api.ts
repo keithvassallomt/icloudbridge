@@ -61,6 +61,18 @@ export interface AppConfig {
   passwords_vaultwarden_url?: string;
   passwords_vaultwarden_email?: string;
   passwords_vaultwarden_password?: string;
+  photos_enabled: boolean;
+  photos_default_album?: string;
+  photo_sources?: Record<string, PhotoSource>;
+}
+
+export interface PhotoSource {
+  path: string;
+  recursive?: boolean;
+  album?: string;
+  include_images?: boolean;
+  include_videos?: boolean;
+  metadata_sidecars?: boolean;
 }
 
 export interface ConfigValidationResponse {

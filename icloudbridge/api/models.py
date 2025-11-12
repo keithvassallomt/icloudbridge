@@ -214,6 +214,7 @@ class PhotoSyncRequest(BaseModel):
         description="Optional list of configured source keys to limit the scan",
     )
     dry_run: bool = Field(default=False, description="Preview imports without sending to Photos")
+    initial_scan: bool = Field(default=False, description="Initial scan to build database without importing")
     skip_deletions: bool = False
     deletion_threshold: int = 5
 

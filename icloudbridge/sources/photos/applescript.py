@@ -48,7 +48,17 @@ on run argv
 
     tell application "Photos"
         set targetAlbum to album albumName
-        import fileList into targetAlbum with skip check duplicates
+        set importedItems to import fileList into targetAlbum with skip check duplicates
+
+        -- Extract local identifiers from imported items
+        set idList to {}
+        repeat with mediaItem in importedItems
+            set end of idList to id of mediaItem
+        end repeat
+
+        -- Return comma-separated list of local identifiers
+        set AppleScript's text item delimiters to ","
+        return idList as string
     end tell
 end run
 """
@@ -69,11 +79,22 @@ class PhotosAppleScriptAdapter:
 
         await self._run_script(CREATE_ALBUM_SCRIPT, album_name)
 
-    async def import_files(self, manifest: Path, album_name: str) -> None:
-        """Import the files listed in `manifest` into the target album."""
+    async def import_files(self, manifest: Path, album_name: str) -> list[str]:
+        """Import the files listed in `manifest` into the target album.
+
+        Returns:
+            List of Apple Photos local identifiers for the imported items
+        """
         if not manifest.exists():
             raise FileNotFoundError(f"Manifest not found: {manifest}")
-        await self._run_script(IMPORT_SCRIPT, str(manifest), album_name)
+
+        result = await self._run_script(IMPORT_SCRIPT, str(manifest), album_name)
+
+        # Parse comma-separated list of identifiers
+        if not result:
+            return []
+
+        return [identifier.strip() for identifier in result.split(",") if identifier.strip()]
 
     async def _run_script(self, script: str, *args: str) -> str:
         """Execute an AppleScript snippet via `osascript`."""

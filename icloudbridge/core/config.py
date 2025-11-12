@@ -63,6 +63,13 @@ class PhotoSourceConfig(BaseSettings):
         """Expand user home directory in source paths."""
         return Path(v).expanduser().resolve()
 
+    def model_dump(self, **kwargs) -> dict:
+        """Override to convert Path to string for serialization."""
+        data = super().model_dump(**kwargs)
+        if "path" in data and isinstance(data["path"], Path):
+            data["path"] = str(data["path"])
+        return data
+
 
 class NotesConfig(BaseSettings):
     """Configuration for Notes synchronization."""
@@ -176,6 +183,17 @@ class PhotosConfig(BaseSettings):
         if normalized not in supported:
             raise ValueError(f"Unsupported hash algorithm '{v}'. Supported: {', '.join(sorted(supported))}")
         return normalized
+
+    def model_dump(self, **kwargs) -> dict:
+        """Override to properly serialize nested PhotoSourceConfig objects."""
+        data = super().model_dump(**kwargs)
+        if "sources" in data and isinstance(data["sources"], dict):
+            # Ensure each PhotoSourceConfig is properly serialized
+            data["sources"] = {
+                name: source.model_dump(**kwargs) if hasattr(source, "model_dump") else source
+                for name, source in data["sources"].items()
+            }
+        return data
 
 
 class PasswordsConfig(BaseSettings):

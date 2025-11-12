@@ -46,6 +46,8 @@ websockets = "^12.0"
 email-validator = "^2.1.0"
 argon2-cffi = "^23.1.0"
 cryptography = "^46.0.3"
+Pillow = "^11.0.0"
+pillow-heif = "^1.0.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

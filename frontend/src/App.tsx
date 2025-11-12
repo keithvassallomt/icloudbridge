@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Notes from './pages/Notes';
 import Reminders from './pages/Reminders';
 import Passwords from './pages/Passwords';
+import Photos from './pages/Photos';
 import Schedules from './pages/Schedules';
 import Logs from './pages/Logs';
 import Settings from './pages/Settings';
@@ -67,6 +68,7 @@ function App() {
           <Route path="notes" element={<Notes />} />
           <Route path="reminders" element={<Reminders />} />
           <Route path="passwords" element={<Passwords />} />
+          <Route path="photos" element={<Photos />} />
           <Route path="schedules" element={<Schedules />} />
           <Route path="logs" element={<Logs />} />
           <Route path="settings" element={<Settings />} />

@@ -17,6 +17,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from icloudbridge.api.websocket import send_schedule_run, send_sync_progress
 from icloudbridge.core.config import AppConfig
 from icloudbridge.core.passwords_sync import PasswordsSyncEngine
+from icloudbridge.core.photos_sync import PhotoSyncEngine
 from icloudbridge.core.reminders_sync import RemindersSyncEngine
 from icloudbridge.core.sync import NotesSyncEngine
 from icloudbridge.sources.passwords.vaultwarden_api import VaultwardenAPIClient
@@ -169,6 +170,8 @@ class SchedulerManager:
                 result = await self._sync_reminders(config)
             elif service == "passwords":
                 result = await self._sync_passwords(config)
+            elif service == "photos":
+                result = await self._sync_photos(config)
             else:
                 raise ValueError(f"Unknown service: {service}")
 
@@ -290,6 +293,26 @@ class SchedulerManager:
             "status": "skipped",
             "message": "Scheduled password sync requires manual CSV export",
         }
+
+    async def _sync_photos(self, config: dict) -> dict:
+        """Execute photos sync.
+
+        Args:
+            config: Sync configuration
+
+        Returns:
+            Sync statistics
+        """
+        engine = PhotoSyncEngine(
+            config=self.config.photos,
+            data_dir=self.config.general.data_dir,
+        )
+        await engine.initialize()
+
+        return await engine.sync(
+            sources=config.get("sources"),
+            dry_run=config.get("dry_run", False),
+        )
 
     async def add_schedule(self, schedule_id: int) -> None:
         """Add a schedule to the scheduler.

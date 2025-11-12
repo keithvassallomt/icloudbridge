@@ -1,29 +1,39 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Settings as SettingsIcon, RefreshCw, Save, Trash2, FileText, Calendar, Key, Download, Shield, AlertTriangle, ExternalLink, CheckCircle, Loader2, Database } from 'lucide-react';
+import { Settings as SettingsIcon, RefreshCw, Save, Trash2, FileText, Calendar, Key, Image, Download, Shield, AlertTriangle, ExternalLink, CheckCircle, Loader2, Database } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Progress } from '@/components/ui/progress';
 import { FolderBrowserDialog } from '@/components/FolderBrowserDialog';
 import { useAppStore } from '@/store/app-store';
+import { useSyncStore } from '@/store/sync-store';
 import apiClient from '@/lib/api-client';
 import type { AppConfig, PasswordsStatus, SetupVerificationResponse } from '@/types/api';
 
 export default function Settings() {
   const { config, setConfig, setIsFirstRun, resetWizard } = useAppStore();
+  const { activeSyncs } = useSyncStore();
   const [formData, setFormData] = useState<Partial<AppConfig>>({});
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [showPhotosFolderBrowser, setShowPhotosFolderBrowser] = useState(false);
   const [verification, setVerification] = useState<SetupVerificationResponse | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [passwordStatus, setPasswordStatus] = useState<PasswordsStatus | null>(null);
   const [passwordStatusLoading, setPasswordStatusLoading] = useState(false);
   const [vaultCredsLoading, setVaultCredsLoading] = useState(false);
+  const [showInitialScanModal, setShowInitialScanModal] = useState(false);
+  const [initialScanProgress, setInitialScanProgress] = useState(0);
+  const [initialScanMessage, setInitialScanMessage] = useState('');
+  const [initialScanComplete, setInitialScanComplete] = useState(false);
+  const [pendingSavePayload, setPendingSavePayload] = useState<Partial<AppConfig> | null>(null);
 
   const loadPasswordStatus = useCallback(async () => {
     try {
@@ -112,11 +122,12 @@ export default function Settings() {
     }
   };
 
-  const handleServiceReset = async (service: 'notes' | 'reminders' | 'passwords') => {
+  const handleServiceReset = async (service: 'notes' | 'reminders' | 'passwords' | 'photos') => {
     const serviceNames = {
       notes: 'Notes',
       reminders: 'Reminders',
-      passwords: 'Passwords'
+      passwords: 'Passwords',
+      photos: 'Photos'
     };
 
     const serviceName = serviceNames[service];
@@ -135,6 +146,8 @@ export default function Settings() {
         await apiClient.resetReminders();
       } else if (service === 'passwords') {
         await apiClient.resetPasswords();
+      } else if (service === 'photos') {
+        await apiClient.resetPhotos();
       }
 
       // Update config to disable the service
@@ -154,6 +167,11 @@ export default function Settings() {
         updatedFormData.passwords_vaultwarden_url = '';
         updatedFormData.passwords_vaultwarden_email = '';
         delete (updatedFormData as Record<string, unknown>).passwords_vaultwarden_password;
+      } else if (service === 'photos') {
+        updatedFormData.photos_enabled = false;
+        // Remove instead of setting to empty string to use backend default
+        delete (updatedFormData as Record<string, unknown>).photos_default_album;
+        updatedFormData.photo_sources = {};
       }
 
       // Save the updated config
@@ -255,6 +273,25 @@ export default function Settings() {
     }
   };
 
+  const photosSettingsChanged = () => {
+    if (!config) return false;
+
+    // Check if photos was enabled
+    const wasEnabled = config.photos_enabled;
+    const isEnabled = formData.photos_enabled;
+
+    // Check if album changed
+    const albumChanged = config.photos_default_album !== formData.photos_default_album;
+
+    // Check if sources changed
+    const oldSources = JSON.stringify(config.photo_sources || {});
+    const newSources = JSON.stringify(formData.photo_sources || {});
+    const sourcesChanged = oldSources !== newSources;
+
+    // If photos is being enabled or sources/album changed while enabled
+    return (!wasEnabled && isEnabled) || (isEnabled && (albumChanged || sourcesChanged));
+  };
+
   const handleSave = async () => {
     try {
       setLoading(true);
@@ -264,6 +301,19 @@ export default function Settings() {
       const payload = { ...formData };
       delete (payload as Record<string, unknown>).passwords_vaultwarden_password;
 
+      // Check if photos settings changed and photos is enabled
+      if (photosSettingsChanged()) {
+        // Save payload for later and show initial scan modal
+        setPendingSavePayload(payload);
+        setShowInitialScanModal(true);
+        setInitialScanProgress(0);
+        setInitialScanMessage('Preparing initial scan...');
+        setInitialScanComplete(false);
+        setLoading(false);
+        return;
+      }
+
+      // If no photos changes, save normally
       const updated = await apiClient.updateConfig(payload);
       setConfig(updated);
       setFormData({ ...updated, passwords_vaultwarden_password: '' });
@@ -274,6 +324,66 @@ export default function Settings() {
       setLoading(false);
     }
   };
+
+  const performInitialScan = async () => {
+    if (!pendingSavePayload) return;
+
+    try {
+      setInitialScanProgress(0);
+      setInitialScanMessage('Preparing...');
+
+      // Small delay to show 0% state
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      setInitialScanProgress(5);
+      setInitialScanMessage('Saving configuration...');
+
+      // First save the configuration so backend knows where to scan
+      const updated = await apiClient.updateConfig(pendingSavePayload);
+      setConfig(updated);
+      setFormData({ ...updated, passwords_vaultwarden_password: '' });
+
+      setInitialScanProgress(10);
+      setInitialScanMessage('Starting initial scan...');
+
+      // Run initial scan (builds database without importing to Photos)
+      await apiClient.syncPhotos(undefined, false, true);
+
+      // WebSocket updates will handle progress from 10-100%
+      // When scan completes, mark as done
+      setInitialScanComplete(true);
+      setSuccess('Configuration saved and initial scan completed');
+
+      // Close modal after a short delay
+      setTimeout(() => {
+        setShowInitialScanModal(false);
+        setPendingSavePayload(null);
+        setInitialScanComplete(false);
+      }, 1500);
+    } catch (err) {
+      setError(formatError(err, 'Initial scan failed'));
+      setShowInitialScanModal(false);
+      setPendingSavePayload(null);
+    }
+  };
+
+  // Trigger initial scan when modal opens
+  useEffect(() => {
+    if (showInitialScanModal && pendingSavePayload && !initialScanComplete) {
+      performInitialScan();
+    }
+  }, [showInitialScanModal, pendingSavePayload]);
+
+  // Watch for WebSocket progress updates during initial scan
+  useEffect(() => {
+    if (showInitialScanModal) {
+      const photoSync = activeSyncs.get('photos');
+      if (photoSync) {
+        setInitialScanProgress(photoSync.progress || 0);
+        setInitialScanMessage(photoSync.message || 'Scanning...');
+      }
+    }
+  }, [showInitialScanModal, activeSyncs]);
 
   return (
     <div className="space-y-6">
@@ -858,6 +968,122 @@ export default function Settings() {
         </CardContent>
       </Card>
 
+      {/* Photos Settings */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Image className="w-6 h-6 text-primary" />
+              <div>
+                <CardTitle>Photos Sync</CardTitle>
+                <CardDescription>Import photos and videos from local folders to Apple Photos</CardDescription>
+              </div>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => handleServiceReset('photos')}
+              disabled={resetting === 'photos' || loading}
+            >
+              {resetting === 'photos' ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Resetting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Reset Photos
+                </>
+              )}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between p-4 border rounded-lg">
+            <div>
+              <Label>Enable Photos Sync</Label>
+              <p className="text-sm text-muted-foreground">
+                Automatically import photos from local folders
+              </p>
+            </div>
+            <Switch
+              checked={formData.photos_enabled || false}
+              onCheckedChange={(checked) =>
+                setFormData({ ...formData, photos_enabled: checked })
+              }
+            />
+          </div>
+
+          {formData.photos_enabled && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="photos-folder">Photos Source Folder</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="photos-folder"
+                    placeholder="~/Pictures/Photos"
+                    value={
+                      formData.photo_sources?.default?.path ||
+                      ''
+                    }
+                    onChange={(e) => {
+                      const newPath = e.target.value;
+                      setFormData({
+                        ...formData,
+                        photo_sources: {
+                          ...(formData.photo_sources || {}),
+                          default: {
+                            ...(formData.photo_sources?.default || {}),
+                            path: newPath,
+                            recursive: true,
+                            include_images: true,
+                            include_videos: true,
+                            metadata_sidecars: true,
+                          },
+                        },
+                      });
+                    }}
+                    className="flex-1"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowPhotosFolderBrowser(true)}
+                  >
+                    Browse
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Local folder containing photos and videos to import
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="photos-album">Default Album Name</Label>
+                <Input
+                  id="photos-album"
+                  placeholder="iCloudBridge Imports"
+                  value={formData.photos_default_album || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, photos_default_album: e.target.value })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Name of the album in Apple Photos where imported photos will be stored
+                </p>
+              </div>
+            </>
+          )}
+
+          <Alert>
+            <AlertDescription>
+              Photos are imported to Apple Photos using content hash deduplication. Files can be renamed or moved without re-importing.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+
       {/* Advanced Settings */}
       <Card>
         <CardHeader>
@@ -929,6 +1155,62 @@ export default function Settings() {
         title="Select Notes Folder"
         description="Choose where to store your Notes as markdown files"
       />
+
+      <FolderBrowserDialog
+        open={showPhotosFolderBrowser}
+        onOpenChange={setShowPhotosFolderBrowser}
+        onSelect={(path) =>
+          setFormData({
+            ...formData,
+            photo_sources: {
+              ...(formData.photo_sources || {}),
+              default: {
+                ...(formData.photo_sources?.default || {}),
+                path,
+                recursive: true,
+                include_images: true,
+                include_videos: true,
+                metadata_sidecars: true,
+              },
+            },
+          })
+        }
+        initialPath={formData.photo_sources?.default?.path || '~/Pictures'}
+        title="Select Photos Source Folder"
+        description="Choose a folder containing photos and videos to import"
+      />
+
+      {/* Initial Scan Modal */}
+      <Dialog open={showInitialScanModal} onOpenChange={() => {}}>
+        <DialogContent
+          className="sm:max-w-md"
+          hideCloseButton={true}
+          onInteractOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle>Initial Photos Scan</DialogTitle>
+            <DialogDescription>
+              Scanning your photos folder to build the sync database. This is required before saving your configuration.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">{initialScanMessage}</span>
+                <span className="font-medium">{initialScanProgress}%</span>
+              </div>
+              <Progress value={initialScanProgress} />
+            </div>
+            {initialScanComplete && (
+              <div className="flex items-center gap-2 text-sm text-green-600">
+                <CheckCircle className="w-4 h-4" />
+                <span>Scan complete! Saving configuration...</span>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
