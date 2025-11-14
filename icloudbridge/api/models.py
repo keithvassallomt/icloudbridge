@@ -100,8 +100,11 @@ class ConfigResponse(BaseModel):
     reminders_caldav_username: str | None = None
     reminders_sync_mode: str | None = None
     reminders_calendar_mappings: dict[str, str] = Field(default_factory=dict)
+    passwords_provider: str | None = None
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
+    passwords_nextcloud_url: str | None = None
+    passwords_nextcloud_username: str | None = None
     photos_default_album: str | None = None
     photo_sources: dict[str, dict[str, str | bool]] = Field(default_factory=dict)
 
@@ -124,11 +127,18 @@ class ConfigUpdateRequest(BaseModel):
     )
     reminders_sync_mode: str | None = None
     reminders_calendar_mappings: dict[str, str] | None = None
+    passwords_provider: str | None = None
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
     passwords_vaultwarden_password: str | None = Field(
         default=None,
         description="Password will be stored in system keyring",
+    )
+    passwords_nextcloud_url: str | None = None
+    passwords_nextcloud_username: str | None = None
+    passwords_nextcloud_app_password: str | None = Field(
+        default=None,
+        description="Nextcloud app password will be stored in system keyring",
     )
     photos_default_album: str | None = None
     photo_sources: dict[str, dict[str, str | bool]] | None = None
@@ -233,6 +243,14 @@ class VaultwardenCredentialRequest(BaseModel):
     password: str
     client_id: str | None = None
     client_secret: str | None = None
+    url: str | None = None
+
+
+class NextcloudCredentialRequest(BaseModel):
+    """Request body for storing Nextcloud Passwords credentials."""
+
+    username: str
+    app_password: str
     url: str | None = None
 
 

@@ -17,7 +17,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Link } from 'react-router-dom';
 import { Progress } from '@/components/ui/progress';
 import { Label } from '@/components/ui/label';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -25,6 +24,7 @@ import { FolderMappingTable } from '@/components/FolderMappingTable';
 import apiClient from '@/lib/api-client';
 import { useSyncStore } from '@/store/sync-store';
 import type { SyncLog, SetupVerificationResponse, NotesAllFoldersResponse, FolderMapping, AppConfig, SyncResponse } from '@/types/api';
+import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
 
 type SimulationChangeCategory = 'added' | 'updated' | 'deleted' | 'unchanged';
 
@@ -386,24 +386,7 @@ export default function Notes() {
   };
 
   if (!loading && config && config.notes_enabled === false) {
-    return (
-      <div className="max-w-4xl mx-auto space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Notes sync is disabled</CardTitle>
-            <CardDescription>Enable Notes sync in Settings to configure folders or run a sync.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Head to the Settings page and enable Notes sync to unlock folder mappings, simulations, and sync controls.
-            </p>
-            <Button asChild>
-              <Link to="/settings">Go to Settings</Link>
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
+    return <ServiceDisabledNotice serviceName="Notes" />;
   }
 
   const handleSaveMappings = async (mappings: Record<string, FolderMapping>) => {

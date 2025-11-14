@@ -12,7 +12,8 @@ from fastapi.responses import FileResponse
 
 from icloudbridge.api.dependencies import ConfigDep, PasswordsDBDep, PasswordsSyncEngineDep
 from icloudbridge.api.downloads import download_manager
-from icloudbridge.api.models import VaultwardenCredentialRequest
+from icloudbridge.api.models import NextcloudCredentialRequest, VaultwardenCredentialRequest
+from icloudbridge.sources.passwords.providers import NextcloudPasswordsProvider, VaultwardenProvider
 from icloudbridge.sources.passwords.vaultwarden_api import VaultwardenAPIClient
 from icloudbridge.utils.credentials import CredentialStore
 from icloudbridge.utils.db import SyncLogsDB
@@ -37,38 +38,61 @@ async def _save_uploaded_csv(upload: UploadFile) -> Path:
     return temp_path
 
 
-async def _create_vaultwarden_client(config: ConfigDep) -> VaultwardenAPIClient:
+async def _build_password_provider(config: ConfigDep):
+    """Instantiate the configured password provider with stored credentials."""
+
+    provider_name = (config.passwords.provider or "vaultwarden").lower()
     credential_store = CredentialStore()
-    credentials = credential_store.get_vaultwarden_credentials(config.passwords.vaultwarden_email)
 
-    if not credentials:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="VaultWarden credentials not found. Please configure them first.",
+    if provider_name == "nextcloud":
+        username = config.passwords.nextcloud_username
+        url = config.passwords.nextcloud_url
+        if not username or not url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Nextcloud username and URL must be configured.",
+            )
+
+        credentials = credential_store.get_nextcloud_credentials(username)
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Nextcloud credentials not found. Please configure them first.",
+            )
+
+        provider = NextcloudPasswordsProvider(url, username, credentials["app_password"])
+    else:
+        email = config.passwords.vaultwarden_email
+        url = config.passwords.vaultwarden_url
+        if not email or not url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="VaultWarden URL and email must be configured.",
+            )
+
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="VaultWarden URL must include http:// or https://",
+            )
+
+        credentials = credential_store.get_vaultwarden_credentials(email)
+        if not credentials:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="VaultWarden credentials not found. Please configure them first.",
+            )
+
+        provider = VaultwardenProvider(
+            url=url,
+            email=credentials["email"],
+            password=credentials["password"],
+            client_id=credentials.get("client_id"),
+            client_secret=credentials.get("client_secret"),
         )
 
-    url = config.passwords.vaultwarden_url
-    if not url:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="VaultWarden URL not configured. Please set it in Settings.",
-        )
-
-    if not url.startswith("http://") and not url.startswith("https://"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="VaultWarden URL must include http:// or https://",
-        )
-
-    client = VaultwardenAPIClient(
-        url,
-        credentials['email'],
-        credentials['password'],
-        credentials.get('client_id'),
-        credentials.get('client_secret'),
-    )
-    await client.authenticate()
-    return client
+    await provider.authenticate()
+    return provider
 
 
 async def _attach_download_metadata(result: dict) -> tuple[dict, bool]:
@@ -113,7 +137,7 @@ async def _run_passwords_sync(
     apple_csv_path: Path | None = None
     output_csv_path: Path | None = None
     keep_output_file = False
-    client: VaultwardenAPIClient | None = None
+    provider = None
     log_id = None
     sync_logs_db: SyncLogsDB | None = None
 
@@ -126,7 +150,7 @@ async def _run_passwords_sync(
         if run_pull and not simulate:
             output_csv_path = Path(tempfile.gettempdir()) / f"apple-import-{uuid.uuid4().hex}.csv"
 
-        client = await _create_vaultwarden_client(config)
+        provider = await _build_password_provider(config)
 
         if log_sync_type and not simulate:
             sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
@@ -139,7 +163,7 @@ async def _run_passwords_sync(
 
         result = await engine.sync(
             apple_csv_path=apple_csv_path,
-            vaultwarden_client=client,
+            provider=provider,
             output_apple_csv=output_csv_path,
             simulate=simulate,
             run_push=run_push,
@@ -194,8 +218,11 @@ async def _run_passwords_sync(
             apple_csv_path.unlink(missing_ok=True)
         if output_csv_path and not keep_output_file:
             output_csv_path.unlink(missing_ok=True)
-        if client:
-            await client.close()
+        if 'provider' in locals() and provider:
+            try:
+                await provider.close()
+            except Exception:
+                pass
 
 
 @router.post("/import/apple")
@@ -440,6 +467,9 @@ async def get_status(passwords_db: PasswordsDBDep, config: ConfigDep):
     await sync_logs_db.initialize()
     logs = await sync_logs_db.get_logs(service="passwords", limit=1)
 
+    provider_name = (config.passwords.provider or "vaultwarden").lower()
+    provider_label = "Nextcloud Passwords" if provider_name == "nextcloud" else "VaultWarden"
+
     # Transform last sync log to match frontend expectations
     last_sync = None
     if logs:
@@ -461,7 +491,7 @@ async def get_status(passwords_db: PasswordsDBDep, config: ConfigDep):
             msg_parts = []
             created = push_stats.get("created")
             if created:
-                msg_parts.append(f"pushed {created} to VaultWarden")
+                msg_parts.append(f"pushed {created} to {provider_label}")
             new_entries = pull_stats.get("new_entries")
             if new_entries:
                 msg_parts.append(f"pulled {new_entries} for Apple import")
@@ -490,15 +520,34 @@ async def get_status(passwords_db: PasswordsDBDep, config: ConfigDep):
             "error_message": log.get("error_message"),
         }
 
-    # Check if credentials are available
+    provider_name = (config.passwords.provider or "vaultwarden").lower()
     credential_store = CredentialStore()
-    has_credentials = credential_store.has_vaultwarden_credentials(config.passwords.vaultwarden_email or "")
+    vaultwarden_email = config.passwords.vaultwarden_email or ""
+    nextcloud_username = config.passwords.nextcloud_username or ""
+
+    has_vaultwarden_credentials = (
+        credential_store.has_vaultwarden_credentials(vaultwarden_email)
+        if vaultwarden_email
+        else False
+    )
+    has_nextcloud_credentials = (
+        credential_store.has_nextcloud_credentials(nextcloud_username)
+        if nextcloud_username
+        else False
+    )
+
+    has_credentials = has_nextcloud_credentials if provider_name == "nextcloud" else has_vaultwarden_credentials
 
     return {
         "enabled": config.passwords.enabled,
+        "provider": provider_name,
         "vaultwarden_url": config.passwords.vaultwarden_url,
         "vaultwarden_email": config.passwords.vaultwarden_email,
+        "nextcloud_url": config.passwords.nextcloud_url,
+        "nextcloud_username": config.passwords.nextcloud_username,
         "has_credentials": has_credentials,
+        "has_vaultwarden_credentials": has_vaultwarden_credentials,
+        "has_nextcloud_credentials": has_nextcloud_credentials,
         "total_entries": stats.get("total", 0),
         "by_source": stats.get("by_source", {}),
         "last_sync": last_sync,
@@ -520,6 +569,9 @@ async def get_history(
     Returns:
         List of sync log entries
     """
+    provider_name = (config.passwords.provider or "vaultwarden").lower()
+    provider_label = "Nextcloud Passwords" if provider_name == "nextcloud" else "VaultWarden"
+
     sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
     await sync_logs_db.initialize()
 
@@ -550,7 +602,7 @@ async def get_history(
             msg_parts = []
             created = push_stats.get("created")
             if created:
-                msg_parts.append(f"pushed {created} to VaultWarden")
+                msg_parts.append(f"pushed {created} to {provider_label}")
             new_entries = pull_stats.get("new_entries")
             if new_entries:
                 msg_parts.append(f"pulled {new_entries} for Apple import")
@@ -607,14 +659,23 @@ async def reset_database(passwords_db: PasswordsDBDep, config: ConfigDep):
         await sync_logs_db.clear_service_logs("passwords")
         logger.info("Passwords sync history cleared")
 
+        credential_store = CredentialStore()
+
         # Delete Vaultwarden credentials from keychain if email exists
         if config.passwords.vaultwarden_email:
             try:
-                credential_store = CredentialStore()
                 credential_store.delete_vaultwarden_credentials(config.passwords.vaultwarden_email)
                 logger.info(f"Deleted Vaultwarden credentials for: {config.passwords.vaultwarden_email}")
             except Exception as e:
                 logger.warning(f"Failed to delete Vaultwarden credentials: {e}")
+
+        # Delete Nextcloud credentials if username exists
+        if config.passwords.nextcloud_username:
+            try:
+                credential_store.delete_nextcloud_credentials(config.passwords.nextcloud_username)
+                logger.info(f"Deleted Nextcloud credentials for: {config.passwords.nextcloud_username}")
+            except Exception as e:
+                logger.warning(f"Failed to delete Nextcloud credentials: {e}")
 
         return {
             "status": "success",
@@ -658,6 +719,9 @@ async def set_vaultwarden_credentials(
         updated = False
         if not config.passwords.enabled:
             config.passwords.enabled = True
+            updated = True
+        if config.passwords.provider != "vaultwarden":
+            config.passwords.provider = "vaultwarden"
             updated = True
         if config.passwords.vaultwarden_email != payload.email:
             config.passwords.vaultwarden_email = payload.email
@@ -720,6 +784,92 @@ async def delete_vaultwarden_credentials(email: str, config: ConfigDep):
         }
     except Exception as e:
         logger.error(f"Failed to delete VaultWarden credentials: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete credentials: {str(e)}"
+        )
+
+
+@router.post("/nextcloud/credentials")
+async def set_nextcloud_credentials(
+    payload: NextcloudCredentialRequest,
+    config: ConfigDep,
+):
+    """Store Nextcloud Passwords credentials in system keyring."""
+
+    try:
+        credential_store = CredentialStore()
+        credential_store.set_nextcloud_credentials(payload.username, payload.app_password)
+
+        logger.info(f"Nextcloud credentials stored for: {payload.username}")
+
+        updated = False
+        if not config.passwords.enabled:
+            config.passwords.enabled = True
+            updated = True
+        if config.passwords.provider != "nextcloud":
+            config.passwords.provider = "nextcloud"
+            updated = True
+        if config.passwords.nextcloud_username != payload.username:
+            config.passwords.nextcloud_username = payload.username
+            updated = True
+        if payload.url:
+            config.passwords.nextcloud_url = payload.url
+            updated = True
+
+        if updated:
+            try:
+                config.save_to_file(config.default_config_path)
+                from icloudbridge.api.dependencies import get_config
+
+                get_config.cache_clear()
+                logger.info("Passwords configuration updated with Nextcloud settings")
+            except Exception as exc:
+                logger.warning("Failed to persist Nextcloud configuration: %s", exc)
+
+        return {
+            "status": "success",
+            "message": f"Credentials stored securely for {payload.username}",
+        }
+    except Exception as e:
+        logger.error(f"Failed to store Nextcloud credentials: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to store credentials: {str(e)}"
+        )
+
+
+@router.delete("/nextcloud/credentials")
+async def delete_nextcloud_credentials(username: str, config: ConfigDep):
+    """Delete Nextcloud credentials from system keyring."""
+
+    try:
+        credential_store = CredentialStore()
+        deleted = credential_store.delete_nextcloud_credentials(username)
+
+        if config.passwords.nextcloud_username == username:
+            config.passwords.nextcloud_username = None
+            try:
+                config.save_to_file(config.default_config_path)
+                from icloudbridge.api.dependencies import get_config
+
+                get_config.cache_clear()
+            except Exception as exc:
+                logger.warning("Failed to persist Nextcloud username removal: %s", exc)
+
+        if deleted:
+            return {
+                "status": "success",
+                "message": f"Credentials deleted for {username}",
+            }
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No credentials found to delete",
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete Nextcloud credentials: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete credentials: {str(e)}"

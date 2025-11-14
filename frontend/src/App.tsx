@@ -22,6 +22,16 @@ function App() {
   }, [theme, setTheme]);
 
   useEffect(() => {
+    if (theme !== 'system') {
+      return;
+    }
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = () => setTheme('system');
+    media.addEventListener('change', handler);
+    return () => media.removeEventListener('change', handler);
+  }, [theme, setTheme]);
+
+  useEffect(() => {
     // Check if this is first run by trying to load config
     const checkFirstRun = async () => {
       try {

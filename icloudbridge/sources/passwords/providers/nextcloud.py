@@ -47,6 +47,7 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
         self._client = httpx.AsyncClient(
             auth=(username, app_password),
             timeout=30.0,
+            follow_redirects=True,
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json",
@@ -255,19 +256,29 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
                 json=payload,
             )
             response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 405:
+                logger.warning(
+                    "password/create endpoint returned 405; falling back to legacy password endpoint."
+                )
+                response = await self._client.post(
+                    f"{self.api_base}/password",
+                    json=payload,
+                )
+                response.raise_for_status()
+            else:
+                logger.error(f"Failed to create password: HTTP {e.response.status_code}")
+                logger.error(f"Response: {e.response.text}")
+                raise
 
+        try:
             result = response.json()
             password_id = result.get("id")
 
             logger.debug(f"Created password {password_id}: {entry.title}")
             return password_id
-
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Failed to create password: HTTP {e.response.status_code}")
-            logger.error(f"Response: {e.response.text}")
-            raise
         except Exception as e:
-            logger.error(f"Failed to create password: {e}")
+            logger.error(f"Failed to parse create password response: {e}")
             raise
 
     async def update_password(self, password_id: str, entry: PasswordEntry) -> None:
@@ -325,16 +336,25 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
                 json=payload,
             )
             response.raise_for_status()
-
-            logger.debug(f"Updated password {password_id}")
-
         except httpx.HTTPStatusError as e:
-            logger.error(f"Failed to update password: HTTP {e.response.status_code}")
-            logger.error(f"Response: {e.response.text}")
-            raise
+            if e.response.status_code == 405:
+                logger.warning(
+                    "password/update endpoint returned 405; falling back to legacy password endpoint."
+                )
+                response = await self._client.post(
+                    f"{self.api_base}/password",
+                    json=payload,
+                )
+                response.raise_for_status()
+            else:
+                logger.error(f"Failed to update password: HTTP {e.response.status_code}")
+                logger.error(f"Response: {e.response.text}")
+                raise
         except Exception as e:
             logger.error(f"Failed to update password: {e}")
             raise
+
+        logger.debug(f"Updated password {password_id}")
 
     async def delete_password(self, password_id: str) -> None:
         """
@@ -414,6 +434,8 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
             logger.error(f"Failed to get folder: {e}")
             return None
 
+    ROOT_FOLDER_ID = "00000000-0000-0000-0000-000000000000"
+
     async def create_folder(self, name: str, parent_id: str | None = None) -> str:
         """
         Create a new folder in Nextcloud.
@@ -431,11 +453,7 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
             "label": name,
         }
 
-        if parent_id:
-            payload["parent"] = parent_id
-        else:
-            # Use base folder UUID
-            payload["parent"] = "00000000-0000-0000-0000-000000000000"
+        payload["parent"] = parent_id or self.ROOT_FOLDER_ID
 
         try:
             response = await self._client.post(
@@ -456,6 +474,14 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
             return folder_id
 
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 405:
+                logger.warning(
+                    "Nextcloud Passwords API does not allow folder creation (HTTP 405). "
+                    "Falling back to root folder for '%s'.",
+                    name,
+                )
+                self._folder_cache[name] = self.ROOT_FOLDER_ID
+                return self.ROOT_FOLDER_ID
             logger.error(f"Failed to create folder: HTTP {e.response.status_code}")
             logger.error(f"Response: {e.response.text}")
             raise

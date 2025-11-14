@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from icloudbridge.api.dependencies import ConfigDep
 from icloudbridge.api.models import ConfigResponse, ConfigUpdateRequest
-from icloudbridge.core.config import FolderMapping, PhotoSourceConfig
+from icloudbridge.core.config import FolderMapping, PhotoSourceConfig, PasswordsConfig
 from icloudbridge.utils.credentials import CredentialStore
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,11 @@ async def get_config(config: ConfigDep):
         reminders_caldav_username=config.reminders.caldav_username,
         reminders_sync_mode=config.reminders.sync_mode,
         reminders_calendar_mappings=config.reminders.calendar_mappings or {},
+        passwords_provider=config.passwords.provider,
         passwords_vaultwarden_url=config.passwords.vaultwarden_url,
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
+        passwords_nextcloud_url=config.passwords.nextcloud_url,
+        passwords_nextcloud_username=config.passwords.nextcloud_username,
         photos_default_album=config.photos.default_album,
         photo_sources=_serialize_photo_sources(config.photos.sources),
     )
@@ -154,6 +157,14 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
     # Update passwords config
     if update.passwords_enabled is not None:
         config.passwords.enabled = update.passwords_enabled
+    if update.passwords_provider is not None:
+        try:
+            config.passwords.provider = PasswordsConfig.validate_provider(update.passwords_provider)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            )
     if update.passwords_vaultwarden_url is not None:
         config.passwords.vaultwarden_url = update.passwords_vaultwarden_url
     if update.passwords_vaultwarden_email is not None:
@@ -174,6 +185,23 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to store VaultWarden credentials: {str(e)}"
+            )
+    if update.passwords_nextcloud_url is not None:
+        config.passwords.nextcloud_url = update.passwords_nextcloud_url
+    if update.passwords_nextcloud_username is not None:
+        config.passwords.nextcloud_username = update.passwords_nextcloud_username
+    if update.passwords_nextcloud_app_password is not None and update.passwords_nextcloud_app_password != "":
+        try:
+            username = update.passwords_nextcloud_username or config.passwords.nextcloud_username
+            if not username:
+                raise ValueError("Nextcloud username is required to store app password")
+            credential_store.set_nextcloud_credentials(username, update.passwords_nextcloud_app_password)
+            logger.info(f"Nextcloud credentials stored in keyring for: {username}")
+        except Exception as e:
+            logger.error(f"Failed to store Nextcloud credentials in keyring: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to store Nextcloud credentials: {str(e)}"
             )
 
     # Update photos config
@@ -447,39 +475,83 @@ async def test_connection(service: str, config: ConfigDep):
             }
 
     elif service == "passwords":
-        try:
-            from icloudbridge.sources.passwords.vaultwarden_api import VaultwardenAPIClient
+        provider_name = (config.passwords.provider or "vaultwarden").lower()
+        credential_store = CredentialStore()
 
-            credential_store = CredentialStore()
-            credentials = credential_store.get_vaultwarden_credentials(config.passwords.vaultwarden_email)
+        if provider_name == "nextcloud":
+            try:
+                from icloudbridge.sources.passwords.providers import NextcloudPasswordsProvider
 
-            if not credentials:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="VaultWarden credentials not found in keyring"
+                username = config.passwords.nextcloud_username
+                url = config.passwords.nextcloud_url
+                if not username or not url:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Nextcloud username and URL must be configured",
+                    )
+
+                credentials = credential_store.get_nextcloud_credentials(username)
+                if not credentials:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Nextcloud credentials not found in keyring",
+                    )
+
+                provider = NextcloudPasswordsProvider(url, username, credentials["app_password"])
+                try:
+                    await provider.authenticate()
+                finally:
+                    await provider.close()
+
+                return {
+                    "success": True,
+                    "message": "Successfully connected to Nextcloud Passwords.",
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Nextcloud connection test failed: {e}")
+                return {
+                    "success": False,
+                    "message": f"Connection failed: {str(e)}",
+                }
+        else:
+            try:
+                from icloudbridge.sources.passwords.vaultwarden_api import VaultwardenAPIClient
+
+                credentials = credential_store.get_vaultwarden_credentials(config.passwords.vaultwarden_email)
+
+                if not credentials:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="VaultWarden credentials not found in keyring"
+                    )
+
+                client = VaultwardenAPIClient(
+                    config.passwords.vaultwarden_url,
+                    credentials['email'],
+                    credentials['password'],
+                    credentials.get('client_id'),
+                    credentials.get('client_secret'),
                 )
 
-            client = VaultwardenAPIClient(
-                config.passwords.vaultwarden_url,
-                credentials['email'],
-                credentials['password'],
-                credentials.get('client_id'),
-                credentials.get('client_secret'),
-            )
+                try:
+                    await client.authenticate()
+                finally:
+                    await client.close()
 
-            # Try to authenticate
-            client.authenticate()
-
-            return {
-                "success": True,
-                "message": "Successfully connected to VaultWarden server.",
-            }
-        except Exception as e:
-            logger.error(f"VaultWarden connection test failed: {e}")
-            return {
-                "success": False,
-                "message": f"Connection failed: {str(e)}",
-            }
+                return {
+                    "success": True,
+                    "message": "Successfully connected to VaultWarden server.",
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"VaultWarden connection test failed: {e}")
+                return {
+                    "success": False,
+                    "message": f"Connection failed: {str(e)}",
+                }
 
     else:
         raise HTTPException(

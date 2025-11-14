@@ -7,6 +7,9 @@ import { Progress } from '@/components/ui/progress';
 import apiClient from '@/lib/api-client';
 import { useSyncStore } from '@/store/sync-store';
 import type { AppConfig, PasswordsDownloadInfo, PasswordsSyncResponse, SyncLog } from '@/types/api';
+import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
+
+type PasswordProvider = 'vaultwarden' | 'nextcloud';
 
 function DownloadLink({ info }: { info: PasswordsDownloadInfo }) {
   const [hasExpired, setHasExpired] = useState(false);
@@ -56,7 +59,7 @@ function DownloadLink({ info }: { info: PasswordsDownloadInfo }) {
   );
 }
 
-function SyncStatsView({ result }: { result: PasswordsSyncResponse | null }) {
+function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncResponse | null; providerLabel: string }) {
   if (!result) {
     return null;
   }
@@ -71,7 +74,7 @@ function SyncStatsView({ result }: { result: PasswordsSyncResponse | null }) {
 
       {stats.push && (
         <div className="space-y-2">
-          <div className="text-sm font-semibold">VaultWarden updates</div>
+          <div className="text-sm font-semibold">{providerLabel} updates</div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
             <div>
               <p className="text-muted-foreground">Queued</p>
@@ -207,9 +210,9 @@ export default function Passwords() {
       setExportLoading(true);
       setError(null);
       setSuccess(null);
-      const response = await apiClient.passwordsExportToVaultwarden(exportFile, { bulk: true });
+      const response = await apiClient.passwordsExportToProvider(exportFile, { bulk: true });
       setExportResult(response);
-      setSuccess('Export to VaultWarden complete.');
+      setSuccess(`Export to ${providerActionLabel} complete.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Export failed');
     } finally {
@@ -222,12 +225,12 @@ export default function Passwords() {
       setImportLoading(true);
       setError(null);
       setSuccess(null);
-      const response = await apiClient.passwordsImportFromVaultwarden({ bulk: true });
+      const response = await apiClient.passwordsImportFromProvider({ bulk: true });
       setImportResult(response);
       if (response.stats.pull?.new_entries) {
         setSuccess('Import prepared. Download the Apple CSV and import it.');
       } else {
-        setSuccess('No new VaultWarden entries found.');
+        setSuccess(`No new ${providerActionLabel} entries found.`);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Import failed');
@@ -255,6 +258,10 @@ export default function Passwords() {
   const formatDate = (dateStr: string) => new Date(dateStr).toLocaleString();
 
   const disabled = config && config.passwords_enabled === false;
+  const provider: PasswordProvider = (config?.passwords_provider as PasswordProvider) ?? 'vaultwarden';
+  const providerLabel = provider === 'nextcloud' ? 'Nextcloud Passwords' : 'VaultWarden';
+  const providerMarketingLabel = provider === 'nextcloud' ? 'Nextcloud Passwords' : 'Bitwarden / VaultWarden';
+  const providerActionLabel = providerLabel;
 
   return (
     <div className="space-y-6">
@@ -265,7 +272,7 @@ export default function Passwords() {
             Passwords Sync
           </h1>
           <p className="text-muted-foreground">
-            Sync passwords with Bitwarden / VaultWarden and manage exports
+            Sync passwords with {providerMarketingLabel} and manage exports
           </p>
         </div>
         <Button onClick={loadHistory} variant="outline" disabled={historyLoading}>
@@ -317,10 +324,7 @@ export default function Passwords() {
       )}
 
       {disabled ? (
-        <Alert>
-          <AlertTitle>Passwords sync is disabled</AlertTitle>
-          <AlertDescription>Enable it from the Settings page to use these tools.</AlertDescription>
-        </Alert>
+        <ServiceDisabledNotice serviceName="Passwords" />
       ) : (
         <>
           {activeSync && (
@@ -389,7 +393,7 @@ export default function Passwords() {
               </Button>
             </div>
 
-            <SyncStatsView result={bidirectionalResult} />
+            <SyncStatsView result={bidirectionalResult} providerLabel={providerActionLabel} />
           </section>
 
           <div className="grid gap-6 md:grid-cols-2">
@@ -397,7 +401,7 @@ export default function Passwords() {
               <div>
                 <h3 className="text-lg font-semibold">Export Passwords</h3>
                 <p className="text-sm text-muted-foreground">
-                  Push Apple Passwords changes to Bitwarden / VaultWarden.
+                  Push Apple Passwords changes to {providerMarketingLabel}.
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-3">
@@ -417,16 +421,16 @@ export default function Passwords() {
                 ) : (
                   <RefreshCw className="w-4 h-4 mr-2" />
                 )}
-                Export to VaultWarden
+                Export to {providerActionLabel}
               </Button>
-              <SyncStatsView result={exportResult} />
+              <SyncStatsView result={exportResult} providerLabel={providerActionLabel} />
             </section>
 
             <section className="rounded-lg border p-6 space-y-4">
               <div>
                 <h3 className="text-lg font-semibold">Import Passwords</h3>
                 <p className="text-sm text-muted-foreground">
-                  Fetch new passwords from VaultWarden and generate an Apple-ready CSV.
+                  Fetch new passwords from {providerMarketingLabel} and generate an Apple-ready CSV.
                 </p>
               </div>
               <Button
@@ -439,9 +443,9 @@ export default function Passwords() {
                 ) : (
                   <Download className="w-4 h-4 mr-2" />
                 )}
-                Import from VaultWarden
+                Import from {providerActionLabel}
               </Button>
-              <SyncStatsView result={importResult} />
+              <SyncStatsView result={importResult} providerLabel={providerActionLabel} />
             </section>
           </div>
 

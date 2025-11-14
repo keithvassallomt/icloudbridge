@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { Calendar, RefreshCw, PlayCircle, ChevronDown, Save, Plus, ArrowDown, ArrowUp, Info, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import apiClient from '@/lib/api-client';
 import { useSyncStore } from '@/store/sync-store';
 import type { AppConfig, RemindersCalendar, SyncLog, SyncResponse } from '@/types/api';
+import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
 
 // Helper type for reminder items
 interface ReminderItem {
@@ -230,25 +230,7 @@ export default function Reminders() {
   };
 
   if (!loading && config && config.reminders_enabled === false) {
-    return (
-      <div className="max-w-4xl mx-auto space-y-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Reminders sync is disabled</CardTitle>
-            <CardDescription>Enable Reminders sync in Settings to configure calendars or run jobs.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Head to the Settings page to turn Reminders sync back on. Once enabled, this screen will let you manage
-              mappings, simulate runs, and trigger syncs.
-            </p>
-            <Button asChild>
-              <Link to="/settings">Go to Settings</Link>
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    );
+    return <ServiceDisabledNotice serviceName="Reminders" />;
   }
 
   const formatDate = (dateStr: string) => {

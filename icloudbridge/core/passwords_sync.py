@@ -644,10 +644,10 @@ class PasswordsSyncEngine:
         return {
             "import": import_stats,
             "queued": len(entries_to_push),
-            "created": push_stats["created"],
-            "skipped": push_stats["skipped"],
-            "failed": push_stats["failed"],
-            "errors": push_stats["errors"],
+            "created": push_stats.get("created") if isinstance(push_stats, dict) else push_stats,
+            "skipped": push_stats.get("skipped") if isinstance(push_stats, dict) else 0,
+            "failed": push_stats.get("failed") if isinstance(push_stats, dict) else 0,
+            "errors": push_stats.get("errors") if isinstance(push_stats, dict) else [],
             "folders_created": folders_created,
             "simulate": simulate,
         }

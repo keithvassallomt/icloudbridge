@@ -7,6 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import apiClient from '@/lib/api-client';
 import { useSyncStore } from '@/store/sync-store';
 import type { AppConfig, SyncLog } from '@/types/api';
+import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
 
 interface PhotosStatus {
   enabled: boolean;
@@ -217,10 +218,7 @@ export default function Photos() {
       )}
 
       {disabled ? (
-        <Alert>
-          <AlertTitle>Photos sync is disabled</AlertTitle>
-          <AlertDescription>Enable it from the Settings page to use this feature.</AlertDescription>
-        </Alert>
+        <ServiceDisabledNotice serviceName="Photos" />
       ) : (
         <>
           {status && status.enabled && (

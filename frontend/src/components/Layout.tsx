@@ -11,11 +11,14 @@ import {
   Settings,
   Moon,
   Sun,
+  Monitor,
   Menu,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAppStore } from '@/store/app-store';
 import { useSyncStore } from '@/store/sync-store';
 import { useWebSocket } from '@/hooks/useWebSocket';
@@ -68,11 +71,11 @@ export default function Layout() {
     { name: 'Logs', href: '/logs', icon: Terminal },
     { name: 'Settings', href: '/settings', icon: Settings },
   ];
-
-  const toggleTheme = () => {
-    const newTheme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(newTheme);
-  };
+  const themeOptions = [
+    { value: 'light', label: 'Light', icon: Sun },
+    { value: 'dark', label: 'Dark', icon: Moon },
+    { value: 'system', label: 'Match system', icon: Monitor },
+  ] as const;
 
   return (
     <div className="h-screen flex overflow-hidden bg-background">
@@ -131,24 +134,43 @@ export default function Layout() {
                 {wsConnected ? 'Connected' : 'Disconnected'}
               </Badge>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={toggleTheme}
-            >
-              {theme === 'dark' ? (
-                <>
-                  <Sun className="w-4 h-4 mr-2" />
-                  Light Mode
-                </>
-              ) : (
-                <>
-                  <Moon className="w-4 h-4 mr-2" />
-                  Dark Mode
-                </>
-              )}
-            </Button>
+            <TooltipProvider>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" size="icon" className="w-full h-10">
+                    {theme === 'dark' ? (
+                      <Moon className="w-4 h-4" />
+                    ) : theme === 'light' ? (
+                      <Sun className="w-4 h-4" />
+                    ) : (
+                      <Monitor className="w-4 h-4" />
+                    )}
+                    <span className="sr-only">Toggle theme</span>
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-48">
+                  <div className="flex items-center justify-between gap-2">
+                    {themeOptions.map((option) => (
+                      <Tooltip key={option.value} delayDuration={0}>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant={theme === option.value ? 'default' : 'ghost'}
+                            size="icon"
+                            className="h-10 w-10"
+                            onClick={() => setTheme(option.value)}
+                          >
+                            <option.icon className="w-4 h-4" />
+                            <span className="sr-only">{option.label}</span>
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{option.label}</TooltipContent>
+                      </Tooltip>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            </TooltipProvider>
           </div>
         </div>
       </div>

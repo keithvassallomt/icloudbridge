@@ -33,12 +33,19 @@ export default function Dashboard() {
   }, [setStatus]);
 
   const loadVerification = useCallback(async () => {
+    if (!status?.notes?.enabled) {
+      setVerification(null);
+      setShowSetupWarning(false);
+      return;
+    }
+
     try {
       const result = await apiClient.verifySetup();
       setVerification(result);
-      // Show warning if notes are enabled but setup is incomplete
-      if (status?.notes?.enabled && !result.all_ready) {
+      if (!result.all_ready) {
         setShowSetupWarning(true);
+      } else {
+        setShowSetupWarning(false);
       }
     } catch (err) {
       console.error('Failed to load verification:', err);

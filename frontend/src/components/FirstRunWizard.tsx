@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle, ArrowRight, ArrowLeft, Loader2, FileText, Calendar, Key, Download, Shield, AlertTriangle, ExternalLink } from 'lucide-react';
+import { CheckCircle, ArrowRight, ArrowLeft, Loader2, FileText, Calendar, Key, Download, Shield, AlertTriangle, ExternalLink, Image as ImageIcon } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import {
   Dialog,
@@ -26,9 +26,12 @@ const STEPS = [
   { id: 'notes', title: 'Notes', description: 'Apple Notes sync settings' },
   { id: 'reminders', title: 'Reminders', description: 'Apple Reminders sync settings' },
   { id: 'passwords', title: 'Passwords', description: 'Password sync settings' },
+  { id: 'photos', title: 'Photos', description: 'Photo sync settings' },
   { id: 'test', title: 'Test', description: 'Test your configuration' },
   { id: 'complete', title: 'Complete', description: 'Ready to sync!' },
 ];
+
+type PasswordProvider = 'vaultwarden' | 'nextcloud';
 
 export default function FirstRunWizard() {
   const { isFirstRun, setIsFirstRun, setWizardCompleted, setConfig } = useAppStore();
@@ -39,6 +42,7 @@ export default function FirstRunWizard() {
   const [verification, setVerification] = useState<SetupVerificationResponse | null>(null);
   const [verifying, setVerifying] = useState(false);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [showPhotosFolderBrowser, setShowPhotosFolderBrowser] = useState(false);
 
   // Form data
   const [formData, setFormData] = useState<Partial<AppConfig>>({
@@ -51,11 +55,28 @@ export default function FirstRunWizard() {
     reminders_caldav_username: '',
     reminders_caldav_password: '',
     passwords_enabled: false,
+    passwords_provider: 'vaultwarden',
     passwords_vaultwarden_url: '',
     passwords_vaultwarden_email: '',
     passwords_vaultwarden_password: '',
+    passwords_nextcloud_url: '',
+    passwords_nextcloud_username: '',
+    passwords_nextcloud_app_password: '',
+    photos_enabled: false,
+    photos_default_album: 'iCloudBridge Imports',
+    photo_sources: {
+      default: {
+        path: '~/Pictures',
+        recursive: true,
+        include_images: true,
+        include_videos: true,
+        metadata_sidecars: true,
+      },
+    },
     data_dir: '~/.icloudbridge',
   });
+
+  const passwordProvider: PasswordProvider = (formData.passwords_provider as PasswordProvider) ?? 'vaultwarden';
 
   // Trigger confetti when reaching the complete step
   useEffect(() => {
@@ -155,11 +176,26 @@ export default function FirstRunWizard() {
       // Only include passwords config if enabled
       if (formData.passwords_enabled) {
         configUpdate.passwords_enabled = true;
-        configUpdate.passwords_vaultwarden_url = formData.passwords_vaultwarden_url;
-        configUpdate.passwords_vaultwarden_email = formData.passwords_vaultwarden_email;
-        configUpdate.passwords_vaultwarden_password = formData.passwords_vaultwarden_password;
+        configUpdate.passwords_provider = passwordProvider;
+        if (passwordProvider === 'nextcloud') {
+          configUpdate.passwords_nextcloud_url = formData.passwords_nextcloud_url;
+          configUpdate.passwords_nextcloud_username = formData.passwords_nextcloud_username;
+          configUpdate.passwords_nextcloud_app_password = formData.passwords_nextcloud_app_password;
+        } else {
+          configUpdate.passwords_vaultwarden_url = formData.passwords_vaultwarden_url;
+          configUpdate.passwords_vaultwarden_email = formData.passwords_vaultwarden_email;
+          configUpdate.passwords_vaultwarden_password = formData.passwords_vaultwarden_password;
+        }
       } else {
         configUpdate.passwords_enabled = false;
+      }
+
+      if (formData.photos_enabled) {
+        configUpdate.photos_enabled = true;
+        configUpdate.photos_default_album = formData.photos_default_album;
+        configUpdate.photo_sources = formData.photo_sources;
+      } else {
+        configUpdate.photos_enabled = false;
       }
 
       // Save credentials for enabled services
@@ -190,8 +226,9 @@ export default function FirstRunWizard() {
 
       // Check if all tests passed
       const allSuccess = results.every(r => r.success);
+      const passwordServiceLabel = passwordProvider === 'nextcloud' ? 'Nextcloud Passwords' : 'VaultWarden (Passwords)';
       const messages = results.map(r => {
-        const serviceName = r.service === 'reminders' ? 'CalDAV (Reminders)' : 'VaultWarden (Passwords)';
+        const serviceName = r.service === 'reminders' ? 'CalDAV (Reminders)' : passwordServiceLabel;
         return `${serviceName}: ${r.message}`;
       }).join('\n');
 
@@ -242,11 +279,26 @@ export default function FirstRunWizard() {
       // Only include passwords config if enabled
       if (formData.passwords_enabled) {
         configUpdate.passwords_enabled = true;
-        configUpdate.passwords_vaultwarden_url = formData.passwords_vaultwarden_url;
-        configUpdate.passwords_vaultwarden_email = formData.passwords_vaultwarden_email;
-        configUpdate.passwords_vaultwarden_password = formData.passwords_vaultwarden_password;
+        configUpdate.passwords_provider = passwordProvider;
+        if (passwordProvider === 'nextcloud') {
+          configUpdate.passwords_nextcloud_url = formData.passwords_nextcloud_url;
+          configUpdate.passwords_nextcloud_username = formData.passwords_nextcloud_username;
+          configUpdate.passwords_nextcloud_app_password = formData.passwords_nextcloud_app_password;
+        } else {
+          configUpdate.passwords_vaultwarden_url = formData.passwords_vaultwarden_url;
+          configUpdate.passwords_vaultwarden_email = formData.passwords_vaultwarden_email;
+          configUpdate.passwords_vaultwarden_password = formData.passwords_vaultwarden_password;
+        }
       } else {
         configUpdate.passwords_enabled = false;
+      }
+
+      if (formData.photos_enabled) {
+        configUpdate.photos_enabled = true;
+        configUpdate.photos_default_album = formData.photos_default_album;
+        configUpdate.photo_sources = formData.photo_sources;
+      } else {
+        configUpdate.photos_enabled = false;
       }
 
       // Save configuration - backend will automatically store passwords in keyring
@@ -286,7 +338,7 @@ export default function FirstRunWizard() {
               <div>
                 <h3 className="text-2xl font-bold">Welcome to iCloudBridge!</h3>
                 <p className="text-muted-foreground mt-2">
-                  Sync your Apple Notes, Reminders, and Passwords across devices
+                  Sync your Apple Notes, Reminders, Photos, and Passwords across devices
                 </p>
               </div>
             </div>
@@ -317,7 +369,17 @@ export default function FirstRunWizard() {
                 <div>
                   <p className="font-medium">Passwords Sync</p>
                   <p className="text-sm text-muted-foreground">
-                    Sync passwords with VaultWarden
+                    Sync passwords with Bitwarden / VaultWarden or Nextcloud Passwords
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3 p-3 border rounded-lg">
+                <ImageIcon className="w-5 h-5 text-primary mt-0.5" />
+                <div>
+                  <p className="font-medium">Photo Sync</p>
+                  <p className="text-sm text-muted-foreground">
+                    Import local photos and videos directly to Apple Photos
                   </p>
                 </div>
               </div>
@@ -710,96 +772,243 @@ export default function FirstRunWizard() {
               <div>
                 <h3 className="text-lg font-semibold">Passwords Sync</h3>
                 <p className="text-sm text-muted-foreground">
-                  Sync passwords with Bitwarden or Vaultwarden
+                  Sync passwords with Bitwarden / VaultWarden or Nextcloud Passwords
                 </p>
               </div>
             </div>
 
             <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Password Provider</Label>
+                <div className="grid gap-2">
+                  <Button
+                    type="button"
+                    variant={passwordProvider === 'vaultwarden' ? 'default' : 'outline'}
+                    className="justify-start"
+                    onClick={() => setFormData({ ...formData, passwords_provider: 'vaultwarden' })}
+                  >
+                    Bitwarden / Vaultwarden (recommended)
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={passwordProvider === 'nextcloud' ? 'default' : 'outline'}
+                    className="justify-start"
+                    onClick={() => setFormData({ ...formData, passwords_provider: 'nextcloud' })}
+                  >
+                    Nextcloud Passwords
+                  </Button>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between p-4 border rounded-lg">
                 <div>
                   <Label>Enable Passwords Sync</Label>
                   <p className="text-sm text-muted-foreground">
-                    Sync passwords with Bitwarden or Vaultwarden
+                    {passwordProvider === 'nextcloud'
+                      ? 'Sync passwords with your Nextcloud Passwords app'
+                      : 'Sync passwords with Bitwarden or Vaultwarden'}
                   </p>
                 </div>
                 <Switch
-                  checked={formData.passwords_enabled}
+                  checked={formData.passwords_enabled ?? false}
                   onCheckedChange={(checked) =>
                     setFormData({ ...formData, passwords_enabled: checked })
                   }
                 />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="vw-url">Bitwarden/Vaultwarden URL</Label>
-                <Input
-                  id="vw-url"
-                  type="url"
-                  placeholder="https://vault.bitwarden.com"
-                  value={formData.passwords_vaultwarden_url || ''}
-                  onChange={(e) => {
-                    const url = e.target.value;
-                    setFormData({
-                      ...formData,
-                      passwords_vaultwarden_url: url,
-                    });
-                  }}
-                  onFocus={(e) => {
-                    // Show datalist suggestions
-                    e.target.setAttribute('list', 'bitwarden-urls');
-                  }}
-                  disabled={!formData.passwords_enabled}
-                />
-                <datalist id="bitwarden-urls">
-                  <option value="https://vault.bitwarden.com" />
-                  <option value="https://vault.bitwarden.eu" />
-                </datalist>
-                <p className="text-xs text-muted-foreground">
-                  Use vault.bitwarden.com, vault.bitwarden.eu, or your self-hosted server URL
-                </p>
-              </div>
+              {formData.passwords_enabled && passwordProvider === 'nextcloud' && (
+                <>
+                  <Alert variant="warning" className="border-yellow-500 bg-yellow-50">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertDescription>
+                      Nextcloud Passwords app does not support one-time passwords (OTP) or passkeys. For the best experience, we recommend Bitwarden/Vaultwarden.
+                    </AlertDescription>
+                  </Alert>
 
-              <div className="space-y-2">
-                <Label htmlFor="vw-email">Bitwarden/Vaultwarden Email</Label>
-                <Input
-                  id="vw-email"
-                  type="email"
-                  placeholder="your@email.com"
-                  value={formData.passwords_vaultwarden_email || ''}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      passwords_vaultwarden_email: e.target.value,
-                    })
-                  }
-                  disabled={!formData.passwords_enabled}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="wizard-nc-url">Nextcloud URL</Label>
+                    <Input
+                      id="wizard-nc-url"
+                      type="url"
+                      placeholder="https://nextcloud.example.org"
+                      value={formData.passwords_nextcloud_url || ''}
+                      onChange={(e) =>
+                        setFormData({ ...formData, passwords_nextcloud_url: e.target.value })
+                      }
+                    />
+                  </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="vw-password">Bitwarden/Vaultwarden Password</Label>
-                <Input
-                  id="vw-password"
-                  type="password"
-                  placeholder="Your master password"
-                  value={formData.passwords_vaultwarden_password || ''}
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      passwords_vaultwarden_password: e.target.value,
-                    })
-                  }
-                  disabled={!formData.passwords_enabled}
-                />
-              </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="wizard-nc-username">Nextcloud Username</Label>
+                    <Input
+                      id="wizard-nc-username"
+                      placeholder="nextcloud-user"
+                      value={formData.passwords_nextcloud_username || ''}
+                      onChange={(e) =>
+                        setFormData({ ...formData, passwords_nextcloud_username: e.target.value })
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="wizard-nc-password">Nextcloud App Password</Label>
+                    <Input
+                      id="wizard-nc-password"
+                      type="password"
+                      placeholder="App password"
+                      value={formData.passwords_nextcloud_app_password || ''}
+                      onChange={(e) =>
+                        setFormData({ ...formData, passwords_nextcloud_app_password: e.target.value })
+                      }
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      NOT your Nextcloud password! You can create an app password in your Nextcloud account settings under 'Security'.
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {formData.passwords_enabled && passwordProvider === 'vaultwarden' && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="wizard-vw-url">Bitwarden/Vaultwarden URL</Label>
+                    <Input
+                      id="wizard-vw-url"
+                      type="url"
+                      placeholder="https://vault.bitwarden.com"
+                      value={formData.passwords_vaultwarden_url || ''}
+                      onChange={(e) =>
+                        setFormData({ ...formData, passwords_vaultwarden_url: e.target.value })
+                      }
+                      onFocus={(e) => e.target.setAttribute('list', 'wizard-bitwarden-urls')}
+                    />
+                    <datalist id="wizard-bitwarden-urls">
+                      <option value="https://vault.bitwarden.com" />
+                      <option value="https://vault.bitwarden.eu" />
+                    </datalist>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="wizard-vw-email">Bitwarden/Vaultwarden Email</Label>
+                    <Input
+                      id="wizard-vw-email"
+                      type="email"
+                      placeholder="your@email.com"
+                      value={formData.passwords_vaultwarden_email || ''}
+                      onChange={(e) =>
+                        setFormData({ ...formData, passwords_vaultwarden_email: e.target.value })
+                      }
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="wizard-vw-password">Bitwarden/Vaultwarden Password</Label>
+                    <Input
+                      id="wizard-vw-password"
+                      type="password"
+                      placeholder="Master password"
+                      value={formData.passwords_vaultwarden_password || ''}
+                      onChange={(e) =>
+                        setFormData({ ...formData, passwords_vaultwarden_password: e.target.value })
+                      }
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             <Alert>
               <AlertDescription>
-                iCloudBridge does not store your passwords - these will be stored in your Bitwarden or Vaultwarden vault.
+                iCloudBridge never stores passwords directly — credentials remain in your chosen provider.
               </AlertDescription>
             </Alert>
+          </div>
+        );
+
+      case 'photos':
+        return (
+          <div className="space-y-4 py-4">
+            <div className="flex items-center gap-3 mb-4">
+              <ImageIcon className="w-8 h-8 text-primary" />
+              <div>
+                <h3 className="text-lg font-semibold">Photos Sync</h3>
+                <p className="text-sm text-muted-foreground">
+                  Import photos and videos from local folders
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between p-4 border rounded-lg">
+              <div>
+                <Label>Enable Photos Sync</Label>
+                <p className="text-sm text-muted-foreground">
+                  Automatically import media from your Mac to Apple Photos
+                </p>
+              </div>
+              <Switch
+                checked={formData.photos_enabled ?? false}
+                onCheckedChange={(checked) =>
+                  setFormData({ ...formData, photos_enabled: checked })
+                }
+              />
+            </div>
+
+            {formData.photos_enabled && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="wizard-photo-folder">Photos Source Folder</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="wizard-photo-folder"
+                      placeholder="~/Pictures"
+                      value={formData.photo_sources?.default?.path || ''}
+                      onChange={(e) => {
+                        const nextPath = e.target.value;
+                        setFormData({
+                          ...formData,
+                          photo_sources: {
+                            ...(formData.photo_sources || {}),
+                            default: {
+                              ...(formData.photo_sources?.default || {}),
+                              path: nextPath,
+                              recursive: true,
+                              include_images: true,
+                              include_videos: true,
+                              metadata_sidecars: true,
+                            },
+                          },
+                        });
+                      }}
+                    />
+                    <Button variant="outline" onClick={() => setShowPhotosFolderBrowser(true)}>
+                      Browse
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Local folder containing photos/videos to ingest.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="wizard-photo-album">Default Album</Label>
+                  <Input
+                    id="wizard-photo-album"
+                    placeholder="iCloudBridge Imports"
+                    value={formData.photos_default_album || ''}
+                    onChange={(e) =>
+                      setFormData({ ...formData, photos_default_album: e.target.value })
+                    }
+                  />
+                </div>
+
+                <Alert>
+                  <AlertDescription>
+                    Files are deduplicated using hashes, so you can safely re-run syncs even if media moves between folders.
+                  </AlertDescription>
+                </Alert>
+              </>
+            )}
           </div>
         );
 
@@ -807,13 +1016,13 @@ export default function FirstRunWizard() {
         // Determine what services need testing
         const needsTest = formData.reminders_enabled || formData.passwords_enabled;
         let testService = '';
-        if (formData.reminders_enabled && formData.passwords_enabled) {
-          testService = 'CalDAV (Reminders) and VaultWarden (Passwords)';
-        } else if (formData.reminders_enabled) {
-          testService = 'CalDAV (Reminders)';
-        } else if (formData.passwords_enabled) {
-          testService = 'VaultWarden (Passwords)';
-        }
+      if (formData.reminders_enabled && formData.passwords_enabled) {
+        testService = `CalDAV (Reminders) and ${passwordProvider === 'nextcloud' ? 'Nextcloud Passwords' : 'VaultWarden (Passwords)'}`;
+      } else if (formData.reminders_enabled) {
+        testService = 'CalDAV (Reminders)';
+      } else if (formData.passwords_enabled) {
+        testService = passwordProvider === 'nextcloud' ? 'Nextcloud Passwords' : 'VaultWarden (Passwords)';
+      }
 
         return (
           <div className="space-y-4 py-4">
@@ -1023,6 +1232,29 @@ export default function FirstRunWizard() {
       initialPath={formData.notes_remote_folder || '~'}
       title="Select Notes Folder"
       description="Choose where to store your Notes as markdown files"
+    />
+    <FolderBrowserDialog
+      open={showPhotosFolderBrowser}
+      onOpenChange={setShowPhotosFolderBrowser}
+      onSelect={(path) =>
+        setFormData({
+          ...formData,
+          photo_sources: {
+            ...(formData.photo_sources || {}),
+            default: {
+              ...(formData.photo_sources?.default || {}),
+              path,
+              recursive: true,
+              include_images: true,
+              include_videos: true,
+              metadata_sidecars: true,
+            },
+          },
+        })
+      }
+      initialPath={formData.photo_sources?.default?.path || '~/Pictures'}
+      title="Select Photos Source Folder"
+      description="Choose a folder containing photos and videos to import"
     />
     </>
   );

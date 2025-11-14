@@ -1,18 +1,120 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef, useContext } from 'react';
 import { Settings as SettingsIcon, RefreshCw, Save, Trash2, FileText, Calendar, Key, Image, Download, Shield, AlertTriangle, ExternalLink, CheckCircle, Loader2, Database } from 'lucide-react';
+import { UNSAFE_NavigationContext, useBeforeUnload } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { FolderBrowserDialog } from '@/components/FolderBrowserDialog';
 import { useAppStore } from '@/store/app-store';
 import { useSyncStore } from '@/store/sync-store';
 import apiClient from '@/lib/api-client';
 import type { AppConfig, PasswordsStatus, SetupVerificationResponse } from '@/types/api';
+
+type PasswordProvider = 'vaultwarden' | 'nextcloud';
+
+const PASSWORD_PROVIDERS: { value: PasswordProvider; label: string; helper: string }[] = [
+  { value: 'vaultwarden', label: 'Bitwarden / Vaultwarden (recommended)', helper: 'Full feature support including OTP' },
+  { value: 'nextcloud', label: 'Nextcloud Passwords', helper: 'Basic sync without OTP/passkey support' },
+];
+
+const TRANSIENT_KEYS = new Set(['passwords_vaultwarden_password', 'passwords_nextcloud_app_password']);
+
+const stripTransientFields = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(stripTransientFields);
+  }
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {};
+    Object.entries(value as Record<string, unknown>).forEach(([key, val]) => {
+      if (TRANSIENT_KEYS.has(key) || val === undefined) {
+        return;
+      }
+      result[key] = stripTransientFields(val);
+    });
+    return result;
+  }
+  return value;
+};
+
+const sortObject = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(sortObject);
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value as Record<string, unknown>)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = sortObject((value as Record<string, unknown>)[key]);
+        return acc;
+      }, {});
+  }
+  return value;
+};
+
+const sanitizeConfigSnapshot = (value: unknown): unknown => sortObject(stripTransientFields(value ?? {}));
+
+type NavigationBlockerState = 'blocked' | 'unblocked';
+
+interface NavigationBlocker {
+  state: NavigationBlockerState;
+  proceed: () => void;
+  reset: () => void;
+}
+
+type NavigatorWithBlock = {
+  block?: (blocker: (tx: { retry: () => void }) => void) => () => void;
+};
+
+const useNavigationBlocker = (when: boolean): NavigationBlocker => {
+  const navigationContext = useContext(UNSAFE_NavigationContext);
+  const navigator = (navigationContext?.navigator ?? null) as NavigatorWithBlock | null;
+  const [state, setState] = useState<NavigationBlockerState>('unblocked');
+  const transitionRef = useRef<{ retry: () => void } | null>(null);
+
+  useEffect(() => {
+    if (!navigator?.block) {
+      return;
+    }
+
+    if (!when) {
+      transitionRef.current = null;
+      setState('unblocked');
+      return;
+    }
+
+    const unblock = navigator.block((transition) => {
+      transitionRef.current = transition;
+      setState('blocked');
+    });
+
+    return () => {
+      unblock();
+      transitionRef.current = null;
+      setState('unblocked');
+    };
+  }, [navigator, when]);
+
+  const proceed = useCallback(() => {
+    const transition = transitionRef.current;
+    if (transition) {
+      transitionRef.current = null;
+      setState('unblocked');
+      transition.retry();
+    }
+  }, []);
+
+  const reset = useCallback(() => {
+    transitionRef.current = null;
+    setState('unblocked');
+  }, []);
+
+  return useMemo(() => ({ state, proceed, reset }), [state, proceed, reset]);
+};
 
 export default function Settings() {
   const { config, setConfig, setIsFirstRun, resetWizard } = useAppStore();
@@ -29,11 +131,20 @@ export default function Settings() {
   const [passwordStatus, setPasswordStatus] = useState<PasswordsStatus | null>(null);
   const [passwordStatusLoading, setPasswordStatusLoading] = useState(false);
   const [vaultCredsLoading, setVaultCredsLoading] = useState(false);
+  const [nextcloudCredsLoading, setNextcloudCredsLoading] = useState(false);
   const [showInitialScanModal, setShowInitialScanModal] = useState(false);
   const [initialScanProgress, setInitialScanProgress] = useState(0);
   const [initialScanMessage, setInitialScanMessage] = useState('');
   const [initialScanComplete, setInitialScanComplete] = useState(false);
   const [pendingSavePayload, setPendingSavePayload] = useState<Partial<AppConfig> | null>(null);
+  const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
+  const [afterSaveAction, setAfterSaveAction] = useState<(() => void) | null>(null);
+
+  const sanitizedConfig = useMemo(() => sanitizeConfigSnapshot(config ? { ...config, passwords_vaultwarden_password: '', passwords_nextcloud_app_password: '' } : {}), [config]);
+  const sanitizedForm = useMemo(() => sanitizeConfigSnapshot(formData), [formData]);
+  const hasUnsavedChanges = Boolean(config) && JSON.stringify(sanitizedForm) !== JSON.stringify(sanitizedConfig);
+  const navigationBlocker = useNavigationBlocker(hasUnsavedChanges);
+  const { state: blockerState, proceed: proceedNavigation, reset: resetNavigation } = navigationBlocker;
 
   const loadPasswordStatus = useCallback(async () => {
     try {
@@ -54,7 +165,12 @@ export default function Settings() {
       setSuccess(null);
       const data = await apiClient.getConfig();
       setConfig(data);
-      setFormData({ ...data, passwords_vaultwarden_password: '' });
+      setFormData({
+        ...data,
+        passwords_provider: (data.passwords_provider as PasswordProvider) ?? 'vaultwarden',
+        passwords_vaultwarden_password: '',
+        passwords_nextcloud_app_password: '',
+      });
       await loadPasswordStatus();
     } catch (err) {
       setError(formatError(err, 'Failed to load configuration'));
@@ -69,9 +185,39 @@ export default function Settings() {
 
   useEffect(() => {
     if (config) {
-      setFormData({ ...config, passwords_vaultwarden_password: '' });
+      setFormData({
+        ...config,
+        passwords_provider: (config.passwords_provider as PasswordProvider) ?? 'vaultwarden',
+        passwords_vaultwarden_password: '',
+        passwords_nextcloud_app_password: '',
+      });
     }
   }, [config]);
+
+  useEffect(() => {
+    if (blockerState === 'blocked') {
+      setShowUnsavedPrompt(true);
+    }
+  }, [blockerState]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setShowUnsavedPrompt(false);
+      resetNavigation();
+    }
+  }, [hasUnsavedChanges, resetNavigation]);
+
+  useBeforeUnload(
+    useCallback((event) => {
+      if (!hasUnsavedChanges) {
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = '';
+    }, [hasUnsavedChanges])
+  );
+
+  const passwordProvider: PasswordProvider = (formData.passwords_provider as PasswordProvider) ?? 'vaultwarden';
 
   // Load verification when Notes is enabled
   useEffect(() => {
@@ -113,14 +259,18 @@ export default function Settings() {
     return fallback;
   };
 
-  const handleReset = () => {
-    // Reset form data to current config
+  const handleReset = useCallback(() => {
     if (config) {
-      setFormData(config);
+      setFormData({
+        ...config,
+        passwords_provider: (config.passwords_provider as PasswordProvider) ?? 'vaultwarden',
+        passwords_vaultwarden_password: '',
+        passwords_nextcloud_app_password: '',
+      });
       setError(null);
       setSuccess(null);
     }
-  };
+  }, [config]);
 
   const handleServiceReset = async (service: 'notes' | 'reminders' | 'passwords' | 'photos') => {
     const serviceNames = {
@@ -164,9 +314,13 @@ export default function Settings() {
         updatedFormData.reminders_nextcloud_url = '';
       } else if (service === 'passwords') {
         updatedFormData.passwords_enabled = false;
+        updatedFormData.passwords_provider = 'vaultwarden';
         updatedFormData.passwords_vaultwarden_url = '';
         updatedFormData.passwords_vaultwarden_email = '';
         delete (updatedFormData as Record<string, unknown>).passwords_vaultwarden_password;
+        updatedFormData.passwords_nextcloud_url = '';
+        updatedFormData.passwords_nextcloud_username = '';
+        delete (updatedFormData as Record<string, unknown>).passwords_nextcloud_app_password;
       } else if (service === 'photos') {
         updatedFormData.photos_enabled = false;
         // Remove instead of setting to empty string to use backend default
@@ -242,8 +396,63 @@ export default function Settings() {
     }
   };
 
+  const handleSaveNextcloudCredentials = async () => {
+    if (!formData.passwords_nextcloud_username || !formData.passwords_nextcloud_app_password) {
+      setError('Enter both username and app password to save Nextcloud credentials.');
+      return;
+    }
+
+    try {
+      setNextcloudCredsLoading(true);
+      setError(null);
+      setSuccess(null);
+      await apiClient.setNextcloudCredentials(
+        formData.passwords_nextcloud_username,
+        formData.passwords_nextcloud_app_password,
+        formData.passwords_nextcloud_url,
+      );
+      setFormData((prev) => ({ ...prev, passwords_nextcloud_app_password: '' }));
+      await loadPasswordStatus();
+      setSuccess('Nextcloud credentials saved securely.');
+    } catch (err) {
+      setError(formatError(err, 'Failed to save Nextcloud credentials'));
+    } finally {
+      setNextcloudCredsLoading(false);
+    }
+  };
+
+  const handleDeleteNextcloudCredentials = async () => {
+    if (!passwordStatus?.has_nextcloud_credentials) {
+      setError('No Nextcloud credentials are stored.');
+      return;
+    }
+
+    const usernameToDelete = formData.passwords_nextcloud_username || passwordStatus?.nextcloud_username || '';
+    if (!usernameToDelete) {
+      setError('Enter the Nextcloud username before deleting credentials.');
+      return;
+    }
+
+    if (!confirm(`Delete stored Nextcloud credentials for ${usernameToDelete}?`)) {
+      return;
+    }
+
+    try {
+      setNextcloudCredsLoading(true);
+      setError(null);
+      setSuccess(null);
+      await apiClient.deleteNextcloudCredentials(usernameToDelete);
+      await loadPasswordStatus();
+      setSuccess('Nextcloud credentials removed from keychain.');
+    } catch (err) {
+      setError(formatError(err, 'Failed to delete Nextcloud credentials'));
+    } finally {
+      setNextcloudCredsLoading(false);
+    }
+  };
+
   const handleDeleteVaultwardenCredentials = async () => {
-    if (!passwordStatus?.has_credentials) {
+    if (!passwordStatus?.has_vaultwarden_credentials) {
       setError('No VaultWarden credentials are stored.');
       return;
     }
@@ -273,59 +482,111 @@ export default function Settings() {
     }
   };
 
-  const photosSettingsChanged = () => {
+  const photosSettingsChanged = useCallback(() => {
     if (!config) return false;
 
-    // Check if photos was enabled
     const wasEnabled = config.photos_enabled;
     const isEnabled = formData.photos_enabled;
-
-    // Check if album changed
     const albumChanged = config.photos_default_album !== formData.photos_default_album;
-
-    // Check if sources changed
     const oldSources = JSON.stringify(config.photo_sources || {});
     const newSources = JSON.stringify(formData.photo_sources || {});
     const sourcesChanged = oldSources !== newSources;
 
-    // If photos is being enabled or sources/album changed while enabled
     return (!wasEnabled && isEnabled) || (isEnabled && (albumChanged || sourcesChanged));
-  };
+  }, [config, formData.photos_default_album, formData.photo_sources, formData.photos_enabled]);
 
-  const handleSave = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      setSuccess(null);
+  const saveConfiguration = useCallback(
+    async (onComplete?: () => void): Promise<boolean> => {
+      try {
+        setLoading(true);
+        setError(null);
+        setSuccess(null);
 
-      const payload = { ...formData };
-      delete (payload as Record<string, unknown>).passwords_vaultwarden_password;
+        const payload: Partial<AppConfig> = {
+          ...formData,
+          passwords_provider: passwordProvider,
+        };
+        delete (payload as Record<string, unknown>).passwords_vaultwarden_password;
+        delete (payload as Record<string, unknown>).passwords_nextcloud_app_password;
 
-      // Check if photos settings changed and photos is enabled
-      if (photosSettingsChanged()) {
-        // Save payload for later and show initial scan modal
-        setPendingSavePayload(payload);
-        setShowInitialScanModal(true);
-        setInitialScanProgress(0);
-        setInitialScanMessage('Preparing initial scan...');
-        setInitialScanComplete(false);
+        if (photosSettingsChanged()) {
+          if (onComplete) {
+            setAfterSaveAction(() => onComplete);
+          } else {
+            setAfterSaveAction(null);
+          }
+          setPendingSavePayload(payload);
+          setShowInitialScanModal(true);
+          setInitialScanProgress(0);
+          setInitialScanMessage('Preparing initial scan...');
+          setInitialScanComplete(false);
+          setLoading(false);
+          return false;
+        }
+
+        const updated = await apiClient.updateConfig(payload);
+        setConfig(updated);
+        setFormData({
+          ...updated,
+          passwords_provider: (updated.passwords_provider as PasswordProvider) ?? 'vaultwarden',
+          passwords_vaultwarden_password: '',
+          passwords_nextcloud_app_password: '',
+        });
+        setPendingSavePayload(null);
+        setAfterSaveAction(null);
+        setSuccess('Configuration saved successfully');
+        onComplete?.();
+        return true;
+      } catch (err) {
+        setError(formatError(err, 'Failed to save configuration'));
+        return false;
+      } finally {
         setLoading(false);
-        return;
       }
+    },
+    [formData, passwordProvider, photosSettingsChanged, setConfig]
+  );
 
-      // If no photos changes, save normally
-      const updated = await apiClient.updateConfig(payload);
-      setConfig(updated);
-      setFormData({ ...updated, passwords_vaultwarden_password: '' });
-      setSuccess('Configuration saved successfully');
-    } catch (err) {
-      setError(formatError(err, 'Failed to save configuration'));
-    } finally {
-      setLoading(false);
+  const handleSaveClick = useCallback(() => {
+    void saveConfiguration();
+  }, [saveConfiguration]);
+
+  const handleDiscardChanges = useCallback(() => {
+    handleReset();
+    if (blockerState === 'blocked') {
+      proceedNavigation();
     }
-  };
+    setShowUnsavedPrompt(false);
+  }, [blockerState, handleReset, proceedNavigation]);
 
-  const performInitialScan = async () => {
+  const handleStayOnPage = useCallback(() => {
+    resetNavigation();
+    setShowUnsavedPrompt(false);
+  }, [resetNavigation]);
+
+  const handleConfirmSave = useCallback(async () => {
+    if (blockerState !== 'blocked') {
+      const immediate = await saveConfiguration();
+      if (immediate) {
+        setShowUnsavedPrompt(false);
+      }
+      return;
+    }
+
+    const proceedAfterSave = () => {
+      proceedNavigation();
+    };
+
+    const immediate = await saveConfiguration(proceedAfterSave);
+    if (immediate) {
+      setShowUnsavedPrompt(false);
+      proceedAfterSave();
+    } else if (pendingSavePayload) {
+      setShowUnsavedPrompt(false);
+    }
+  }, [blockerState, pendingSavePayload, proceedNavigation, saveConfiguration]);
+
+  const performInitialScan = useCallback(async () => {
     if (!pendingSavePayload) return;
 
     try {
@@ -354,6 +615,11 @@ export default function Settings() {
       setInitialScanComplete(true);
       setSuccess('Configuration saved and initial scan completed');
 
+      if (afterSaveAction) {
+        afterSaveAction();
+        setAfterSaveAction(null);
+      }
+
       // Close modal after a short delay
       setTimeout(() => {
         setShowInitialScanModal(false);
@@ -364,15 +630,16 @@ export default function Settings() {
       setError(formatError(err, 'Initial scan failed'));
       setShowInitialScanModal(false);
       setPendingSavePayload(null);
+      setAfterSaveAction(null);
     }
-  };
+  }, [afterSaveAction, pendingSavePayload, setConfig]);
 
   // Trigger initial scan when modal opens
   useEffect(() => {
     if (showInitialScanModal && pendingSavePayload && !initialScanComplete) {
       performInitialScan();
     }
-  }, [showInitialScanModal, pendingSavePayload]);
+  }, [showInitialScanModal, pendingSavePayload, initialScanComplete, performInitialScan]);
 
   // Watch for WebSocket progress updates during initial scan
   useEffect(() => {
@@ -825,7 +1092,7 @@ export default function Settings() {
               <Key className="w-6 h-6 text-primary" />
               <div>
                 <CardTitle>Passwords Sync</CardTitle>
-                <CardDescription>Sync passwords with Bitwarden or Vaultwarden</CardDescription>
+                <CardDescription>Sync passwords with Bitwarden / VaultWarden or Nextcloud Passwords</CardDescription>
               </div>
             </div>
             <Button
@@ -849,17 +1116,41 @@ export default function Settings() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label>Password Provider</Label>
+            <div className="grid gap-2 md:grid-cols-2">
+              {PASSWORD_PROVIDERS.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  variant={passwordProvider === option.value ? 'default' : 'outline'}
+                  className="justify-start text-left"
+                  onClick={() => setFormData({ ...formData, passwords_provider: option.value })}
+                >
+                  <div>
+                    <p className="text-sm font-medium">{option.label}</p>
+                    <p className="text-xs text-muted-foreground">{option.helper}</p>
+                  </div>
+                </Button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between p-4 border rounded-lg">
             <div>
               <Label>Enable Passwords Sync</Label>
               <p className="text-sm text-muted-foreground">
-                Sync passwords with Bitwarden or Vaultwarden
+                Sync passwords with Bitwarden / VaultWarden or Nextcloud Passwords
               </p>
               <p className="text-xs text-muted-foreground mt-1">
                 {passwordStatusLoading
                   ? 'Checking credentials…'
-                  : passwordStatus?.has_credentials
-                  ? 'Credentials stored securely in macOS Keychain.'
+                  : passwordProvider === 'nextcloud'
+                  ? passwordStatus?.has_nextcloud_credentials
+                    ? 'Nextcloud credentials stored securely in macOS Keychain.'
+                    : 'No Nextcloud credentials stored yet.'
+                  : passwordStatus?.has_vaultwarden_credentials
+                  ? 'VaultWarden credentials stored securely in macOS Keychain.'
                   : 'No VaultWarden credentials stored yet.'}
               </p>
             </div>
@@ -871,7 +1162,86 @@ export default function Settings() {
             />
           </div>
 
-          {formData.passwords_enabled && (
+          {formData.passwords_enabled && passwordProvider === 'nextcloud' && (
+            <>
+              <Alert variant="warning" className="border-yellow-500 bg-yellow-50">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  Nextcloud Passwords app does not support one-time passwords (OTP) or passkeys. For the best experience, we recommend using Bitwarden or Vaultwarden.
+                </AlertDescription>
+              </Alert>
+
+              <div className="space-y-2">
+                <Label htmlFor="nc-url">Nextcloud URL</Label>
+                <Input
+                  id="nc-url"
+                  type="url"
+                  placeholder="https://nextcloud.example.org"
+                  value={formData.passwords_nextcloud_url || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, passwords_nextcloud_url: e.target.value })
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="nc-username">Nextcloud Username</Label>
+                <Input
+                  id="nc-username"
+                  placeholder="nextcloud-user"
+                  value={formData.passwords_nextcloud_username || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, passwords_nextcloud_username: e.target.value })
+                  }
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="nc-password">Nextcloud App Password</Label>
+                <Input
+                  id="nc-password"
+                  type="password"
+                  placeholder="App password"
+                  value={formData.passwords_nextcloud_app_password || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, passwords_nextcloud_app_password: e.target.value })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Generate an app password from your Nextcloud security settings.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleSaveNextcloudCredentials}
+                  disabled={
+                    nextcloudCredsLoading ||
+                    !formData.passwords_nextcloud_username ||
+                    !formData.passwords_nextcloud_app_password
+                  }
+                >
+                  {nextcloudCredsLoading ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4 mr-2" />
+                  )}
+                  Save Credentials
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={handleDeleteNextcloudCredentials}
+                  disabled={nextcloudCredsLoading || !passwordStatus?.has_nextcloud_credentials}
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete Stored Credentials
+                </Button>
+              </div>
+            </>
+          )}
+
+          {formData.passwords_enabled && passwordProvider === 'vaultwarden' && (
             <>
               <div className="space-y-2">
                 <Label htmlFor="vw-url">Bitwarden/Vaultwarden URL</Label>
@@ -880,24 +1250,15 @@ export default function Settings() {
                   type="url"
                   placeholder="https://vault.bitwarden.com"
                   value={formData.passwords_vaultwarden_url || ''}
-                  onChange={(e) => {
-                    const url = e.target.value;
-                    setFormData({
-                      ...formData,
-                      passwords_vaultwarden_url: url,
-                    });
-                  }}
-                  onFocus={(e) => {
-                    e.target.setAttribute('list', 'bitwarden-urls');
-                  }}
+                  onChange={(e) =>
+                    setFormData({ ...formData, passwords_vaultwarden_url: e.target.value })
+                  }
+                  onFocus={(e) => e.target.setAttribute('list', 'bitwarden-urls')}
                 />
                 <datalist id="bitwarden-urls">
                   <option value="https://vault.bitwarden.com" />
                   <option value="https://vault.bitwarden.eu" />
                 </datalist>
-                <p className="text-xs text-muted-foreground">
-                  Use vault.bitwarden.com, vault.bitwarden.eu, or your self-hosted server URL
-                </p>
               </div>
 
               <div className="space-y-2">
@@ -908,10 +1269,7 @@ export default function Settings() {
                   placeholder="your@email.com"
                   value={formData.passwords_vaultwarden_email || ''}
                   onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      passwords_vaultwarden_email: e.target.value,
-                    })
+                    setFormData({ ...formData, passwords_vaultwarden_email: e.target.value })
                   }
                 />
               </div>
@@ -924,10 +1282,7 @@ export default function Settings() {
                   placeholder="Your master password"
                   value={formData.passwords_vaultwarden_password || ''}
                   onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      passwords_vaultwarden_password: e.target.value,
-                    })
+                    setFormData({ ...formData, passwords_vaultwarden_password: e.target.value })
                   }
                 />
                 <div className="flex flex-wrap gap-2">
@@ -950,7 +1305,7 @@ export default function Settings() {
                   <Button
                     variant="ghost"
                     onClick={handleDeleteVaultwardenCredentials}
-                    disabled={vaultCredsLoading || !passwordStatus?.has_credentials}
+                    disabled={vaultCredsLoading || !passwordStatus?.has_vaultwarden_credentials}
                   >
                     <Trash2 className="w-4 h-4 mr-2" />
                     Delete Stored Credentials
@@ -962,7 +1317,7 @@ export default function Settings() {
 
           <Alert>
             <AlertDescription>
-              iCloudBridge does not store your passwords - these will be stored in your Bitwarden or Vaultwarden vault.
+              iCloudBridge does not store your passwords - these remain encrypted in your chosen provider.
             </AlertDescription>
           </Alert>
         </CardContent>
@@ -1132,7 +1487,7 @@ export default function Settings() {
         <Button onClick={handleReset} variant="outline" disabled={loading}>
           Reset
         </Button>
-        <Button onClick={handleSave} disabled={loading}>
+        <Button onClick={handleSaveClick} disabled={loading}>
           {loading ? (
             <>
               <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
@@ -1209,6 +1564,35 @@ export default function Settings() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showUnsavedPrompt} onOpenChange={() => {}}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Leave without saving?</DialogTitle>
+            <DialogDescription>
+              You have unsaved changes on the Settings page. Choose an action before navigating away.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="ghost" onClick={handleStayOnPage}>
+              Stay on page
+            </Button>
+            <Button variant="outline" onClick={handleDiscardChanges}>
+              Ignore changes
+            </Button>
+            <Button onClick={handleConfirmSave} disabled={loading}>
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save & continue'
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

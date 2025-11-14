@@ -58,9 +58,13 @@ export interface AppConfig {
   reminders_use_nextcloud?: boolean;
   reminders_nextcloud_url?: string;
   passwords_enabled: boolean;
+  passwords_provider?: 'vaultwarden' | 'nextcloud';
   passwords_vaultwarden_url?: string;
   passwords_vaultwarden_email?: string;
   passwords_vaultwarden_password?: string;
+  passwords_nextcloud_url?: string;
+  passwords_nextcloud_username?: string;
+  passwords_nextcloud_app_password?: string;
   photos_enabled: boolean;
   photos_default_album?: string;
   photo_sources?: Record<string, PhotoSource>;
@@ -166,9 +170,14 @@ export interface PasswordsSyncResponse {
 
 export interface PasswordsStatus {
   enabled: boolean;
+  provider: 'vaultwarden' | 'nextcloud';
   vaultwarden_url: string | null;
   vaultwarden_email: string | null;
+  nextcloud_url: string | null;
+  nextcloud_username: string | null;
   has_credentials: boolean;
+  has_vaultwarden_credentials: boolean;
+  has_nextcloud_credentials: boolean;
   total_entries: number;
   by_source: Record<string, number>;
   last_sync: SyncLog | null;
