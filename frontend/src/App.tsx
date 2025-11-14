@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import Layout from './components/Layout';
 import Dashboard from './pages/Dashboard';
 import Notes from './pages/Notes';
@@ -12,6 +12,23 @@ import Settings from './pages/Settings';
 import FirstRunWizard from './components/FirstRunWizard';
 import { useAppStore } from './store/app-store';
 import apiClient from './lib/api-client';
+
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <Layout />,
+    children: [
+      { index: true, element: <Dashboard /> },
+      { path: 'notes', element: <Notes /> },
+      { path: 'reminders', element: <Reminders /> },
+      { path: 'passwords', element: <Passwords /> },
+      { path: 'photos', element: <Photos /> },
+      { path: 'schedules', element: <Schedules /> },
+      { path: 'logs', element: <Logs /> },
+      { path: 'settings', element: <Settings /> },
+    ],
+  },
+]);
 
 function App() {
   const { setIsFirstRun, wizardCompleted, theme, setTheme } = useAppStore();
@@ -70,21 +87,10 @@ function App() {
   }, [setIsFirstRun, wizardCompleted]);
 
   return (
-    <BrowserRouter>
+    <>
+      <RouterProvider router={router} />
       <FirstRunWizard />
-      <Routes>
-        <Route path="/" element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="notes" element={<Notes />} />
-          <Route path="reminders" element={<Reminders />} />
-          <Route path="passwords" element={<Passwords />} />
-          <Route path="photos" element={<Photos />} />
-          <Route path="schedules" element={<Schedules />} />
-          <Route path="logs" element={<Logs />} />
-          <Route path="settings" element={<Settings />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    </>
   );
 }
 

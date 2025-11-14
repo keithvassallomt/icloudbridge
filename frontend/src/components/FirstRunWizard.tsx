@@ -46,7 +46,7 @@ export default function FirstRunWizard() {
 
   // Form data
   const [formData, setFormData] = useState<Partial<AppConfig>>({
-    notes_enabled: true,
+    notes_enabled: false,
     notes_remote_folder: '~/Documents/Notes',
     reminders_enabled: false,
     reminders_use_nextcloud: true,

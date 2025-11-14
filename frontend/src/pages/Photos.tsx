@@ -184,7 +184,11 @@ export default function Photos() {
     return date.toLocaleString();
   };
 
-  const disabled = config && config.photos_enabled === false;
+  const serviceDisabled = config?.photos_enabled === false;
+
+  if (serviceDisabled) {
+    return <ServiceDisabledNotice serviceName="Photos" />;
+  }
 
   return (
     <div className="space-y-6">
@@ -217,177 +221,171 @@ export default function Photos() {
         </Alert>
       )}
 
-      {disabled ? (
-        <ServiceDisabledNotice serviceName="Photos" />
-      ) : (
-        <>
-          {status && status.enabled && (
-            <div className="rounded-lg border p-4 space-y-3">
-              <h3 className="text-lg font-semibold">Status</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                <div>
-                  <p className="text-muted-foreground">Total Imported</p>
-                  <p className="font-medium">{status.total_imported ?? 0}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Pending</p>
-                  <p className="font-medium">{status.pending ?? 0}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Last Sync</p>
-                  <p className="font-medium text-xs">
-                    {status.last_sync ? new Date(status.last_sync).toLocaleString() : 'Never'}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Sources</p>
-                  <p className="font-medium">{status.sources?.length ?? 0}</p>
-                </div>
-              </div>
-              {status.sources && status.sources.length > 0 && (
-                <div className="flex gap-2 flex-wrap">
-                  {status.sources.map((source) => (
-                    <Badge key={source} variant="outline">{source}</Badge>
-                  ))}
-                </div>
-              )}
+      {status && status.enabled && (
+        <div className="rounded-lg border p-4 space-y-3">
+          <h3 className="text-lg font-semibold">Status</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div>
+              <p className="text-muted-foreground">Total Imported</p>
+              <p className="font-medium">{status.total_imported ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Pending</p>
+              <p className="font-medium">{status.pending ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Last Sync</p>
+              <p className="font-medium text-xs">
+                {status.last_sync ? new Date(status.last_sync).toLocaleString() : 'Never'}
+              </p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Sources</p>
+              <p className="font-medium">{status.sources?.length ?? 0}</p>
+            </div>
+          </div>
+          {status.sources && status.sources.length > 0 && (
+            <div className="flex gap-2 flex-wrap">
+              {status.sources.map((source) => (
+                <Badge key={source} variant="outline">{source}</Badge>
+              ))}
             </div>
           )}
-
-          {activeSync && (
-            <div className="rounded-lg border bg-card/60 p-4 space-y-3">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Activity className="w-4 h-4" /> Sync in progress
-              </div>
-              <div>
-                <div className="flex justify-between text-sm mb-2">
-                  <span>{activeSync.message}</span>
-                  <span>{activeSync.progress}%</span>
-                </div>
-                <Progress value={activeSync.progress} />
-              </div>
-            </div>
-          )}
-
-          <section className="rounded-lg border p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-xl font-semibold">Sync Photos</h2>
-                <p className="text-sm text-muted-foreground">
-                  Scan configured source folders and import new photos to Apple Photos.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-3">
-              <Button
-                variant="outline"
-                disabled={syncLoading}
-                onClick={() => handleSyncAction(true)}
-                className="flex-1 min-w-[120px]"
-              >
-                {syncLoading ? (
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <PlayCircle className="w-4 h-4 mr-2" />
-                )}
-                Simulate
-              </Button>
-              <Button
-                disabled={syncLoading}
-                onClick={() => handleSyncAction(false)}
-                className="flex-1 min-w-[120px]"
-              >
-                {syncLoading ? (
-                  <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
-                ) : (
-                  <RefreshCw className="w-4 h-4 mr-2" />
-                )}
-                Sync
-              </Button>
-            </div>
-
-            <SyncStatsView result={syncResult} />
-          </section>
-
-          <section className="rounded-lg border p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold">Sync history</h3>
-                <p className="text-sm text-muted-foreground">Last 10 syncs</p>
-              </div>
-              <Button variant="ghost" size="sm" onClick={handleReset}>
-                Reset state
-              </Button>
-            </div>
-            {history.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No sync history available.</p>
-            ) : (
-              <div className="space-y-4">
-                {history.map((log) => {
-                  const stats = (log.stats || {}) as any;
-                  return (
-                    <div key={log.id} className="rounded-md border-l-4 bg-card/40 p-4" style={{
-                      borderColor:
-                        log.status === 'success'
-                          ? 'rgb(34 197 94)'
-                          : log.status === 'error'
-                          ? 'rgb(239 68 68)'
-                          : 'rgb(59 130 246)',
-                    }}>
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium">Photo Sync</p>
-                          <p className="text-xs text-muted-foreground">{formatDate(log.started_at)}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          {log.status === 'success' && typeof stats.imported === 'number' && stats.imported > 0 && (
-                            <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                              +{stats.imported}
-                            </Badge>
-                          )}
-                          <Badge variant={log.status === 'success' ? 'success' : log.status === 'error' ? 'destructive' : 'default'}>
-                            {log.status}
-                          </Badge>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mt-3">
-                        {typeof stats.discovered === 'number' && (
-                          <div>
-                            <span className="text-muted-foreground">Discovered</span>
-                            <p className="font-medium">{stats.discovered}</p>
-                          </div>
-                        )}
-                        {typeof stats.new_assets === 'number' && (
-                          <div>
-                            <span className="text-muted-foreground">New Assets</span>
-                            <p className="font-medium">{stats.new_assets}</p>
-                          </div>
-                        )}
-                        {typeof stats.imported === 'number' && (
-                          <div>
-                            <span className="text-muted-foreground">Imported</span>
-                            <p className="font-medium">{stats.imported}</p>
-                          </div>
-                        )}
-                        {log.duration_seconds !== null && (
-                          <div>
-                            <span className="text-muted-foreground">Duration</span>
-                            <p className="font-medium">{log.duration_seconds?.toFixed(1)}s</p>
-                          </div>
-                        )}
-                      </div>
-                      {log.error_message && (
-                        <p className="text-xs text-destructive mt-2">{log.error_message}</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        </>
+        </div>
       )}
+
+      {activeSync && (
+        <div className="rounded-lg border bg-card/60 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Activity className="w-4 h-4" /> Sync in progress
+          </div>
+          <div>
+            <div className="flex justify-between text-sm mb-2">
+              <span>{activeSync.message}</span>
+              <span>{activeSync.progress}%</span>
+            </div>
+            <Progress value={activeSync.progress} />
+          </div>
+        </div>
+      )}
+
+      <section className="rounded-lg border p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">Sync Photos</h2>
+            <p className="text-sm text-muted-foreground">
+              Scan configured source folders and import new photos to Apple Photos.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <Button
+            variant="outline"
+            disabled={syncLoading}
+            onClick={() => handleSyncAction(true)}
+            className="flex-1 min-w-[120px]"
+          >
+            {syncLoading ? (
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <PlayCircle className="w-4 h-4 mr-2" />
+            )}
+            Simulate
+          </Button>
+          <Button
+            disabled={syncLoading}
+            onClick={() => handleSyncAction(false)}
+            className="flex-1 min-w-[120px]"
+          >
+            {syncLoading ? (
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            Sync
+          </Button>
+        </div>
+
+        <SyncStatsView result={syncResult} />
+      </section>
+
+      <section className="rounded-lg border p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">Sync history</h3>
+            <p className="text-sm text-muted-foreground">Last 10 syncs</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={handleReset}>
+            Reset state
+          </Button>
+        </div>
+        {history.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No sync history available.</p>
+        ) : (
+          <div className="space-y-4">
+            {history.map((log) => {
+              const stats = (log.stats || {}) as any;
+              return (
+                <div key={log.id} className="rounded-md border-l-4 bg-card/40 p-4" style={{
+                  borderColor:
+                    log.status === 'success'
+                      ? 'rgb(34 197 94)'
+                      : log.status === 'error'
+                      ? 'rgb(239 68 68)'
+                      : 'rgb(59 130 246)',
+                }}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">Photo Sync</p>
+                      <p className="text-xs text-muted-foreground">{formatDate(log.started_at)}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      {log.status === 'success' && typeof stats.imported === 'number' && stats.imported > 0 && (
+                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                          +{stats.imported}
+                        </Badge>
+                      )}
+                      <Badge variant={log.status === 'success' ? 'success' : log.status === 'error' ? 'destructive' : 'default'}>
+                        {log.status}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs mt-3">
+                    {typeof stats.discovered === 'number' && (
+                      <div>
+                        <span className="text-muted-foreground">Discovered</span>
+                        <p className="font-medium">{stats.discovered}</p>
+                      </div>
+                    )}
+                    {typeof stats.new_assets === 'number' && (
+                      <div>
+                        <span className="text-muted-foreground">New Assets</span>
+                        <p className="font-medium">{stats.new_assets}</p>
+                      </div>
+                    )}
+                    {typeof stats.imported === 'number' && (
+                      <div>
+                        <span className="text-muted-foreground">Imported</span>
+                        <p className="font-medium">{stats.imported}</p>
+                      </div>
+                    )}
+                    {log.duration_seconds !== null && (
+                      <div>
+                        <span className="text-muted-foreground">Duration</span>
+                        <p className="font-medium">{log.duration_seconds?.toFixed(1)}s</p>
+                      </div>
+                    )}
+                  </div>
+                  {log.error_message && (
+                    <p className="text-xs text-destructive mt-2">{log.error_message}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

@@ -22,6 +22,7 @@ export interface StatusResponse {
   notes: ServiceStatus;
   reminders: ServiceStatus;
   passwords: ServiceStatus;
+  photos?: ServiceStatus;
   scheduler_running: boolean;
   active_schedules: number;
 }

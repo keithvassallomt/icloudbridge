@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback } from 'react';
-import { RefreshCw, Activity, Calendar, Key, FileText, AlertTriangle, ExternalLink } from 'lucide-react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import { RefreshCw, Activity, Calendar, Key, FileText, AlertTriangle, ExternalLink, Image } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,7 @@ import apiClient from '@/lib/api-client';
 import type { SetupVerificationResponse } from '@/types/api';
 
 export default function Dashboard() {
-  const { status, setStatus, wsConnected } = useAppStore();
+  const { status, setStatus, wsConnected, config, configLoaded, setConfig } = useAppStore();
   const { activeSyncs, logs } = useSyncStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,8 +32,18 @@ export default function Dashboard() {
     }
   }, [setStatus]);
 
+  const notesEnabled = useMemo(() => {
+    if (configLoaded && typeof config?.notes_enabled === 'boolean') {
+      return config.notes_enabled;
+    }
+    if (typeof status?.notes?.enabled === 'boolean') {
+      return status.notes.enabled;
+    }
+    return true;
+  }, [configLoaded, config?.notes_enabled, status?.notes?.enabled]);
+
   const loadVerification = useCallback(async () => {
-    if (!status?.notes?.enabled) {
+    if (!notesEnabled) {
       setVerification(null);
       setShowSetupWarning(false);
       return;
@@ -50,15 +60,39 @@ export default function Dashboard() {
     } catch (err) {
       console.error('Failed to load verification:', err);
     }
-  }, [status?.notes?.enabled]);
+  }, [notesEnabled]);
+
+  useEffect(() => {
+    if (configLoaded) {
+      return;
+    }
+
+    let isMounted = true;
+    (async () => {
+      try {
+        const cfg = await apiClient.getConfig();
+        if (isMounted) {
+          setConfig(cfg);
+        }
+      } catch (err) {
+        console.error('Failed to load configuration:', err);
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [configLoaded, setConfig]);
 
   useEffect(() => {
     loadStatus();
-    loadVerification();
-    // Refresh status every 30 seconds
     const interval = setInterval(loadStatus, 30000);
     return () => clearInterval(interval);
-  }, [loadStatus, loadVerification]);
+  }, [loadStatus]);
+
+  useEffect(() => {
+    loadVerification();
+  }, [loadVerification]);
 
   const getStatusBadge = (serviceStatus: string) => {
     const statusMap: Record<string, { variant: BadgeProps['variant']; label: string }> = {
@@ -125,7 +159,7 @@ export default function Dashboard() {
       )}
 
       {/* Setup Verification Warning */}
-      {showSetupWarning && verification && status?.notes?.enabled && (
+      {showSetupWarning && verification && notesEnabled && (
         <Alert variant="warning" className="border-orange-500 bg-orange-50">
           <AlertTriangle className="h-4 w-4" />
           <div>
@@ -176,7 +210,7 @@ export default function Dashboard() {
       )}
 
       {/* Service Status Cards */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         {/* Notes */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -269,6 +303,43 @@ export default function Dashboard() {
               )}
             </div>
             {activeSyncs.has('passwords') && (
+              <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
+                Sync in progress...
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Photos */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Photos</CardTitle>
+            <Image className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between mb-2">
+              {status?.photos && getStatusBadge(status.photos.status)}
+              <Badge variant={status?.photos?.enabled ? 'outline' : 'secondary'}>
+                {status?.photos?.enabled === undefined
+                  ? 'Unknown'
+                  : status.photos.enabled
+                    ? 'Enabled'
+                    : 'Disabled'}
+              </Badge>
+            </div>
+            <div className="text-xs text-muted-foreground space-y-1">
+              <div>Last sync: {formatDate(
+                typeof status?.photos?.last_sync === 'string'
+                  ? status.photos.last_sync
+                  : (status?.photos?.last_sync && typeof status.photos.last_sync === 'object')
+                    ? (status.photos.last_sync as { started_at: string }).started_at
+                    : null
+              )}</div>
+              {status?.photos?.next_sync && (
+                <div>Next sync: {formatDate(status?.photos?.next_sync ?? null)}</div>
+              )}
+            </div>
+            {activeSyncs.has('photos') && (
               <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
                 Sync in progress...
               </div>

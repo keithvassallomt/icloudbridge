@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback, useMemo, useRef, useContext } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Settings as SettingsIcon, RefreshCw, Save, Trash2, FileText, Calendar, Key, Image, Download, Shield, AlertTriangle, ExternalLink, CheckCircle, Loader2, Database } from 'lucide-react';
-import { UNSAFE_NavigationContext, useBeforeUnload } from 'react-router-dom';
+import { useBeforeUnload, useBlocker } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -58,64 +58,6 @@ const sortObject = (value: unknown): unknown => {
 
 const sanitizeConfigSnapshot = (value: unknown): unknown => sortObject(stripTransientFields(value ?? {}));
 
-type NavigationBlockerState = 'blocked' | 'unblocked';
-
-interface NavigationBlocker {
-  state: NavigationBlockerState;
-  proceed: () => void;
-  reset: () => void;
-}
-
-type NavigatorWithBlock = {
-  block?: (blocker: (tx: { retry: () => void }) => void) => () => void;
-};
-
-const useNavigationBlocker = (when: boolean): NavigationBlocker => {
-  const navigationContext = useContext(UNSAFE_NavigationContext);
-  const navigator = (navigationContext?.navigator ?? null) as NavigatorWithBlock | null;
-  const [state, setState] = useState<NavigationBlockerState>('unblocked');
-  const transitionRef = useRef<{ retry: () => void } | null>(null);
-
-  useEffect(() => {
-    if (!navigator?.block) {
-      return;
-    }
-
-    if (!when) {
-      transitionRef.current = null;
-      setState('unblocked');
-      return;
-    }
-
-    const unblock = navigator.block((transition) => {
-      transitionRef.current = transition;
-      setState('blocked');
-    });
-
-    return () => {
-      unblock();
-      transitionRef.current = null;
-      setState('unblocked');
-    };
-  }, [navigator, when]);
-
-  const proceed = useCallback(() => {
-    const transition = transitionRef.current;
-    if (transition) {
-      transitionRef.current = null;
-      setState('unblocked');
-      transition.retry();
-    }
-  }, []);
-
-  const reset = useCallback(() => {
-    transitionRef.current = null;
-    setState('unblocked');
-  }, []);
-
-  return useMemo(() => ({ state, proceed, reset }), [state, proceed, reset]);
-};
-
 export default function Settings() {
   const { config, setConfig, setIsFirstRun, resetWizard } = useAppStore();
   const { activeSyncs } = useSyncStore();
@@ -143,8 +85,10 @@ export default function Settings() {
   const sanitizedConfig = useMemo(() => sanitizeConfigSnapshot(config ? { ...config, passwords_vaultwarden_password: '', passwords_nextcloud_app_password: '' } : {}), [config]);
   const sanitizedForm = useMemo(() => sanitizeConfigSnapshot(formData), [formData]);
   const hasUnsavedChanges = Boolean(config) && JSON.stringify(sanitizedForm) !== JSON.stringify(sanitizedConfig);
-  const navigationBlocker = useNavigationBlocker(hasUnsavedChanges);
-  const { state: blockerState, proceed: proceedNavigation, reset: resetNavigation } = navigationBlocker;
+  const blocker = useBlocker(hasUnsavedChanges);
+  const blockerState = blocker.state;
+  const blockerProceed = blocker.proceed;
+  const blockerReset = blocker.reset;
 
   const loadPasswordStatus = useCallback(async () => {
     try {
@@ -203,9 +147,9 @@ export default function Settings() {
   useEffect(() => {
     if (!hasUnsavedChanges) {
       setShowUnsavedPrompt(false);
-      resetNavigation();
+      blockerReset?.();
     }
-  }, [hasUnsavedChanges, resetNavigation]);
+  }, [blockerReset, hasUnsavedChanges]);
 
   useBeforeUnload(
     useCallback((event) => {
@@ -553,16 +497,14 @@ export default function Settings() {
 
   const handleDiscardChanges = useCallback(() => {
     handleReset();
-    if (blockerState === 'blocked') {
-      proceedNavigation();
-    }
+    blockerProceed?.();
     setShowUnsavedPrompt(false);
-  }, [blockerState, handleReset, proceedNavigation]);
+  }, [blockerProceed, handleReset]);
 
   const handleStayOnPage = useCallback(() => {
-    resetNavigation();
+    blockerReset?.();
     setShowUnsavedPrompt(false);
-  }, [resetNavigation]);
+  }, [blockerReset]);
 
   const handleConfirmSave = useCallback(async () => {
     if (blockerState !== 'blocked') {
@@ -574,7 +516,7 @@ export default function Settings() {
     }
 
     const proceedAfterSave = () => {
-      proceedNavigation();
+      blockerProceed?.();
     };
 
     const immediate = await saveConfiguration(proceedAfterSave);
@@ -584,7 +526,7 @@ export default function Settings() {
     } else if (pendingSavePayload) {
       setShowUnsavedPrompt(false);
     }
-  }, [blockerState, pendingSavePayload, proceedNavigation, saveConfiguration]);
+  }, [blockerProceed, blockerState, pendingSavePayload, saveConfiguration]);
 
   const performInitialScan = useCallback(async () => {
     if (!pendingSavePayload) return;
