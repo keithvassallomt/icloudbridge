@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Calendar, RefreshCw, PlayCircle, ChevronDown, Save, Plus, ArrowDown, ArrowUp, Info } from 'lucide-react';
+import { Calendar, RefreshCw, PlayCircle, ChevronDown, Save, Plus, ArrowDown, ArrowUp, Info, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -35,6 +35,10 @@ interface RemindersCalendarStats {
   updated_remote_items?: ReminderItem[];
   deleted_local_items?: ReminderItem[];
   deleted_remote_items?: ReminderItem[];
+  total_created?: number;
+  total_updated?: number;
+  total_deleted?: number;
+  unchanged?: number;
 }
 
 // Helper function to format due dates in a human-readable way
@@ -410,7 +414,7 @@ export default function Reminders() {
                 <div className="text-sm text-muted-foreground">{simulationResult.message}</div>
               )}
               {simulationResult.stats && (() => {
-                const stats = simulationResult.stats;
+                const stats = simulationResult.stats as RemindersCalendarStats & { per_calendar?: Record<string, RemindersCalendarStats> };
 
                 // Check if this is auto mode with per_calendar stats
                 if (stats.per_calendar) {
@@ -502,12 +506,6 @@ export default function Reminders() {
                                   <Trash2 className="h-3 w-3" />
                                   Deleted from CalDAV: {calStats.deleted_remote}
                                 </BadgeWithTooltip>
-                              )}
-                              {(calStats.unchanged || 0) > 0 && (
-                                <Badge variant="secondary" className="gap-1.5">
-                                  <Info className="h-3 w-3" />
-                                  Unchanged: {calStats.unchanged}
-                                </Badge>
                               )}
                             </div>
                           </div>
@@ -615,22 +613,22 @@ export default function Reminders() {
                     )}
 
                     {/* Would delete items (dry run) */}
-                    {(stats.would_delete_local || 0) > 0 && (
+                    {(stats.deleted_local || 0) > 0 && (
                       <BadgeWithTooltip
                         className="bg-red-100 text-red-700 hover:bg-red-100 gap-1.5"
-                        items={stats.would_delete_local_items}
+                        items={stats.deleted_local_items}
                       >
                         <Trash2 className="h-3 w-3" />
-                        Would delete from Apple Reminders: {stats.would_delete_local}
+                        Would delete from Apple Reminders: {stats.deleted_local}
                       </BadgeWithTooltip>
                     )}
-                    {(stats.would_delete_remote || 0) > 0 && (
+                    {(stats.deleted_remote || 0) > 0 && (
                       <BadgeWithTooltip
                         className="bg-red-100 text-red-700 hover:bg-red-100 gap-1.5"
-                        items={stats.would_delete_remote_items}
+                        items={stats.deleted_remote_items}
                       >
                         <Trash2 className="h-3 w-3" />
-                        Would delete from CalDAV: {stats.would_delete_remote}
+                        Would delete from CalDAV: {stats.deleted_remote}
                       </BadgeWithTooltip>
                     )}
 

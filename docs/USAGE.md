@@ -76,9 +76,17 @@ caldav_username = "your_username"
 
 [passwords]
 enabled = true
+provider = "vaultwarden"  # or "nextcloud"
+
+# VaultWarden configuration
 vaultwarden_url = "https://vault.example.com"
 vaultwarden_email = "user@example.com"
-# Credentials stored in system keyring - use: icloudbridge passwords-set-vaultwarden-credentials
+# Credentials stored in system keyring - use: icloudbridge passwords set-bitwarden-credentials
+
+# Nextcloud configuration (if using nextcloud provider)
+nextcloud_url = "https://cloud.example.com"
+nextcloud_username = "your_username"
+# Credentials stored in system keyring - use: icloudbridge passwords set-nextcloud-credentials
 ```
 
 ---
@@ -432,14 +440,39 @@ icloudbridge reminders reset [--yes]
 
 ## Passwords Synchronization
 
-Semi-automated sync between Apple Passwords and VaultWarden via API.
+Semi-automated sync between Apple Passwords and password managers (VaultWarden or Nextcloud Passwords) via API.
+
+### Supported Providers
+
+iCloudBridge supports two password sync providers:
+
+1. **VaultWarden/Bitwarden** - Self-hosted Bitwarden-compatible server
+2. **Nextcloud Passwords** - Built-in Nextcloud password manager
+
+Choose your provider with the CLI (recommended):
+
+```bash
+# Show current selection
+icloudbridge passwords provider
+
+# Switch to Nextcloud Passwords and persist it in ~/.icloudbridge/config.toml
+icloudbridge passwords provider nextcloud
+```
+
+You can still override via `ICLOUDBRIDGE_PASSWORDS__PROVIDER` environment variable (`bitwarden`/`vaultwarden` or `nextcloud`).
+
+---
 
 ### Setup (One-Time)
 
-#### 1. Store VaultWarden Credentials
+Choose your provider and follow the corresponding setup:
+
+#### Option A: VaultWarden Setup
+
+**1. Store VaultWarden Credentials**
 
 ```bash
-icloudbridge passwords-set-vaultwarden-credentials
+icloudbridge passwords set-bitwarden-credentials
 ```
 
 **Interactive prompts**:
@@ -460,19 +493,82 @@ Client Secret:
    URL: https://vault.yourdomain.com
 
 💡 Test connection with:
-   icloudbridge passwords-sync --apple-csv <path/to/passwords.csv>
+   icloudbridge passwords sync --apple-csv <path/to/passwords.csv>
 ```
 
 **Storage**: macOS Keychain (secure, no plaintext in config)
 
----
+#### Option B: Nextcloud Passwords Setup
 
-### `passwords-sync`
+**1. Generate Nextcloud App Password**
 
-Full auto-sync: Apple → VaultWarden (push) and VaultWarden → Apple (pull).
+1. Log into your Nextcloud instance
+2. Go to Settings → Security → Devices & sessions
+3. Enter "iCloudBridge" as device name
+4. Click "Create new app password"
+5. Copy the generated password
+
+**2. Store Nextcloud Credentials**
 
 ```bash
-icloudbridge passwords-sync --apple-csv PASSWORDS.CSV [OPTIONS]
+icloudbridge passwords set-nextcloud-credentials
+```
+
+**Interactive prompts**:
+```
+Nextcloud URL (e.g., https://cloud.example.com): https://cloud.yourdomain.com
+Nextcloud Username: your_username
+
+Enter Nextcloud App Password (not your regular password!):
+Generate one at: Settings → Security → Devices & sessions
+
+App Password: ********
+Confirm app password: ********
+
+✅ Nextcloud credentials stored securely
+   Username: your_username
+   URL: https://cloud.yourdomain.com
+
+💡 Set provider in config:
+   icloudbridge passwords provider nextcloud
+
+💡 Test connection with:
+   icloudbridge passwords sync --apple-csv <path/to/passwords.csv>
+```
+
+**Storage**: macOS Keychain (secure, no plaintext in config)
+
+**Note**: Always use an app password, never your regular Nextcloud password!
+
+---
+
+### `passwords provider`
+
+Display or change the active password sync provider. The selection is saved to `~/.icloudbridge/config.toml` so future CLI and API runs stay in sync.
+
+```bash
+# Show current provider
+icloudbridge passwords provider
+
+# Switch to Nextcloud Passwords
+icloudbridge passwords provider nextcloud
+
+# Switch back to Bitwarden/Vaultwarden
+icloudbridge passwords provider bitwarden
+```
+
+**Tip**: Run this once during setup so you don't need to export `ICLOUDBRIDGE_PASSWORDS__PROVIDER` manually.
+
+---
+
+### `passwords sync`
+
+Full auto-sync: Apple → Password Manager (push) and Password Manager → Apple (pull).
+
+Works with both VaultWarden and Nextcloud Passwords providers.
+
+```bash
+icloudbridge passwords sync --apple-csv PASSWORDS.CSV [OPTIONS]
 ```
 
 **Options**:
@@ -481,39 +577,44 @@ icloudbridge passwords-sync --apple-csv PASSWORDS.CSV [OPTIONS]
 |--------|-------|------|-------------|---------|
 | `--apple-csv` | | PATH | Apple Passwords CSV export | **Required** |
 | `--output` | `-o` | PATH | Output path for Apple CSV | `data_dir/apple-import.csv` |
+| `--bulk` | | flag | Use bulk import (if supported by provider) | false |
 
 **Complete Workflow**:
 
 ```bash
-# 1. Export from Apple Passwords
+# 1. Set your provider (if not using VaultWarden)
+icloudbridge passwords provider nextcloud  # or bitwarden
+
+# 2. Export from Apple Passwords
 # Settings → Passwords → ⚙️ → Export Passwords → passwords.csv
 
-# 2. Run full auto-sync
-icloudbridge passwords-sync --apple-csv ~/Downloads/passwords.csv
+# 3. Run full auto-sync
+icloudbridge passwords sync --apple-csv ~/Downloads/passwords.csv
 
-# 3. Import generated CSV to Apple Passwords (if new entries found)
+# 4. Import generated CSV to Apple Passwords (if new entries found)
 # Passwords app → File → Import Passwords → apple-import.csv
 
-# 4. Delete CSV files (security)
+# 5. Delete CSV files (security)
 rm ~/Downloads/passwords.csv
 rm ~/Library/Application\ Support/iCloudBridge/apple-import.csv
 ```
 
-**Output**:
+**Output Example (Nextcloud)**:
 ```
 🔐 Password Full Auto-Sync
+Provider: nextcloud
 
-Authenticating with VaultWarden...
+Authenticating with nextcloud...
 
 ============================================================
-📤 Apple → VaultWarden (Push)
+📤 Apple → Nextcloud (Push)
 ============================================================
 Created                    5
-Updated                    12
+Updated                    0
 Skipped (unchanged)        2135
 
 ============================================================
-📥 VaultWarden → Apple (Pull)
+📥 Nextcloud → Apple (Pull)
 ============================================================
 ✅ Generated Apple CSV with 3 new entries
    File: ~/.icloudbridge/apple-import.csv
@@ -525,7 +626,7 @@ Skipped (unchanged)        2135
    4. Delete CSV file after import
 
 ============================================================
-✅ Sync complete in 5.2s
+✅ Sync complete in 3.8s
 ============================================================
 
 ⚠️  SECURITY REMINDER
@@ -535,14 +636,19 @@ Skipped (unchanged)        2135
 ```
 
 **What Gets Automated**:
-- ✅ Apple → VaultWarden: Direct API push (no manual import!)
+- ✅ Apple → Password Manager: Direct API push (no manual import!)
 - ✅ Change detection (only updates what changed)
 - ✅ Deduplication
 - ✅ Hash-based change tracking
+- ✅ Folder/collection organization
 
 **What Remains Manual** (Apple limitations):
 - ❌ Apple Passwords export (must use Settings app)
 - ❌ Apple Passwords import (must use Passwords app)
+
+**Provider Differences**:
+- **VaultWarden**: Supports bulk import with `--bulk` flag (faster for large imports)
+- **Nextcloud**: Creates passwords individually (more reliable, slightly slower)
 
 ---
 
@@ -550,12 +656,12 @@ Skipped (unchanged)        2135
 
 For users without VaultWarden API access, use CSV-based workflow:
 
-#### `passwords-import-apple`
+#### `passwords import-apple`
 
 Import passwords from Apple Passwords CSV export.
 
 ```bash
-icloudbridge passwords-import-apple PASSWORDS.CSV
+icloudbridge passwords import-apple PASSWORDS.CSV
 ```
 
 **Output**:
@@ -578,15 +684,15 @@ icloudbridge passwords-import-apple PASSWORDS.CSV
    Delete immediately: ~/Downloads/passwords.csv
 
 💡 Next step: Generate Bitwarden import file
-   → icloudbridge passwords-export-bitwarden -o bitwarden.csv --apple-csv ~/Downloads/passwords.csv
+   → icloudbridge passwords export-bitwarden -o bitwarden.csv --apple-csv ~/Downloads/passwords.csv
 ```
 
-#### `passwords-export-bitwarden`
+#### `passwords export-bitwarden`
 
 Generate Bitwarden-formatted CSV for import.
 
 ```bash
-icloudbridge passwords-export-bitwarden -o OUTPUT.CSV --apple-csv APPLE_CSV
+icloudbridge passwords export-bitwarden -o OUTPUT.CSV --apple-csv APPLE_CSV
 ```
 
 **Options**:
@@ -663,6 +769,28 @@ Last Syncs:
 
 Database: ~/.icloudbridge/passwords.db
 ```
+
+### `passwords-set-nextcloud-credentials`
+
+Store Nextcloud Passwords credentials securely in system keyring.
+
+```bash
+icloudbridge passwords-set-nextcloud-credentials
+```
+
+See [Option B: Nextcloud Passwords Setup](#option-b-nextcloud-passwords-setup) for interactive prompts and usage.
+
+### `passwords-delete-nextcloud-credentials`
+
+Delete Nextcloud Passwords credentials from system keyring.
+
+```bash
+icloudbridge passwords-delete-nextcloud-credentials [OPTIONS]
+```
+
+**Options**:
+- `--username` - Nextcloud username (or from config)
+- `--yes` - Skip confirmation
 
 ### `passwords-delete-vaultwarden-credentials`
 
@@ -743,12 +871,12 @@ INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
 
 Install iCloudBridge as a macOS LaunchAgent for automatic startup.
 
-#### `install-service`
+#### `service install`
 
-Install as a system service.
+Install the API server as a LaunchAgent.
 
 ```bash
-icloudbridge install-service [OPTIONS]
+icloudbridge service install [OPTIONS]
 ```
 
 **Options**:
@@ -758,10 +886,10 @@ icloudbridge install-service [OPTIONS]
 **Example**:
 ```bash
 # Install service
-icloudbridge install-service --start-on-boot
+icloudbridge service install --start-on-boot
 
 # Install on custom port
-icloudbridge install-service --port 9000 --start-on-boot
+icloudbridge service install --port 9000 --start-on-boot
 ```
 
 **Output**:
@@ -777,12 +905,12 @@ icloudbridge install-service --port 9000 --start-on-boot
    icloudbridge service status
 ```
 
-#### `uninstall-service`
+#### `service uninstall`
 
 Remove the LaunchAgent service.
 
 ```bash
-icloudbridge uninstall-service
+icloudbridge service uninstall
 ```
 
 #### `service status`
@@ -1132,8 +1260,11 @@ export ICLOUDBRIDGE_REMINDERS__CALDAV_URL=https://nextcloud.example.com/remote.p
 export ICLOUDBRIDGE_REMINDERS__CALDAV_USERNAME=myuser
 
 # Passwords
+export ICLOUDBRIDGE_PASSWORDS__PROVIDER=vaultwarden  # or nextcloud
 export ICLOUDBRIDGE_PASSWORDS__VAULTWARDEN_URL=https://vault.example.com
 export ICLOUDBRIDGE_PASSWORDS__VAULTWARDEN_EMAIL=user@example.com
+export ICLOUDBRIDGE_PASSWORDS__NEXTCLOUD_URL=https://cloud.example.com
+export ICLOUDBRIDGE_PASSWORDS__NEXTCLOUD_USERNAME=your_username
 ```
 
 **Priority**: Environment variables > config.toml > defaults

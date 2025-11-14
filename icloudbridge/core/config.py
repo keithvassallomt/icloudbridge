@@ -197,21 +197,45 @@ class PhotosConfig(BaseSettings):
 
 
 class PasswordsConfig(BaseSettings):
-    """Configuration for Passwords synchronization with VaultWarden."""
+    """Configuration for Passwords synchronization with VaultWarden or Nextcloud."""
 
     enabled: bool = True
+    provider: str = "vaultwarden"  # "vaultwarden" or "nextcloud"
+
+    # VaultWarden configuration
     vaultwarden_url: str | None = None
     vaultwarden_email: str | None = None
     vaultwarden_password: str | None = None
     vaultwarden_client_id: str | None = None
     vaultwarden_client_secret: str | None = None
 
-    @field_validator("vaultwarden_url", mode="before")
+    # Nextcloud Passwords configuration
+    nextcloud_url: str | None = None
+    nextcloud_username: str | None = None
+    nextcloud_app_password: str | None = None
+
+    @field_validator("provider", mode="before")
+    @classmethod
+    def validate_provider(cls, v: str) -> str:
+        """Validate provider selection."""
+        normalized = (v or "").strip().lower()
+        aliases = {
+            "vaultwarden": "vaultwarden",
+            "bitwarden": "vaultwarden",
+            "nextcloud": "nextcloud",
+            "nextcloud-passwords": "nextcloud",
+            "nextcloud_passwords": "nextcloud",
+        }
+        if normalized not in aliases:
+            raise ValueError("Provider must be 'bitwarden' or 'nextcloud'")
+        return aliases[normalized]
+
+    @field_validator("vaultwarden_url", "nextcloud_url", mode="before")
     @classmethod
     def validate_url(cls, v: str | None) -> str | None:
-        """Validate VaultWarden URL format."""
+        """Validate URL format."""
         if v and not v.startswith(("http://", "https://")):
-            raise ValueError("VaultWarden URL must start with http:// or https://")
+            raise ValueError("URL must start with http:// or https://")
         return v
 
     def get_vaultwarden_credentials(self) -> dict[str, str] | None:
@@ -246,6 +270,40 @@ class PasswordsConfig(BaseSettings):
                 "password": self.vaultwarden_password,
                 "client_id": self.vaultwarden_client_id or "icloudbridge",
                 "client_secret": self.vaultwarden_client_secret or "",
+            }
+
+        return None
+
+    def get_nextcloud_credentials(self) -> dict[str, str] | None:
+        """
+        Get Nextcloud credentials from keyring or config.
+
+        Priority:
+        1. System keyring (if username is configured)
+        2. Config/environment variable (fallback)
+
+        Returns:
+            Dictionary with 'username' and 'app_password' if found
+        """
+        # Try keyring first (most secure)
+        if self.nextcloud_username:
+            try:
+                from icloudbridge.utils.credentials import CredentialStore
+
+                cred_store = CredentialStore()
+                credentials = cred_store.get_nextcloud_credentials(self.nextcloud_username)
+                if credentials:
+                    logger.debug("Using Nextcloud credentials from system keyring")
+                    return credentials
+            except Exception as e:
+                logger.warning(f"Failed to retrieve credentials from keyring: {e}")
+
+        # Fallback to config/env var
+        if self.nextcloud_app_password:
+            logger.debug("Using Nextcloud credentials from config/environment")
+            return {
+                "username": self.nextcloud_username or "",
+                "app_password": self.nextcloud_app_password,
             }
 
         return None

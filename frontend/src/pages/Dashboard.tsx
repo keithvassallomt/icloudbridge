@@ -184,7 +184,13 @@ export default function Dashboard() {
               </Badge>
             </div>
             <div className="text-xs text-muted-foreground space-y-1">
-              <div>Last sync: {formatDate(typeof status?.notes?.last_sync === 'string' ? status.notes.last_sync : status?.notes?.last_sync?.started_at || null)}</div>
+              <div>Last sync: {formatDate(
+                typeof status?.notes?.last_sync === 'string'
+                  ? status.notes.last_sync
+                  : (status?.notes?.last_sync && typeof status.notes.last_sync === 'object')
+                    ? (status.notes.last_sync as { started_at: string }).started_at
+                    : null
+              )}</div>
               {status?.notes?.next_sync && (
                 <div>Next sync: {formatDate(status.notes.next_sync)}</div>
               )}
@@ -211,7 +217,13 @@ export default function Dashboard() {
               </Badge>
             </div>
             <div className="text-xs text-muted-foreground space-y-1">
-              <div>Last sync: {formatDate(typeof status?.reminders?.last_sync === 'string' ? status.reminders.last_sync : status?.reminders?.last_sync?.started_at || null)}</div>
+              <div>Last sync: {formatDate(
+                typeof status?.reminders?.last_sync === 'string'
+                  ? status.reminders.last_sync
+                  : (status?.reminders?.last_sync && typeof status.reminders.last_sync === 'object')
+                    ? (status.reminders.last_sync as { started_at: string }).started_at
+                    : null
+              )}</div>
               {status?.reminders?.next_sync && (
                 <div>Next sync: {formatDate(status.reminders.next_sync)}</div>
               )}
@@ -238,7 +250,13 @@ export default function Dashboard() {
               </Badge>
             </div>
             <div className="text-xs text-muted-foreground space-y-1">
-              <div>Last sync: {formatDate(typeof status?.passwords?.last_sync === 'string' ? status.passwords.last_sync : status?.passwords?.last_sync?.started_at || null)}</div>
+              <div>Last sync: {formatDate(
+                typeof status?.passwords?.last_sync === 'string'
+                  ? status.passwords.last_sync
+                  : (status?.passwords?.last_sync && typeof status.passwords.last_sync === 'object')
+                    ? (status.passwords.last_sync as { started_at: string }).started_at
+                    : null
+              )}</div>
               {status?.passwords?.next_sync && (
                 <div>Next sync: {formatDate(status.passwords.next_sync)}</div>
               )}

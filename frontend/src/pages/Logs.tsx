@@ -93,13 +93,14 @@ export default function Logs() {
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', {
+    const timeStr = date.toLocaleTimeString('en-US', {
       hour12: false,
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
-      fractionalSecondDigits: 3,
     });
+    const ms = date.getMilliseconds().toString().padStart(3, '0');
+    return `${timeStr}.${ms}`;
   };
 
   return (

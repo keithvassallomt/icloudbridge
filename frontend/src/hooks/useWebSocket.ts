@@ -109,7 +109,7 @@ export function useWebSocket(options: UseWebSocketOptions = {}): UseWebSocketRet
 
         case 'status_update':
           if (message.service && message.data) {
-            onStatusUpdate?.(message.service, message.data);
+            onStatusUpdate?.(message.service, message.data as Record<string, unknown>);
           }
           break;
 

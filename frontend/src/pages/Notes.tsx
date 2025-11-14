@@ -635,7 +635,7 @@ export default function Notes() {
             <div className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="text-sm text-muted-foreground">
-                  Preview covers {simulationResult.stats?.folder_count ?? simulationFolderResults.length} folder(s)
+                  Preview covers {(simulationResult.stats?.folder_count ?? simulationFolderResults.length).toString()} folder(s)
                   {simulationResult.stats?.mapping_mode ? ' using manual mappings.' : '.'}
                 </div>
                 <Button onClick={() => setSimulationResult(null)} variant="outline" size="sm">
@@ -796,7 +796,7 @@ export default function Notes() {
                   {historyFolderResults.length > 0 ? (
                     <div className="rounded-lg border border-muted/60 bg-background/70 p-3">
                       <div className="text-xs text-muted-foreground mb-3">
-                        Sync covered {historyFolderCount} folder(s)
+                        Sync covered {historyFolderCount.toString()} folder(s)
                         {log.stats?.mapping_mode ? ' using manual mappings.' : '.'}
                       </div>
                       <FolderResultsTable

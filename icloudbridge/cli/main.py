@@ -1163,8 +1163,54 @@ def reminders_delete_password(
 # PASSWORD COMMANDS
 # ============================================================================
 
+passwords_app = typer.Typer(help="Manage passwords synchronization")
 
-@app.command()
+
+@passwords_app.command(name="provider")
+def passwords_provider(
+    ctx: typer.Context,
+    service: Optional[str] = typer.Argument(
+        None,
+        metavar="SERVICE",
+        help="Choose 'bitwarden' or 'nextcloud'",
+    ),
+) -> None:
+    """Select which password service to sync with and persist the choice."""
+    cfg = ctx.obj["config"]
+
+    current = cfg.passwords.provider
+    if service is None:
+        friendly = "Bitwarden / Vaultwarden" if current == "vaultwarden" else "Nextcloud Passwords"
+        console.print(f"[green]Current provider:[/green] {friendly} [dim]({current})[/dim]")
+        console.print("[dim]Set with: icloudbridge passwords provider <bitwarden|nextcloud>[/dim]")
+        return
+
+    normalized = service.strip().lower()
+    if normalized in {"bitwarden", "vaultwarden"}:
+        provider_value = "vaultwarden"
+        display = "Bitwarden / Vaultwarden"
+    elif normalized in {"nextcloud", "nextcloud-passwords", "nextcloud_passwords"}:
+        provider_value = "nextcloud"
+        display = "Nextcloud Passwords"
+    else:
+        console.print(f"[red]Unknown provider: {service}[/red]")
+        console.print("[dim]Choose either 'bitwarden' or 'nextcloud'[/dim]")
+        raise typer.Exit(1)
+
+    cfg.passwords.provider = provider_value
+
+    config_path = cfg.general.config_file or cfg.default_config_path
+    try:
+        cfg.ensure_data_dir()
+        cfg.save_to_file(config_path)
+        console.print(f"[green]✅ Password provider set to {display}[/green]")
+        console.print(f"[dim]Saved to: {config_path}[/dim]")
+    except ImportError as e:
+        console.print(f"[red]Failed to save configuration: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@passwords_app.command(name="import-apple")
 def passwords_import_apple(
     ctx: typer.Context,
     csv_file: Path = typer.Argument(..., help="Apple Passwords CSV export file"),
@@ -1235,7 +1281,7 @@ def passwords_import_apple(
         raise typer.Exit(1)
 
 
-@app.command()
+@passwords_app.command(name="export-bitwarden")
 def passwords_export_bitwarden(
     ctx: typer.Context,
     output: Path = typer.Option(..., "-o", "--output", help="Output CSV file"),
@@ -1295,7 +1341,7 @@ def passwords_export_bitwarden(
         raise typer.Exit(1)
 
 
-@app.command()
+@passwords_app.command(name="import-bitwarden")
 def passwords_import_bitwarden(
     ctx: typer.Context,
     csv_file: Path = typer.Argument(..., help="Bitwarden CSV export file"),
@@ -1366,7 +1412,7 @@ def passwords_import_bitwarden(
         raise typer.Exit(1)
 
 
-@app.command()
+@passwords_app.command(name="export-apple")
 def passwords_export_apple(
     ctx: typer.Context,
     output: Path = typer.Option(..., "-o", "--output", help="Output CSV file"),
@@ -1431,7 +1477,7 @@ def passwords_export_apple(
         raise typer.Exit(1)
 
 
-@app.command()
+@passwords_app.command(name="status")
 def passwords_status(ctx: typer.Context) -> None:
     """Show password sync status."""
     import asyncio
@@ -1529,9 +1575,9 @@ def passwords_status(ctx: typer.Context) -> None:
         raise typer.Exit(1)
 
 
-@app.command()
+@passwords_app.command(name="set-bitwarden-credentials")
 def passwords_set_vaultwarden_credentials(ctx: typer.Context) -> None:
-    """Set VaultWarden credentials in system keyring."""
+    """Set Bitwarden/VaultWarden credentials in system keyring."""
     from getpass import getpass
 
     from ..utils.credentials import CredentialStore
@@ -1588,20 +1634,20 @@ def passwords_set_vaultwarden_credentials(ctx: typer.Context) -> None:
             console.print(f"   Client ID: {client_id}")
 
         console.print("\n[dim]💡 Test connection with:[/dim]")
-        console.print(f"   icloudbridge passwords-sync --apple-csv <path/to/passwords.csv>")
+        console.print(f"   icloudbridge passwords sync --apple-csv <path/to/passwords.csv>")
 
     except Exception as e:
         console.print(f"[red]❌ Failed to store credentials: {e}[/red]")
         raise typer.Exit(1)
 
 
-@app.command()
+@passwords_app.command(name="delete-bitwarden-credentials")
 def passwords_delete_vaultwarden_credentials(
     ctx: typer.Context,
-    email: str | None = typer.Option(None, "--email", help="VaultWarden email"),
+    email: str | None = typer.Option(None, "--email", help="Bitwarden/VaultWarden email"),
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation"),
 ) -> None:
-    """Delete VaultWarden credentials from system keyring."""
+    """Delete Bitwarden/VaultWarden credentials from system keyring."""
     from ..utils.credentials import CredentialStore
 
     cfg = ctx.obj["config"]
@@ -1632,19 +1678,126 @@ def passwords_delete_vaultwarden_credentials(
         raise typer.Exit(1)
 
 
-@app.command()
+@passwords_app.command(name="set-nextcloud-credentials")
+def passwords_set_nextcloud_credentials(ctx: typer.Context) -> None:
+    """Set Nextcloud Passwords credentials in system keyring."""
+    from getpass import getpass
+
+    from ..utils.credentials import CredentialStore
+
+    cfg = ctx.obj["config"]
+
+    console.print(Panel.fit("🔐 Nextcloud Passwords Credentials Setup", style="bold blue"))
+
+    config_path = cfg.general.config_file or cfg.default_config_path
+
+    # Get Nextcloud URL from config or prompt
+    url = cfg.passwords.nextcloud_url
+    if not url:
+        url = typer.prompt("Nextcloud URL (e.g., https://cloud.example.com)")
+
+        # Update config
+        cfg.passwords.nextcloud_url = url
+        try:
+            cfg.ensure_data_dir()
+            cfg.save_to_file(config_path)
+            console.print(f"[dim]Saved URL to config: {config_path}[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not save URL to config: {e}[/yellow]")
+
+    # Get username
+    username = cfg.passwords.nextcloud_username
+    if not username:
+        username = typer.prompt("Nextcloud Username")
+        cfg.passwords.nextcloud_username = username
+        try:
+            cfg.ensure_data_dir()
+            cfg.save_to_file(config_path)
+            console.print(f"[dim]Saved username to config: {config_path}[/dim]")
+        except Exception as e:
+            console.print(f"[yellow]Warning: Could not save username to config: {e}[/yellow]")
+
+    # Get app password (securely)
+    console.print("\n[dim]Enter Nextcloud App Password (not your regular password!):[/dim]")
+    console.print("[dim]Generate one at: Settings → Security → Devices & sessions[/dim]\n")
+    app_password = getpass("App Password: ")
+    app_password_confirm = getpass("Confirm app password: ")
+
+    if app_password != app_password_confirm:
+        console.print("[red]❌ App passwords do not match[/red]")
+        raise typer.Exit(1)
+
+    # Store in keyring
+    try:
+        cred_store = CredentialStore()
+        cred_store.set_nextcloud_credentials(username, app_password)
+
+        console.print(f"\n[green]✅ Nextcloud credentials stored securely[/green]")
+        console.print(f"   Username: {username}")
+        console.print(f"   URL: {url}")
+
+        console.print("\n[dim]💡 Set provider in config:[/dim]")
+        console.print("   icloudbridge passwords provider nextcloud")
+        console.print("\n[dim]💡 Test connection with:[/dim]")
+        console.print(f"   icloudbridge passwords sync --apple-csv <path/to/passwords.csv>")
+
+    except Exception as e:
+        console.print(f"[red]❌ Failed to store credentials: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@passwords_app.command(name="delete-nextcloud-credentials")
+def passwords_delete_nextcloud_credentials(
+    ctx: typer.Context,
+    username: str | None = typer.Option(None, "--username", help="Nextcloud username"),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation"),
+) -> None:
+    """Delete Nextcloud Passwords credentials from system keyring."""
+    from ..utils.credentials import CredentialStore
+
+    cfg = ctx.obj["config"]
+
+    # Get username from config if not provided
+    if not username:
+        username = cfg.passwords.nextcloud_username
+        if not username:
+            console.print("[red]Username not specified and not found in config[/red]")
+            console.print("[dim]Use --username or set ICLOUDBRIDGE_PASSWORDS__NEXTCLOUD_USERNAME[/dim]")
+            raise typer.Exit(1)
+
+    if not yes:
+        confirmed = typer.confirm(f"Delete stored credentials for {username}?")
+        if not confirmed:
+            console.print("[dim]Cancelled[/dim]")
+            raise typer.Exit(0)
+
+    # Delete from keyring
+    try:
+        cred_store = CredentialStore()
+        if cred_store.delete_nextcloud_credentials(username):
+            console.print(f"[green]✓ Credentials deleted for: {username}[/green]")
+        else:
+            console.print(f"[yellow]No credentials found for: {username}[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Failed to delete credentials: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@passwords_app.command(name="sync")
 def passwords_sync(
     ctx: typer.Context,
     apple_csv: Path = typer.Option(..., help="Apple Passwords CSV export"),
     output: Path | None = typer.Option(None, "-o", "--output", help="Output path for Apple CSV (default: data_dir/apple-import.csv)"),
-    bulk: bool = typer.Option(False, "--bulk", help="Use Bitwarden bulk import endpoint for push phase"),
+    bulk: bool = typer.Option(False, "--bulk", help="Use bulk import if supported by provider"),
 ) -> None:
-    """Full auto-sync: Apple → VaultWarden (push) and VaultWarden → Apple (pull)."""
+    """Full auto-sync: Apple → Provider (push) and Provider → Apple (pull)."""
     import asyncio
 
     from ..core.passwords_sync import PasswordsSyncEngine
-    from ..sources.passwords.vaultwarden_api import VaultwardenAPIClient
-    from ..utils.credentials import CredentialStore
+    from ..sources.passwords.providers import (
+        NextcloudPasswordsProvider,
+        VaultwardenProvider,
+    )
     from ..utils.db import PasswordsDB
 
     cfg = ctx.obj["config"]
@@ -1656,25 +1809,73 @@ def passwords_sync(
         console.print(f"[red]Error: Apple CSV not found: {apple_csv}[/red]")
         raise typer.Exit(1)
 
-    # Get VaultWarden configuration
-    url = cfg.passwords.vaultwarden_url
-    email = cfg.passwords.vaultwarden_email
+    # Get provider
+    provider_name = cfg.passwords.provider
+    console.print(f"[dim]Provider: {provider_name}[/dim]")
 
-    if not url:
-        console.print("[red]VaultWarden URL not configured[/red]")
-        console.print("[dim]Set with: icloudbridge passwords-set-vaultwarden-credentials[/dim]")
-        raise typer.Exit(1)
+    # Create provider based on configuration
+    provider = None
+    if provider_name == "vaultwarden":
+        # Get VaultWarden configuration
+        url = cfg.passwords.vaultwarden_url
+        email = cfg.passwords.vaultwarden_email
 
-    if not email:
-        console.print("[red]VaultWarden email not configured[/red]")
-        console.print("[dim]Set with: icloudbridge passwords-set-vaultwarden-credentials[/dim]")
-        raise typer.Exit(1)
+        if not url:
+            console.print("[red]VaultWarden URL not configured[/red]")
+            console.print("[dim]Set with: icloudbridge passwords set-bitwarden-credentials[/dim]")
+            raise typer.Exit(1)
 
-    # Get credentials
-    credentials = cfg.passwords.get_vaultwarden_credentials()
-    if not credentials:
-        console.print("[red]VaultWarden credentials not found[/red]")
-        console.print("[dim]Set with: icloudbridge passwords-set-vaultwarden-credentials[/dim]")
+        if not email:
+            console.print("[red]VaultWarden email not configured[/red]")
+            console.print("[dim]Set with: icloudbridge passwords set-bitwarden-credentials[/dim]")
+            raise typer.Exit(1)
+
+        # Get credentials
+        credentials = cfg.passwords.get_vaultwarden_credentials()
+        if not credentials:
+            console.print("[red]VaultWarden credentials not found[/red]")
+            console.print("[dim]Set with: icloudbridge passwords set-bitwarden-credentials[/dim]")
+            raise typer.Exit(1)
+
+        provider = VaultwardenProvider(
+            url=url,
+            email=credentials["email"],
+            password=credentials["password"],
+            client_id=credentials.get("client_id"),
+            client_secret=credentials.get("client_secret"),
+        )
+
+    elif provider_name == "nextcloud":
+        # Get Nextcloud configuration
+        url = cfg.passwords.nextcloud_url
+        username = cfg.passwords.nextcloud_username
+
+        if not url:
+            console.print("[red]Nextcloud URL not configured[/red]")
+            console.print("[dim]Set with: icloudbridge passwords set-nextcloud-credentials[/dim]")
+            raise typer.Exit(1)
+
+        if not username:
+            console.print("[red]Nextcloud username not configured[/red]")
+            console.print("[dim]Set with: icloudbridge passwords set-nextcloud-credentials[/dim]")
+            raise typer.Exit(1)
+
+        # Get credentials
+        credentials = cfg.passwords.get_nextcloud_credentials()
+        if not credentials:
+            console.print("[red]Nextcloud credentials not found[/red]")
+            console.print("[dim]Set with: icloudbridge passwords set-nextcloud-credentials[/dim]")
+            raise typer.Exit(1)
+
+        provider = NextcloudPasswordsProvider(
+            url=url,
+            username=credentials["username"],
+            app_password=credentials["app_password"],
+        )
+
+    else:
+        console.print(f"[red]Unknown provider: {provider_name}[/red]")
+        console.print("[dim]Supported providers: bitwarden (Vaultwarden), nextcloud[/dim]")
         raise typer.Exit(1)
 
     # Initialize database
@@ -1688,23 +1889,15 @@ def passwords_sync(
     async def run_sync():
         await db.initialize()
 
-        # Create and authenticate VaultWarden client
-        vw_client = VaultwardenAPIClient(
-            url=url,
-            email=credentials["email"],
-            password=credentials["password"],
-            client_id=credentials.get("client_id"),
-            client_secret=credentials.get("client_secret"),
-        )
-
-        console.print("[dim]Authenticating with VaultWarden...[/dim]")
-        await vw_client.authenticate()
+        # Authenticate with provider
+        console.print(f"[dim]Authenticating with {provider_name}...[/dim]")
+        await provider.authenticate()
 
         # Run full sync
         engine = PasswordsSyncEngine(db)
-        return await engine.sync(
+        result = await engine.sync(
             apple_csv_path=apple_csv,
-            vaultwarden_client=vw_client,
+            provider=provider,
             output_apple_csv=output_path,
             simulate=False,
             run_push=True,
@@ -1712,12 +1905,18 @@ def passwords_sync(
             bulk_push=bulk,
         )
 
+        # Close provider connection
+        await provider.close()
+
+        return result
+
     try:
         stats = asyncio.run(run_sync())
 
         # Display results
+        provider_display = provider_name.title()
         console.print("\n" + "=" * 60)
-        console.print("📤 [bold]Apple → VaultWarden (Push)[/bold]")
+        console.print(f"📤 [bold]Apple → {provider_display} (Push)[/bold]")
         console.print("=" * 60)
 
         push_table = Table(show_header=False)
@@ -1734,7 +1933,7 @@ def passwords_sync(
         console.print(push_table)
 
         console.print("\n" + "=" * 60)
-        console.print("📥 [bold]VaultWarden → Apple (Pull)[/bold]")
+        console.print(f"📥 [bold]{provider_display} → Apple (Pull)[/bold]")
         console.print("=" * 60)
 
         pull_stats = stats["pull"]
@@ -1742,15 +1941,15 @@ def passwords_sync(
 
         if new_entries > 0:
             console.print(f"[green]✅ Generated Apple CSV with {new_entries} new entries[/green]")
-            console.print(f"   File: {pull_stats['output_file']}")
+            console.print(f"   File: {pull_stats.get('download_path')}")
 
             console.print("\n[yellow]⚠️  Manual step required:[/yellow]")
             console.print(f"   1. Open Passwords app")
             console.print(f"   2. File → Import Passwords")
-            console.print(f"   3. Select: {pull_stats['output_file']}")
+            console.print(f"   3. Select: {pull_stats.get('download_path')}")
             console.print(f"   4. Delete CSV file after import")
         else:
-            console.print("[dim]No new passwords from VaultWarden[/dim]")
+            console.print(f"[dim]No new passwords from {provider_display}[/dim]")
 
         console.print("\n" + "=" * 60)
         console.print(f"[bold green]✅ Sync complete in {stats['total_time']:.1f}s[/bold green]")
@@ -1763,7 +1962,7 @@ def passwords_sync(
             f"   → rm {apple_csv}"
         )
         if new_entries > 0:
-            console.print(f"   → rm {pull_stats['output_file']}")
+            console.print(f"   → rm {pull_stats.get('download_path')}")
 
     except Exception as e:
         console.print(f"[red]❌ Sync failed: {e}[/red]")
@@ -1771,7 +1970,7 @@ def passwords_sync(
         raise typer.Exit(1)
 
 
-@app.command()
+@passwords_app.command(name="reset")
 def passwords_reset(
     ctx: typer.Context,
     yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
@@ -1805,6 +2004,10 @@ def passwords_reset(
         console.print(f"[red]Error resetting database: {e}[/red]")
         logging.exception("Reset failed")
         raise typer.Exit(1)
+
+
+# Register passwords subcommand group
+app.add_typer(passwords_app, name="passwords")
 
 
 # =============================================================================
@@ -1893,8 +2096,15 @@ def serve(
         console.print("\n[yellow]Server stopped[/yellow]")
 
 
-@app.command()
-def install_service(
+
+
+# Service management subcommand group
+service_app = typer.Typer(help="Manage the iCloudBridge service")
+app.add_typer(service_app, name="service")
+
+
+@service_app.command("install")
+def service_install(
     port: Annotated[int, typer.Option("--port", help="Port for API server")] = 8000,
     start_on_boot: Annotated[bool, typer.Option("--start-on-boot", help="Start on login")] = True,
 ) -> None:
@@ -1904,13 +2114,13 @@ def install_service(
 
     Examples:
         # Install with default settings
-        icloudbridge install-service
+        icloudbridge service install
 
         # Install without auto-start on boot
-        icloudbridge install-service --no-start-on-boot
+        icloudbridge service install --no-start-on-boot
 
         # Install on custom port
-        icloudbridge install-service --port 8080
+        icloudbridge service install --port 8080
     """
     import plistlib
     import subprocess
@@ -1975,12 +2185,12 @@ def install_service(
         console.print("[dim]Service installed but not loaded (use 'service start' to start)[/dim]")
 
 
-@app.command()
-def uninstall_service() -> None:
+@service_app.command("uninstall")
+def service_uninstall() -> None:
     """Uninstall the iCloudBridge LaunchAgent service.
 
     Examples:
-        icloudbridge uninstall-service
+        icloudbridge service uninstall
     """
     import subprocess
     from pathlib import Path
@@ -2008,11 +2218,6 @@ def uninstall_service() -> None:
     console.print(f"[green]✅ Service uninstalled[/green]")
 
 
-# Service management subcommand group
-service_app = typer.Typer(help="Manage the iCloudBridge service")
-app.add_typer(service_app, name="service")
-
-
 @service_app.command("status")
 def service_status() -> None:
     """Check if the iCloudBridge service is running.
@@ -2027,7 +2232,7 @@ def service_status() -> None:
 
     if not plist_path.exists():
         console.print("[yellow]Service not installed[/yellow]")
-        console.print("[dim]Run 'icloudbridge install-service' to install[/dim]")
+        console.print("[dim]Run 'icloudbridge service install' to install[/dim]")
         return
 
     # Check service status
@@ -2066,7 +2271,7 @@ def service_start() -> None:
 
     if not plist_path.exists():
         console.print("[red]Service not installed[/red]")
-        console.print("[dim]Run 'icloudbridge install-service' first[/dim]")
+        console.print("[dim]Run 'icloudbridge service install' first[/dim]")
         raise typer.Exit(1)
 
     try:

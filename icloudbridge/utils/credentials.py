@@ -220,3 +220,81 @@ class CredentialStore:
             True if credentials exist, False otherwise
         """
         return self.get_vaultwarden_credentials(email) is not None
+
+    # Nextcloud credential methods
+
+    def set_nextcloud_credentials(self, username: str, app_password: str) -> None:
+        """
+        Store Nextcloud app password in system keyring.
+
+        Args:
+            username: Nextcloud username
+            app_password: Nextcloud app password (not regular password)
+
+        Raises:
+            keyring.errors.PasswordSetError: If credentials cannot be stored
+        """
+        try:
+            keyring.set_password(self.service_name, f"nextcloud:app_password:{username}", app_password)
+            logger.info(f"Stored Nextcloud credentials for: {username}")
+        except Exception as e:
+            logger.error(f"Failed to store Nextcloud credentials: {e}")
+            raise
+
+    def get_nextcloud_credentials(self, username: str) -> dict[str, str] | None:
+        """
+        Retrieve Nextcloud credentials from system keyring.
+
+        Args:
+            username: Nextcloud username
+
+        Returns:
+            Dictionary with 'username' and 'app_password' if found, None otherwise
+        """
+        try:
+            app_password = keyring.get_password(self.service_name, f"nextcloud:app_password:{username}")
+            if not app_password:
+                logger.debug(f"No Nextcloud app password found for: {username}")
+                return None
+
+            logger.debug(f"Retrieved Nextcloud credentials for: {username}")
+            return {
+                "username": username,
+                "app_password": app_password,
+            }
+        except Exception as e:
+            logger.error(f"Failed to retrieve Nextcloud credentials: {e}")
+            return None
+
+    def delete_nextcloud_credentials(self, username: str) -> bool:
+        """
+        Delete Nextcloud credentials from system keyring.
+
+        Args:
+            username: Nextcloud username
+
+        Returns:
+            True if deleted, False if not found or error
+        """
+        try:
+            keyring.delete_password(self.service_name, f"nextcloud:app_password:{username}")
+            logger.info(f"Deleted Nextcloud credentials for: {username}")
+            return True
+        except keyring.errors.PasswordDeleteError:
+            logger.warning(f"No Nextcloud credentials found to delete for: {username}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to delete Nextcloud credentials: {e}")
+            return False
+
+    def has_nextcloud_credentials(self, username: str) -> bool:
+        """
+        Check if Nextcloud credentials exist for the given username.
+
+        Args:
+            username: Nextcloud username
+
+        Returns:
+            True if credentials exist, False otherwise
+        """
+        return self.get_nextcloud_credentials(username) is not None
