@@ -23,7 +23,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { FolderMappingTable } from '@/components/FolderMappingTable';
 import apiClient from '@/lib/api-client';
 import { useSyncStore } from '@/store/sync-store';
-import type { SyncLog, SetupVerificationResponse, NotesAllFoldersResponse, FolderMapping, AppConfig, SyncResponse } from '@/types/api';
+import type { SyncLog, SetupVerificationResponse, NotesAllFoldersResponse, FolderMapping, AppConfig, SyncResponse, PendingNoteInfo } from '@/types/api';
 import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
 
 type SimulationChangeCategory = 'added' | 'updated' | 'deleted' | 'unchanged';
@@ -49,6 +49,7 @@ interface SimulationFolderStats {
     apple?: SimulationDetailSection;
     markdown?: SimulationDetailSection;
   };
+  pending_local_notes?: PendingNoteInfo[];
 }
 
 interface SimulationFolderResult {
@@ -148,6 +149,9 @@ const FolderResultsTable = ({
             const details = buildDetails(stats);
             const folderKey = `${contextPrefix}:${folderResult.folder}:${index}`;
             const isExpanded = expandedState[folderKey];
+            const pendingNotes = (stats?.pending_local_notes as PendingNoteInfo[] | undefined)?.filter(
+              (note) => !note.folder || note.folder === folderResult.folder
+            ) ?? [];
 
             return (
               <Fragment key={`${folderResult.folder}-${index}`}>
@@ -173,6 +177,14 @@ const FolderResultsTable = ({
                           <ListChecks className="h-3.5 w-3.5" />
                           {folderResult.status === 'success' ? 'Sync ready' : 'Sync failed'}
                         </div>
+                        {folderResult.status === 'success' && pendingNotes.length > 0 && (
+                          <div className="flex items-center gap-1 text-xs text-amber-600">
+                            <AlertTriangle className="h-3.5 w-3.5" />
+                            <span>
+                              {pendingNotes.length} note{pendingNotes.length === 1 ? '' : 's'} waiting for Apple Notes
+                            </span>
+                          </div>
+                        )}
                         {folderResult.status === 'error' && (
                           <div className="flex items-center gap-2 text-sm text-rose-600">
                             <AlertTriangle className="h-4 w-4" />
@@ -266,6 +278,24 @@ const FolderResultsTable = ({
                                       </div>
                                     );
                                   })}
+                                  {key === 'apple' && pendingNotes.length > 0 && (
+                                    <div className="rounded-md border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-200">
+                                      <div className="flex items-center gap-2 font-semibold">
+                                        <AlertTriangle className="h-3.5 w-3.5" />
+                                        Pending edits detected
+                                      </div>
+                                      <ul className="mt-2 space-y-1 pl-5">
+                                        {pendingNotes.map((note) => (
+                                          <li key={note.uuid ?? note.title ?? note.remote_path} className="list-disc">
+                                            {note.title || note.remote_path || 'Untitled note'}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                      <p className="mt-2 text-[11px]">
+                                        These notes seem to be mid-edit in Apple Notes and were not deleted. They will be retried during the next sync.
+                                      </p>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             );
@@ -425,6 +455,43 @@ export default function Notes() {
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleString();
+  };
+
+  const formatDurationSeconds = (value: number | string | null | undefined) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const numeric = typeof value === 'number' ? value : parseFloat(value);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    return Math.round(numeric);
+  };
+
+  const getTotalChanges = (stats: Record<string, unknown> | undefined): number => {
+    if (!stats) return 0;
+    const keys = [
+      'created',
+      'updated',
+      'deleted',
+      'created_local',
+      'updated_local',
+      'deleted_local',
+      'created_remote',
+      'updated_remote',
+      'deleted_remote',
+    ];
+    return keys.reduce((sum, key) => {
+      const val = stats[key];
+      if (typeof val === 'number') {
+        return sum + val;
+      }
+      if (typeof val === 'string') {
+        const parsed = parseFloat(val);
+        return Number.isNaN(parsed) ? sum : sum + parsed;
+      }
+      return sum;
+    }, 0);
   };
 
   return (
@@ -757,6 +824,9 @@ export default function Notes() {
               {history.map((log) => {
                 const historyFolderResults = (log.stats?.folder_results as SimulationFolderResult[]) || [];
                 const historyFolderCount = log.stats?.folder_count ?? historyFolderResults.length;
+                const durationSeconds = formatDurationSeconds(log.duration_seconds);
+                const totalChanges = getTotalChanges(log.stats);
+                const pendingSummary = (log.stats?.pending_local_notes as PendingNoteInfo[] | undefined) ?? [];
                 return (
                   <div key={log.id} className="border-l-2 pl-4 py-2 space-y-2" style={{
                   borderColor: log.status === 'completed' ? 'rgb(34 197 94)' :
@@ -772,10 +842,25 @@ export default function Notes() {
                   <p className="text-sm text-muted-foreground">{log.message}</p>
                   <div className="flex items-center justify-between text-xs text-muted-foreground">
                     <span>{formatDate(log.started_at)}</span>
-                    {log.duration_seconds && (
-                      <span>{log.duration_seconds}s</span>
+                    {durationSeconds !== null && (
+                      <span>{durationSeconds}s</span>
                     )}
                   </div>
+                  {pendingSummary.length > 0 && (
+                    <div className="rounded-md border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-700 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-200">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <AlertTriangle className="h-3.5 w-3.5" />
+                        Pending edits in Apple Notes
+                      </div>
+                      <ul className="mt-2 space-y-1 pl-5">
+                        {pendingSummary.map((note) => (
+                          <li key={note.uuid ?? note.title ?? note.remote_path} className="list-disc">
+                            {(note.folder ? `${note.folder}: ` : '') + (note.title || note.remote_path || 'Untitled note')}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {historyFolderResults.length > 0 ? (
                     <div className="rounded-lg border border-muted/60 bg-background/70 p-3">
                       <div className="text-xs text-muted-foreground mb-3">
@@ -791,7 +876,11 @@ export default function Notes() {
                       />
                     </div>
                   ) : (
-                    <div className="text-xs text-muted-foreground">No folder-by-folder data captured for this sync.</div>
+                    <div className="text-xs text-muted-foreground">
+                      {log.status === 'completed' && totalChanges === 0
+                        ? 'No changes detected during this sync.'
+                        : 'No folder-by-folder data captured for this sync.'}
+                    </div>
                   )}
                   </div>
                 );

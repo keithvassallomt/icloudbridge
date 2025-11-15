@@ -204,11 +204,25 @@ class NotesSyncEngine:
             "unchanged": 0,
             "would_delete_local": 0,  # For dry_run
             "would_delete_remote": 0,  # For dry_run
+            "pending_local_notes": [],
         }
         stats["details"] = {
             "apple": {category: [] for category in DETAIL_CATEGORIES},
             "markdown": {category: [] for category in DETAIL_CATEGORIES},
         }
+
+        recently_deleted_cache: dict[str, AppleScriptNote] | None = None
+
+        async def note_in_recently_deleted(note_uuid: str) -> bool:
+            nonlocal recently_deleted_cache
+            if recently_deleted_cache is None:
+                try:
+                    rd_notes = await self.notes_adapter.get_recently_deleted_notes()
+                    recently_deleted_cache = {note.uuid: note for note in rd_notes}
+                except Exception as exc:  # pragma: no cover - safety net
+                    logger.warning("Unable to check Recently Deleted folder: %s", exc)
+                    recently_deleted_cache = {}
+            return note_uuid in recently_deleted_cache
 
         def record_detail(section: str, category: str, title: str | None) -> None:
             """Capture note titles for preview UI (bounded per category)."""
@@ -484,11 +498,29 @@ class NotesSyncEngine:
                 if remote_path_str in processed_remote_paths:
                     continue  # Already processed
 
-                # Check if there's a mapping for this remote file
                 mapping = await self.db.get_mapping_by_remote_path(remote_path_str)
 
                 if mapping:
-                    # Had a mapping but local note is gone - delete remote (only in export/bidirectional mode)
+                    note_uuid = mapping["local_uuid"]
+                    note_title = mapping.get("local_name") or md_note.name
+                    present_in_recently_deleted = await note_in_recently_deleted(note_uuid)
+
+                    if not present_in_recently_deleted:
+                        stats["pending_local_notes"].append(
+                            {
+                                "uuid": note_uuid,
+                                "title": note_title,
+                                "folder": folder_name,
+                                "remote_path": remote_path_str,
+                                "reason": "apple_note_missing",
+                            }
+                        )
+                        logger.info(
+                            "Note %s missing from Apple Notes but not in Recently Deleted; deferring remote deletion",
+                            note_title,
+                        )
+                        continue
+
                     if sync_mode == "import":
                         logger.debug(f"Local note deleted, but in import mode - keeping markdown: {md_note.name}")
                     elif skip_deletions:

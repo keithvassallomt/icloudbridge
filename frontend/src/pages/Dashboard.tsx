@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { RefreshCw, Activity, Calendar, Key, FileText, AlertTriangle, ExternalLink, Image } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +9,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useAppStore } from '@/store/app-store';
 import { useSyncStore } from '@/store/sync-store';
 import apiClient from '@/lib/api-client';
-import type { SetupVerificationResponse } from '@/types/api';
+import type { ServiceStatus, SetupVerificationResponse } from '@/types/api';
 
 export default function Dashboard() {
   const { status, setStatus, wsConnected, config, configLoaded, setConfig } = useAppStore();
@@ -31,6 +31,37 @@ export default function Dashboard() {
       setLoading(false);
     }
   }, [setStatus]);
+
+  const lastSyncTimestamp = useCallback((service?: ServiceStatus) => {
+    if (!service?.last_sync) return null;
+    if (typeof service.last_sync === 'string') {
+      return service.last_sync;
+    }
+    return service.last_sync.started_at ?? null;
+  }, []);
+
+  const lastSyncMessage = useCallback((service?: ServiceStatus) => {
+    if (!service?.last_sync || typeof service.last_sync === 'string') {
+      return null;
+    }
+    const message = service.last_sync.message || null;
+    if (!message) {
+      return null;
+    }
+    if (service === status?.reminders && /Synced 0 calendar\(s\)/i.test(message)) {
+      return message.replace(/Synced 0 calendar\(s\)/i, 'No changes detected');
+    }
+    return message;
+  }, [status?.reminders]);
+
+  const extractPendingCount = (service?: ServiceStatus) => {
+    if (!service?.last_sync || typeof service.last_sync === 'string') {
+      return 0;
+    }
+    const stats = service.last_sync.stats as { pending_local_notes?: unknown[] } | undefined;
+    const pending = stats?.pending_local_notes;
+    return Array.isArray(pending) ? pending.length : 0;
+  };
 
   const notesEnabled = useMemo(() => {
     if (configLoaded && typeof config?.notes_enabled === 'boolean') {
@@ -90,6 +121,15 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [loadStatus]);
 
+  const hadActiveSyncRef = useRef(false);
+  useEffect(() => {
+    const isSyncing = activeSyncs.size > 0;
+    if (!isSyncing && hadActiveSyncRef.current) {
+      loadStatus();
+    }
+    hadActiveSyncRef.current = isSyncing;
+  }, [activeSyncs, loadStatus]);
+
   useEffect(() => {
     loadVerification();
   }, [loadVerification]);
@@ -128,6 +168,8 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const notesPendingCount = extractPendingCount(status?.notes);
 
   return (
     <div className="space-y-6">
@@ -219,26 +261,33 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between mb-2">
-              {status?.notes && getStatusBadge(status.notes.status)}
+              {status?.notes && getStatusBadge(status.notes.status ?? 'idle')}
               <Badge variant={status?.notes?.enabled ? 'outline' : 'secondary'}>
                 {status?.notes?.enabled ? 'Enabled' : 'Disabled'}
               </Badge>
             </div>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <div>Last sync: {formatDate(
-                typeof status?.notes?.last_sync === 'string'
-                  ? status.notes.last_sync
-                  : (status?.notes?.last_sync && typeof status.notes.last_sync === 'object')
-                    ? (status.notes.last_sync as { started_at: string }).started_at
-                    : null
-              )}</div>
-              {status?.notes?.next_sync && (
-                <div>Next sync: {formatDate(status.notes.next_sync)}</div>
-              )}
-            </div>
-            {activeSyncs.has('notes') && (
-              <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                Sync in progress...
+            {activeSyncs.has('notes') ? (
+              <div className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Syncing... {activeSyncs.get('notes')?.message}</span>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <div>Last sync: {formatDate(lastSyncTimestamp(status?.notes) ?? null)}</div>
+                {lastSyncMessage(status?.notes) && (
+                  <div className="line-clamp-2">
+                    {lastSyncMessage(status?.notes)}
+                  </div>
+                )}
+                {status?.notes?.next_sync && (
+                  <div>Next sync: {formatDate(status.notes.next_sync)}</div>
+                )}
+                {notesPendingCount > 0 && (
+                  <div className="flex items-center gap-1 text-amber-600">
+                    <AlertTriangle className="h-3.5 w-3.5" />
+                    <span>{notesPendingCount} note{notesPendingCount === 1 ? '' : 's'} waiting for Apple Notes edits</span>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -252,26 +301,25 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between mb-2">
-              {status?.reminders && getStatusBadge(status.reminders.status)}
+              {status?.reminders && getStatusBadge(status.reminders.status ?? 'idle')}
               <Badge variant={status?.reminders?.enabled ? 'outline' : 'secondary'}>
                 {status?.reminders?.enabled ? 'Enabled' : 'Disabled'}
               </Badge>
             </div>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <div>Last sync: {formatDate(
-                typeof status?.reminders?.last_sync === 'string'
-                  ? status.reminders.last_sync
-                  : (status?.reminders?.last_sync && typeof status.reminders.last_sync === 'object')
-                    ? (status.reminders.last_sync as { started_at: string }).started_at
-                    : null
-              )}</div>
-              {status?.reminders?.next_sync && (
-                <div>Next sync: {formatDate(status.reminders.next_sync)}</div>
-              )}
-            </div>
-            {activeSyncs.has('reminders') && (
-              <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                Sync in progress...
+            {activeSyncs.has('reminders') ? (
+              <div className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Syncing... {activeSyncs.get('reminders')?.message}</span>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <div>Last sync: {formatDate(lastSyncTimestamp(status?.reminders) ?? null)}</div>
+                {lastSyncMessage(status?.reminders) && (
+                  <div className="line-clamp-2">{lastSyncMessage(status?.reminders)}</div>
+                )}
+                {status?.reminders?.next_sync && (
+                  <div>Next sync: {formatDate(status.reminders.next_sync)}</div>
+                )}
               </div>
             )}
           </CardContent>
@@ -285,26 +333,25 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between mb-2">
-              {status?.passwords && getStatusBadge(status.passwords.status)}
+              {status?.passwords && getStatusBadge(status.passwords.status ?? 'idle')}
               <Badge variant={status?.passwords?.enabled ? 'outline' : 'secondary'}>
                 {status?.passwords?.enabled ? 'Enabled' : 'Disabled'}
               </Badge>
             </div>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <div>Last sync: {formatDate(
-                typeof status?.passwords?.last_sync === 'string'
-                  ? status.passwords.last_sync
-                  : (status?.passwords?.last_sync && typeof status.passwords.last_sync === 'object')
-                    ? (status.passwords.last_sync as { started_at: string }).started_at
-                    : null
-              )}</div>
-              {status?.passwords?.next_sync && (
-                <div>Next sync: {formatDate(status.passwords.next_sync)}</div>
-              )}
-            </div>
-            {activeSyncs.has('passwords') && (
-              <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                Sync in progress...
+            {activeSyncs.has('passwords') ? (
+              <div className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Syncing... {activeSyncs.get('passwords')?.message}</span>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <div>Last sync: {formatDate(lastSyncTimestamp(status?.passwords) ?? null)}</div>
+                {lastSyncMessage(status?.passwords) && (
+                  <div className="line-clamp-2">{lastSyncMessage(status?.passwords)}</div>
+                )}
+                {status?.passwords?.next_sync && (
+                  <div>Next sync: {formatDate(status.passwords.next_sync)}</div>
+                )}
               </div>
             )}
           </CardContent>
@@ -318,7 +365,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between mb-2">
-              {status?.photos && getStatusBadge(status.photos.status)}
+              {status?.photos && getStatusBadge(status.photos.status ?? 'idle')}
               <Badge variant={status?.photos?.enabled ? 'outline' : 'secondary'}>
                 {status?.photos?.enabled === undefined
                   ? 'Unknown'
@@ -327,21 +374,27 @@ export default function Dashboard() {
                     : 'Disabled'}
               </Badge>
             </div>
-            <div className="text-xs text-muted-foreground space-y-1">
-              <div>Last sync: {formatDate(
-                typeof status?.photos?.last_sync === 'string'
-                  ? status.photos.last_sync
-                  : (status?.photos?.last_sync && typeof status.photos.last_sync === 'object')
-                    ? (status.photos.last_sync as { started_at: string }).started_at
-                    : null
-              )}</div>
-              {status?.photos?.next_sync && (
-                <div>Next sync: {formatDate(status?.photos?.next_sync ?? null)}</div>
-              )}
-            </div>
-            {activeSyncs.has('photos') && (
-              <div className="mt-2 text-xs text-blue-600 dark:text-blue-400">
-                Sync in progress...
+            {activeSyncs.has('photos') ? (
+              <div className="text-xs text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                <span>Syncing... {activeSyncs.get('photos')?.message}</span>
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground space-y-1">
+                <div>Last sync: {formatDate(lastSyncTimestamp(status?.photos) ?? null)}</div>
+                {lastSyncMessage(status?.photos) && (
+                  <div className="line-clamp-2">{lastSyncMessage(status?.photos)}</div>
+                )}
+                {status?.photos?.next_sync && (
+                  <div>Next sync: {formatDate(status?.photos?.next_sync ?? null)}</div>
+                )}
+                {typeof status?.photos?.pending === 'number' && (
+                  status.photos.pending > 0 ? (
+                    <div>Pending imports: {status.photos.pending}</div>
+                  ) : (
+                    <div>No changes detected</div>
+                  )
+                )}
               </div>
             )}
           </CardContent>

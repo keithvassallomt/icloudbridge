@@ -69,6 +69,9 @@ class StatusResponse(BaseModel):
     notes: dict[str, Any]
     reminders: dict[str, Any]
     passwords: dict[str, Any]
+    photos: dict[str, Any] | None = None
+    scheduler_running: bool = False
+    active_schedules: int = 0
 
 
 class HealthResponse(BaseModel):
@@ -214,6 +217,8 @@ class RemindersSyncRequest(BaseModel):
     caldav_calendar: str | None = None
     auto: bool = True
     dry_run: bool = False
+    skip_deletions: bool = False
+    deletion_threshold: int = 5
 
 
 class PhotoSyncRequest(BaseModel):
@@ -257,12 +262,17 @@ class NextcloudCredentialRequest(BaseModel):
 class ScheduleCreate(BaseModel):
     """Request model for creating a schedule."""
 
-    service: str = Field(..., description="Service name (notes, reminders, passwords)")
+    services: list[str] = Field(..., description="List of services to sync (notes, reminders, photos)")
+    # Deprecated legacy field maintained for backwards compatibility with older clients
+    service: str | None = Field(
+        default=None,
+        description="Deprecated single-service field. Prefer 'services'."
+    )
     name: str = Field(..., description="User-friendly schedule name")
     schedule_type: str = Field(..., description="Schedule type (interval or datetime)")
     interval_minutes: int | None = Field(None, description="Interval in minutes")
     cron_expression: str | None = Field(None, description="Cron expression")
-    config_json: str | None = Field(None, description="JSON sync configuration")
+    config_json: str | dict | None = Field(None, description="JSON sync configuration")
     enabled: bool = True
 
 
@@ -274,7 +284,8 @@ class ScheduleUpdate(BaseModel):
     schedule_type: str | None = None
     interval_minutes: int | None = None
     cron_expression: str | None = None
-    config_json: str | None = None
+    config_json: str | dict | None = None
+    services: list[str] | None = None
 
 
 class ScheduleResponse(BaseModel):
@@ -282,16 +293,17 @@ class ScheduleResponse(BaseModel):
 
     id: int
     service: str
+    services: list[str]
     name: str
     enabled: bool
     schedule_type: str
     interval_minutes: int | None
     cron_expression: str | None
-    next_run: float | None
-    last_run: float | None
+    next_run: str | None
+    last_run: str | None
     config_json: str | None
-    created_at: float
-    updated_at: float
+    created_at: str
+    updated_at: str
 
 
 class SettingUpdate(BaseModel):

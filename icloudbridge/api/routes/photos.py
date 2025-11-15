@@ -124,19 +124,25 @@ async def get_status(photos_db: PhotosDBDep, config: ConfigDep):
             "message": "Photo sync is disabled",
         }
 
-    # Get statistics from the database
+    sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
+    await sync_logs_db.initialize()
+
+    photos_success_logs = await sync_logs_db.get_logs(service="photos", status="success", limit=1)
+    if not photos_success_logs:
+        photos_success_logs = await sync_logs_db.get_logs(service="photos", status="completed", limit=1)
+
+    photos_pending_since = None
+    if photos_success_logs:
+        last_log = photos_success_logs[0]
+        photos_pending_since = last_log.get("completed_at") or last_log.get("started_at")
+
+    await photos_db.initialize()
+    stats = await photos_db.get_stats(pending_since=photos_pending_since)
+
+    # Get most recent import time
     import aiosqlite
 
     async with aiosqlite.connect(photos_db.db_path) as db:
-        # Count total imported assets
-        cursor = await db.execute("SELECT COUNT(*) FROM photo_assets WHERE last_imported IS NOT NULL")
-        total_imported = (await cursor.fetchone())[0]
-
-        # Count new assets discovered but not imported
-        cursor = await db.execute("SELECT COUNT(*) FROM photo_assets WHERE last_imported IS NULL")
-        pending = (await cursor.fetchone())[0]
-
-        # Get most recent import time
         cursor = await db.execute(
             "SELECT MAX(last_imported) FROM photo_assets WHERE last_imported IS NOT NULL"
         )
@@ -148,8 +154,8 @@ async def get_status(photos_db: PhotosDBDep, config: ConfigDep):
 
     return {
         "enabled": True,
-        "total_imported": total_imported,
-        "pending": pending,
+        "total_imported": stats.get("total_imported", 0),
+        "pending": stats.get("pending", 0),
         "last_sync": last_sync,
         "sources": list(config.photos.sources.keys()) if config.photos.sources else [],
     }

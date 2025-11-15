@@ -37,6 +37,12 @@ def build_notes_sync_message(stats: dict | None) -> str:
     if deleted is None:
         deleted = combined("deleted_local", "deleted_remote")
 
+    pending_notes = stats.get("pending_local_notes")
+    if isinstance(pending_notes, list):
+        pending_count = len(pending_notes)
+    else:
+        pending_count = 0
+
     msg_parts: list[str] = []
     if created:
         msg_parts.append(f"created {created}")
@@ -45,12 +51,21 @@ def build_notes_sync_message(stats: dict | None) -> str:
     if deleted:
         msg_parts.append(f"deleted {deleted}")
 
-    message = f"Synced: {', '.join(msg_parts)} note(s)" if msg_parts else "Synced, no changes needed"
+    if msg_parts:
+        message = f"Synced: {', '.join(msg_parts)} note(s)"
+    elif pending_count:
+        message = "Pending edits detected"
+    else:
+        message = "Synced, no changes needed"
 
     errors = int(stats.get("errors", 0) or 0)
     if errors:
         plural = "s" if errors != 1 else ""
         message += f" (⚠️ {errors} folder error{plural} encountered)"
+
+    if pending_count:
+        plural = "s" if pending_count != 1 else ""
+        message += f" (⚠️ {pending_count} note{plural} appears to be mid-edit)"
 
     return message
 
@@ -202,7 +217,8 @@ async def sync_notes(
                     "updated": 0,
                     "deleted": 0,
                     "unchanged": 0,
-                    "errors": 0
+                    "errors": 0,
+                    "pending_local_notes": [],
                 }
                 formatted_results = []
 
@@ -219,6 +235,8 @@ async def sync_notes(
                         total_stats["updated"] += stats.get("updated_local", 0) + stats.get("updated_remote", 0)
                         total_stats["deleted"] += stats.get("deleted_local", 0) + stats.get("deleted_remote", 0)
                         total_stats["unchanged"] += stats.get("unchanged", 0)
+                        if stats.get("pending_local_notes"):
+                            total_stats["pending_local_notes"].extend(stats["pending_local_notes"])
                         formatted_results.append({
                             "folder": folder_name,
                             "status": "success",
@@ -226,6 +244,7 @@ async def sync_notes(
                         })
 
                 result = total_stats.copy()
+                result["pending_local_notes"] = list(total_stats.get("pending_local_notes", []))
                 result["folder_count"] = len(folder_results)
                 result["folder_results"] = formatted_results
                 result["mapping_mode"] = True
@@ -241,7 +260,8 @@ async def sync_notes(
                     "updated": 0,
                     "deleted": 0,
                     "unchanged": 0,
-                    "errors": 0
+                    "errors": 0,
+                    "pending_local_notes": [],
                 }
                 folder_results = []
 
@@ -262,6 +282,8 @@ async def sync_notes(
                         total_stats["updated"] += folder_result.get("updated", 0)
                         total_stats["deleted"] += folder_result.get("deleted", 0)
                         total_stats["unchanged"] += folder_result.get("unchanged", 0)
+                        if folder_result.get("pending_local_notes"):
+                            total_stats["pending_local_notes"].extend(folder_result["pending_local_notes"])
 
                         folder_results.append({
                             "folder": folder_name,
@@ -279,6 +301,7 @@ async def sync_notes(
 
                 # Create aggregated result for automatic mode
                 result = total_stats.copy()
+                result["pending_local_notes"] = list(total_stats.get("pending_local_notes", []))
                 result["folder_count"] = len(folders)
                 result["folder_results"] = folder_results
 

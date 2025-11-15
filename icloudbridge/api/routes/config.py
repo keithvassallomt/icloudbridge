@@ -9,6 +9,7 @@ from icloudbridge.api.dependencies import ConfigDep
 from icloudbridge.api.models import ConfigResponse, ConfigUpdateRequest
 from icloudbridge.core.config import FolderMapping, PhotoSourceConfig, PasswordsConfig
 from icloudbridge.utils.credentials import CredentialStore
+from icloudbridge.sources.reminders.caldav_adapter import CalDAVAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +129,29 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
         config.reminders.sync_mode = update.reminders_sync_mode
         logger.info(f"Updated sync mode: {update.reminders_sync_mode}")
     if update.reminders_calendar_mappings is not None:
-        config.reminders.calendar_mappings = update.reminders_calendar_mappings
-        logger.info(f"Updated calendar mappings: {update.reminders_calendar_mappings}")
+        caldav_lookup: dict[str, str] = {}
+        if config.reminders.caldav_url and config.reminders.caldav_username:
+            password = credential_store.get_caldav_password(config.reminders.caldav_username)
+            if password:
+                adapter = CalDAVAdapter(
+                    config.reminders.caldav_url,
+                    config.reminders.caldav_username,
+                    password,
+                )
+                if await adapter.connect():
+                    calendars = await adapter.list_calendars()
+                    caldav_lookup = {cal["name"].lower(): cal["name"] for cal in calendars}
+
+        def canonicalize(name: str) -> str:
+            lowered = (name or "").lower()
+            return caldav_lookup.get(lowered, name)
+
+        normalized_mappings = {
+            apple_name: canonicalize(caldav_name)
+            for apple_name, caldav_name in update.reminders_calendar_mappings.items()
+        }
+        config.reminders.calendar_mappings = normalized_mappings
+        logger.info(f"Updated calendar mappings: {normalized_mappings}")
 
     # Store password AFTER username is set
     print(f"[DEBUG] Checking password field: reminders_caldav_password = {update.reminders_caldav_password!r}")

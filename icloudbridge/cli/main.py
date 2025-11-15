@@ -379,6 +379,15 @@ def notes_sync(
         console.print(f"[yellow]{mode_label[mode]}[/yellow]\n")
 
     async def run_sync():
+        def print_pending_notes(notes_list: list | None, indent: str = "  ") -> None:
+            if not notes_list:
+                return
+            console.print(f"{indent}[yellow]Pending edits detected:[/yellow]")
+            for note in notes_list:
+                title = note.get("title") or Path(note.get("remote_path", "")).name or "Untitled"
+                folder_label = note.get("folder") or "Unknown folder"
+                console.print(f"{indent}  • {title} [dim](folder: {folder_label})[/dim]")
+
         # Initialize sync engine
         prefer_shortcuts = shortcut_push if shortcut_push is not None else cfg.notes.use_shortcuts_for_push
 
@@ -429,6 +438,7 @@ def notes_sync(
                 "unchanged": 0,
                 "would_delete_local": 0,
                 "would_delete_remote": 0,
+                "pending_local_notes": [],
             }
 
             for folder_name, stats in folder_results.items():
@@ -448,6 +458,8 @@ def notes_sync(
                 total_stats["unchanged"] += stats.get("unchanged", 0)
                 total_stats["would_delete_local"] += stats.get("would_delete_local", 0)
                 total_stats["would_delete_remote"] += stats.get("would_delete_remote", 0)
+                if stats.get("pending_local_notes"):
+                    total_stats["pending_local_notes"].extend(stats["pending_local_notes"])
 
                 # Show folder stats
                 if dry_run:
@@ -482,6 +494,14 @@ def notes_sync(
                 else:
                     console.print(f"  [dim]No changes needed ({stats.get('unchanged', 0)} unchanged)[/dim]")
 
+                print_pending_notes(stats.get("pending_local_notes"))
+
+            if total_stats["pending_local_notes"]:
+                pending_count = len(total_stats["pending_local_notes"])
+                console.print(
+                    f"\n[yellow]{pending_count} note{'s' if pending_count != 1 else ''} appear to be mid-edit in Apple Notes. They'll be retried on the next sync.[/yellow]\n"
+                )
+
         else:
             # Auto 1:1 sync or single folder sync
             if folder:
@@ -504,6 +524,7 @@ def notes_sync(
                 "unchanged": 0,
                 "would_delete_local": 0,
                 "would_delete_remote": 0,
+                "pending_local_notes": [],
             }
 
             for folder_name in folders_to_sync:
@@ -522,14 +543,30 @@ def notes_sync(
                     logger.exception("Folder sync failed")
                     continue
 
-                # Aggregate stats
-                for key in total_stats:
-                    total_stats[key] += stats[key]
+                total_stats["created_local"] += stats.get("created_local", 0)
+                total_stats["created_remote"] += stats.get("created_remote", 0)
+                total_stats["updated_local"] += stats.get("updated_local", 0)
+                total_stats["updated_remote"] += stats.get("updated_remote", 0)
+                total_stats["deleted_local"] += stats.get("deleted_local", 0)
+                total_stats["deleted_remote"] += stats.get("deleted_remote", 0)
+                total_stats["unchanged"] += stats.get("unchanged", 0)
+                total_stats["would_delete_local"] += stats.get("would_delete_local", 0)
+                total_stats["would_delete_remote"] += stats.get("would_delete_remote", 0)
+                if stats.get("pending_local_notes"):
+                    total_stats["pending_local_notes"].extend(stats["pending_local_notes"])
 
                 # Show folder stats
+                numeric_keys = [
+                    "created_local",
+                    "created_remote",
+                    "updated_local",
+                    "updated_remote",
+                    "deleted_local",
+                    "deleted_remote",
+                ]
+
                 if dry_run:
-                    # Show dry-run preview
-                    if any(stats[k] > 0 for k in stats if k not in ["unchanged", "would_delete_local", "would_delete_remote"]) or stats["would_delete_local"] > 0 or stats["would_delete_remote"] > 0:
+                    if any(stats.get(k, 0) > 0 for k in numeric_keys) or stats["would_delete_local"] > 0 or stats["would_delete_remote"] > 0:
                         console.print(
                             f"  [yellow]Preview:[/yellow] "
                             f"{stats['created_remote']} would create, "
@@ -546,7 +583,7 @@ def notes_sync(
                         )
                     else:
                         console.print(f"  [dim]No changes needed ({stats['unchanged']} unchanged)[/dim]")
-                elif any(stats[k] > 0 for k in stats if k != "unchanged"):
+                elif any(stats.get(k, 0) > 0 for k in numeric_keys):
                     console.print(
                         f"  [green]✓[/green] "
                         f"{stats['created_remote']} created, "
@@ -563,6 +600,14 @@ def notes_sync(
                     )
                 else:
                     console.print(f"  [dim]No changes needed ({stats['unchanged']} unchanged)[/dim]")
+
+                print_pending_notes(stats.get("pending_local_notes"))
+
+            if total_stats["pending_local_notes"]:
+                pending_count = len(total_stats["pending_local_notes"])
+                console.print(
+                    f"\n[yellow]{pending_count} note{'s' if pending_count != 1 else ''} appear to be mid-edit in Apple Notes. They'll be retried on the next sync.[/yellow]\n"
+                )
 
         # Show summary
         if dry_run:

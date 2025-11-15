@@ -88,11 +88,13 @@ export default function Layout() {
         <div className="h-full flex flex-col">
           {/* Logo */}
           <div className="h-16 flex items-center justify-between px-6 border-b">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-bold">iC</span>
-              </div>
-              <span className="font-semibold">iCloudBridge</span>
+            <div className="flex items-center gap-3">
+              <img
+                src="/icloudbridge_650.png"
+                alt="iCloudBridge"
+                className="h-10 w-auto rounded-md shadow-sm"
+              />
+              <span className="font-semibold text-lg">iCloudBridge</span>
             </div>
             <Button
               variant="ghost"

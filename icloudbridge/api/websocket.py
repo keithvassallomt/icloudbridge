@@ -110,7 +110,7 @@ def create_message(
 
     Args:
         message_type: Type of message (sync_progress, log_entry, schedule_run, error, status_update)
-        service: Service name (notes, reminders, passwords)
+        service: Service name (notes, reminders, photos, passwords)
         data: Message payload
 
     Returns:
@@ -134,7 +134,7 @@ async def send_sync_progress(
     """Send sync progress update to all clients.
 
     Args:
-        service: Service name (notes, reminders, passwords)
+        service: Service name (notes, reminders, photos, passwords)
         status: Sync status (running, success, error)
         progress: Progress percentage (0-100)
         message: Progress message
@@ -161,7 +161,7 @@ async def send_log_entry(
     """Send a log entry to all clients.
 
     Args:
-        service: Service name (notes, reminders, passwords)
+        service: Service name (notes, reminders, photos, passwords)
         level: Log level (DEBUG, INFO, WARNING, ERROR)
         message: Log message
     """

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Calendar, RefreshCw, PlayCircle, ChevronDown, Save, Plus, ArrowDown, ArrowUp, Info, Trash2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,8 @@ interface RemindersCalendarStats {
   total_updated?: number;
   total_deleted?: number;
   unchanged?: number;
+  errors?: number;
+  error_messages?: string[];
 }
 
 // Helper function to format due dates in a human-readable way
@@ -119,6 +121,7 @@ function BadgeWithTooltip({
 export default function Reminders() {
   const [lists, setLists] = useState<RemindersCalendar[]>([]);
   const [history, setHistory] = useState<SyncLog[]>([]);
+  const [historyRefreshing, setHistoryRefreshing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [simulating, setSimulating] = useState(false);
@@ -134,12 +137,52 @@ export default function Reminders() {
   const { activeSyncs } = useSyncStore();
   const activeSync = activeSyncs.get('reminders');
 
+  const resolveCalDavName = useCallback(
+    (name: string): string => {
+      if (!name) return '';
+      const match = caldavCalendars.find((cal) => cal.toLowerCase() === name.toLowerCase());
+      return match ?? name;
+    },
+    [caldavCalendars]
+  );
+
   useEffect(() => {
-    loadData();
-    loadConfig();
+    setListMappings((prev) => {
+      const nextEntries = Object.entries(prev).map(
+        ([apple, caldav]) => [apple, resolveCalDavName(caldav)] as const
+      );
+      const hasChanges = nextEntries.some(([apple, caldav]) => prev[apple] !== caldav);
+      if (!hasChanges) {
+        return prev;
+      }
+      return Object.fromEntries(nextEntries);
+    });
+  }, [resolveCalDavName]);
+
+  const remindersDefaultMapping = useMemo(
+    () => resolveCalDavName(listMappings['Reminders'] || 'tasks'),
+    [listMappings, resolveCalDavName]
+  );
+
+  type SimulationStats = RemindersCalendarStats & { per_calendar?: Record<string, RemindersCalendarStats> };
+
+  const collectErrorMessages = useCallback((stats?: SimulationStats | null) => {
+    if (!stats) return [] as string[];
+    const messages: string[] = [];
+    if (Array.isArray(stats.error_messages)) {
+      messages.push(...(stats.error_messages.filter(Boolean)));
+    }
+    if (stats.per_calendar) {
+      Object.values(stats.per_calendar).forEach((calStats) => {
+        if (Array.isArray(calStats?.error_messages)) {
+          messages.push(...(calStats.error_messages as string[]).filter(Boolean));
+        }
+      });
+    }
+    return messages;
   }, []);
 
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
     try {
       const fetchedConfig = await apiClient.getConfig();
       setMode(fetchedConfig.reminders_sync_mode || 'auto');
@@ -148,9 +191,30 @@ export default function Reminders() {
     } catch (err) {
       console.error('Failed to load config:', err);
     }
-  };
+  }, []);
 
-  const loadData = async () => {
+  const refreshHistory = useCallback(async () => {
+    try {
+      setHistoryRefreshing(true);
+      const historyData = await apiClient.getRemindersHistory(10);
+      setHistory(historyData.logs);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load sync history');
+    } finally {
+      setHistoryRefreshing(false);
+    }
+  }, []);
+
+  const wasSyncingRef = useRef(false);
+  useEffect(() => {
+    const isCurrentlySyncing = Boolean(activeSync);
+    if (!isCurrentlySyncing && wasSyncingRef.current) {
+      refreshHistory();
+    }
+    wasSyncingRef.current = isCurrentlySyncing;
+  }, [activeSync, refreshHistory]);
+
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const [listsData, historyData, caldavCals] = await Promise.all([
@@ -166,7 +230,12 @@ export default function Reminders() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadData();
+    loadConfig();
+  }, [loadData, loadConfig]);
 
   const handleSync = async (dryRun: boolean = false) => {
     try {
@@ -190,6 +259,10 @@ export default function Reminders() {
       } else {
         setSuccess(`Sync completed: ${result.message}`);
         await loadData();
+        const errorMessages = collectErrorMessages(result.stats as SimulationStats | undefined);
+        if (errorMessages.length > 0) {
+          setError(errorMessages.join('\n'));
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : (dryRun ? 'Simulation failed' : 'Sync failed'));
@@ -214,13 +287,17 @@ export default function Reminders() {
       const filteredMappings = Object.fromEntries(
         Object.entries(listMappings).filter(([, caldav]) => caldav && caldav.trim())
       );
+      const canonicalMappings = Object.fromEntries(
+        Object.entries(filteredMappings).map(([apple, caldav]) => [apple, resolveCalDavName(caldav)])
+      );
 
       await apiClient.updateConfig({
         reminders_sync_mode: mode,
-        reminders_calendar_mappings: filteredMappings,
+        reminders_calendar_mappings: canonicalMappings,
       });
 
       setSuccess('Calendar mappings saved successfully');
+      setListMappings(canonicalMappings);
       await loadConfig();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save mappings');
@@ -237,6 +314,49 @@ export default function Reminders() {
     return new Date(dateStr).toLocaleString();
   };
 
+  const formatDurationSeconds = (value: number | string | null | undefined) => {
+    if (value === null || value === undefined) {
+      return null;
+    }
+    const numeric = typeof value === 'number' ? value : parseFloat(value);
+    if (Number.isNaN(numeric)) {
+      return null;
+    }
+    return Math.round(numeric);
+  };
+
+const renderChangeBadge = (
+  label: string,
+  count?: number,
+  items?: ReminderItem[],
+  className?: string,
+) => {
+  const safeCount = typeof count === 'number' && Number.isFinite(count) ? count : 0;
+  return (
+    <BadgeWithTooltip
+      key={label}
+      items={items}
+      className={`text-[11px] border ${className ?? ''}`}
+    >
+      {label}: {safeCount}
+    </BadgeWithTooltip>
+  );
+};
+
+  const calendarChangeSummary = (stats: RemindersCalendarStats) => {
+    const totalChanges =
+      (stats.created_local || 0) +
+      (stats.created_remote || 0) +
+      (stats.updated_local || 0) +
+      (stats.updated_remote || 0) +
+      (stats.deleted_local || 0) +
+      (stats.deleted_remote || 0);
+    if (totalChanges === 0) {
+      return 'No changes';
+    }
+    return `${totalChanges} change${totalChanges === 1 ? '' : 's'}`;
+  };
+
   // Get all calendar options for autocomplete (existing + allow custom)
   const getCalendarOptions = (): AutocompleteOption[] => {
     return caldavCalendars.map(cal => ({ value: cal, label: cal }));
@@ -246,8 +366,10 @@ export default function Reminders() {
   // This filters out any CalDAV calendar that is already mapped to an Apple list
   // Example: If A->X, then X won't appear as a separate row since it's already mapped
   const getUnmappedCaldavCalendars = () => {
-    const mappedCalendars = new Set(Object.values(listMappings));
-    return caldavCalendars.filter(cal => !mappedCalendars.has(cal));
+    const mappedCalendars = new Set(
+      Object.values(listMappings).map((name) => name.toLowerCase())
+    );
+    return caldavCalendars.filter(cal => !mappedCalendars.has(cal.toLowerCase()));
   };
 
   return (
@@ -337,7 +459,7 @@ export default function Reminders() {
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          {mode === 'auto' && 'Automatically map all Apple Reminders lists to CalDAV calendars with matching names. "Reminders" → "tasks" by default.'}
+          {mode === 'auto' && `Automatically map all Apple Reminders lists to CalDAV calendars with matching names. "Reminders" → "${remindersDefaultMapping}" by default.`}
           {mode === 'manual' && 'Manually configure which Apple Reminders lists sync to which CalDAV calendars. Only mapped lists will sync.'}
         </p>
       </div>
@@ -396,7 +518,7 @@ export default function Reminders() {
                 <div className="text-sm text-muted-foreground">{simulationResult.message}</div>
               )}
               {simulationResult.stats && (() => {
-                const stats = simulationResult.stats as RemindersCalendarStats & { per_calendar?: Record<string, RemindersCalendarStats> };
+                const stats = simulationResult.stats as SimulationStats;
 
                 // Check if this is auto mode with per_calendar stats
                 if (stats.per_calendar) {
@@ -423,6 +545,18 @@ export default function Reminders() {
                   // Render per-calendar stats
                   return (
                     <div className="space-y-4">
+                      {stats.error_messages && stats.error_messages.length > 0 && (
+                        <Alert variant="destructive">
+                          <AlertTitle>Errors</AlertTitle>
+                          <AlertDescription>
+                            <ul className="list-disc pl-4 space-y-1 text-sm">
+                              {stats.error_messages.map((msg, idx) => (
+                                <li key={`top-error-${idx}`}>{msg}</li>
+                              ))}
+                            </ul>
+                          </AlertDescription>
+                        </Alert>
+                      )}
                       {Object.entries(perCalendarStats).map(([calendarPair, calStats]) => {
                         const hasCalendarChanges =
                           (calStats.created_local || 0) + (calStats.created_remote || 0) +
@@ -490,6 +624,18 @@ export default function Reminders() {
                                 </BadgeWithTooltip>
                               )}
                             </div>
+                            {calStats.error_messages && calStats.error_messages.length > 0 && (
+                              <Alert variant="destructive">
+                                <AlertTitle>Errors</AlertTitle>
+                                <AlertDescription>
+                                  <ul className="list-disc pl-4 space-y-1 text-xs">
+                                    {calStats.error_messages.map((msg, idx) => (
+                                      <li key={`${calendarPair}-error-${idx}`}>{msg}</li>
+                                    ))}
+                                  </ul>
+                                </AlertDescription>
+                              </Alert>
+                            )}
                           </div>
                         );
                       })}
@@ -621,6 +767,18 @@ export default function Reminders() {
                         Unchanged: {stats.unchanged}
                       </Badge>
                     )}
+                    {stats.error_messages && stats.error_messages.length > 0 && (
+                      <Alert variant="destructive" className="mt-2 w-full">
+                        <AlertTitle>Errors</AlertTitle>
+                        <AlertDescription>
+                          <ul className="list-disc pl-4 space-y-1 text-xs">
+                            {stats.error_messages.map((msg, idx) => (
+                              <li key={`manual-error-${idx}`}>{msg}</li>
+                            ))}
+                          </ul>
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                 );
               })()}
@@ -672,7 +830,8 @@ export default function Reminders() {
                       </thead>
                       <tbody>
                         {lists.map((list) => {
-                          const caldavName = list.name === 'Reminders' ? 'tasks' : list.name;
+                          const mappedName = listMappings[list.name] || '';
+                          const caldavName = mappedName ? resolveCalDavName(mappedName) : '—';
                           return (
                             <tr key={list.name} className="border-b">
                               <td className="p-3">
@@ -715,8 +874,12 @@ export default function Reminders() {
                       <tbody>
                         {/* Apple Lists → CalDAV Calendars */}
                         {lists.map((list) => {
-                          const currentMapping = listMappings[list.name] || '';
-                          const isNewCalendar = currentMapping && !caldavCalendars.includes(currentMapping);
+                          const currentMappingRaw = listMappings[list.name] || '';
+                          const displayMapping = resolveCalDavName(currentMappingRaw);
+                          const calendarExists = !!displayMapping && caldavCalendars.some(
+                            (cal) => cal.toLowerCase() === displayMapping.toLowerCase()
+                          );
+                          const isNewCalendar = !!displayMapping && !calendarExists;
 
                           return (
                             <tr key={`apple-${list.name}`} className="border-b">
@@ -736,7 +899,7 @@ export default function Reminders() {
                                 <div className="space-y-1">
                                   <Autocomplete
                                     options={getCalendarOptions()}
-                                    value={currentMapping}
+                                    value={displayMapping}
                                     onValueChange={(value) => {
                                       setListMappings({
                                         ...listMappings,
@@ -750,7 +913,7 @@ export default function Reminders() {
                                   />
                                   {isNewCalendar && (
                                     <p className="text-xs text-amber-600 dark:text-amber-400">
-                                      ⚠️ Calendar "{currentMapping}" will be created on CalDAV
+                                      ⚠️ Calendar "{displayMapping}" will be created on CalDAV
                                     </p>
                                   )}
                                 </div>
@@ -762,7 +925,7 @@ export default function Reminders() {
                         {/* Unmapped CalDAV Calendars → Create Apple Lists */}
                         {getUnmappedCaldavCalendars().map((calendar) => {
                           const currentMapping = Object.keys(listMappings).find(
-                            key => listMappings[key] === calendar
+                            key => listMappings[key].toLowerCase() === calendar.toLowerCase()
                           ) || '';
                           const isNewList = currentMapping && !lists.find(l => l.name === currentMapping);
 
@@ -786,7 +949,7 @@ export default function Reminders() {
                                       // Remove any existing mapping to this calendar
                                       const newMappings = { ...listMappings };
                                       Object.keys(newMappings).forEach(key => {
-                                        if (newMappings[key] === calendar) {
+                                        if (newMappings[key].toLowerCase() === calendar.toLowerCase()) {
                                           delete newMappings[key];
                                         }
                                       });
@@ -828,35 +991,192 @@ export default function Reminders() {
       {/* Sync History */}
       <Card>
         <CardHeader>
-          <CardTitle>Sync History</CardTitle>
-          <CardDescription>Recent sync operations</CardDescription>
+          <CardTitle className="flex items-center gap-2">
+            Sync History
+            {(historyRefreshing || activeSync) && (
+              <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
+            )}
+          </CardTitle>
+          <CardDescription>Recent sync operations (auto-updates after each run)</CardDescription>
         </CardHeader>
         <CardContent>
           {history.length === 0 ? (
             <div className="text-center text-muted-foreground">No sync history</div>
           ) : (
             <div className="space-y-3">
-              {history.map((log) => (
-                <div key={log.id} className="border-l-2 pl-4 py-2 space-y-1" style={{
-                  borderColor: log.status === 'completed' ? 'rgb(34 197 94)' :
-                               log.status === 'failed' ? 'rgb(239 68 68)' :
-                               'rgb(59 130 246)'
-                }}>
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{log.operation}</span>
-                    <Badge variant={log.status === 'completed' ? 'success' : log.status === 'failed' ? 'destructive' : 'default'}>
-                      {log.status}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{log.message}</p>
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <span>{formatDate(log.started_at)}</span>
-                    {log.duration_seconds && (
-                      <span>{log.duration_seconds}s</span>
+              {history.map((log) => {
+                const roundedDuration = formatDurationSeconds(log.duration_seconds);
+                const stats = (log.stats || {}) as Record<string, any>;
+                const perCalendar = stats?.per_calendar as Record<string, RemindersCalendarStats> | undefined;
+                const calendarEntries = perCalendar ? Object.entries(perCalendar) : [];
+                const warningMessages = Array.isArray(stats?.error_messages)
+                  ? (stats.error_messages as string[]).filter(Boolean)
+                  : [];
+                return (
+                  <div
+                    key={log.id}
+                    className="border-l-2 pl-4 py-2 space-y-1"
+                    style={{
+                      borderColor:
+                        log.status === 'completed'
+                          ? 'rgb(34 197 94)'
+                          : log.status === 'failed'
+                            ? 'rgb(239 68 68)'
+                            : 'rgb(59 130 246)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{log.operation}</span>
+                      <Badge variant={log.status === 'completed' ? 'success' : log.status === 'failed' ? 'destructive' : 'default'}>
+                        {log.status}
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">{log.message}</p>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>{formatDate(log.started_at)}</span>
+                      {roundedDuration !== null && (
+                        <span>{roundedDuration}s</span>
+                      )}
+                    </div>
+                    {calendarEntries.length > 0 ? (
+                      <div className="rounded-lg border border-muted/60 bg-background/70 p-3 space-y-3">
+                        <div className="text-xs text-muted-foreground">
+                          Synced {stats?.calendars_synced ?? calendarEntries.length} list(s)
+                        </div>
+                        <div className="space-y-3">
+                          {calendarEntries.map(([calendarName, calendarStats]) => {
+                            const calendarWarnings = Array.isArray(calendarStats?.error_messages)
+                              ? (calendarStats.error_messages as string[]).filter(Boolean)
+                              : [];
+                            return (
+                              <div
+                                key={`${log.id}-${calendarName}`}
+                                className="rounded border border-muted/40 bg-background/80 p-3 space-y-2"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-medium">{calendarName}</span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {calendarChangeSummary(calendarStats)}
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-2 text-[11px]">
+                                  {renderChangeBadge(
+                                    'Apple +',
+                                    calendarStats.created_local,
+                                    calendarStats.created_local_items,
+                                    'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'CalDAV +',
+                                    calendarStats.created_remote,
+                                    calendarStats.created_remote_items,
+                                    'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'Apple ✎',
+                                    calendarStats.updated_local,
+                                    calendarStats.updated_local_items,
+                                    'bg-blue-50 text-blue-700 border-blue-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'CalDAV ✎',
+                                    calendarStats.updated_remote,
+                                    calendarStats.updated_remote_items,
+                                    'bg-blue-50 text-blue-700 border-blue-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'Apple -',
+                                    calendarStats.deleted_local,
+                                    calendarStats.deleted_local_items,
+                                    'bg-rose-50 text-rose-700 border-rose-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'CalDAV -',
+                                    calendarStats.deleted_remote,
+                                    calendarStats.deleted_remote_items,
+                                    'bg-rose-50 text-rose-700 border-rose-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'Unchanged',
+                                    calendarStats.unchanged,
+                                    undefined,
+                                    'bg-slate-100 text-slate-700 border-slate-200'
+                                  )}
+                                </div>
+                                {calendarWarnings.length > 0 && (
+                                  <ul className="text-xs text-amber-600 list-disc list-inside space-y-0.5">
+                                    {calendarWarnings.map((warning, idx) => (
+                                      <li key={`${calendarName}-warning-${idx}`}>{warning}</li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-muted/60 bg-background/70 p-3 space-y-2">
+                        <div className="text-xs text-muted-foreground">
+                          Sync summary for configured lists
+                        </div>
+                        <div className="space-y-2">
+                          {Object.entries(listMappings).length > 0 ? (
+                            Object.entries(listMappings).map(([appleList, caldavList]) => (
+                              <div
+                                key={`${log.id}-mapping-${appleList}-${caldavList}`}
+                                className="rounded border border-muted/40 bg-background/80 p-3 space-y-2"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="font-medium">{appleList}</span>
+                                  <span className="text-xs text-muted-foreground">→ {caldavList}</span>
+                                </div>
+                                <div className="flex flex-wrap gap-2 text-[11px]">
+                                  {renderChangeBadge(
+                                    'Created',
+                                    0,
+                                    undefined,
+                                    'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'Updated',
+                                    0,
+                                    undefined,
+                                    'bg-blue-50 text-blue-700 border-blue-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'Deleted',
+                                    0,
+                                    undefined,
+                                    'bg-rose-50 text-rose-700 border-rose-200'
+                                  )}
+                                  {renderChangeBadge(
+                                    'Unchanged',
+                                    0,
+                                    undefined,
+                                    'bg-slate-100 text-slate-700 border-slate-200'
+                                  )}
+                                </div>
+                              </div>
+                            ))
+                          ) : (
+                            <div className="text-xs text-muted-foreground">
+                              No calendar mappings configured.
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    {warningMessages.length > 0 && (
+                      <div className="text-xs text-amber-600 border-l-2 border-amber-300 pl-3 space-y-0.5">
+                        {warningMessages.map((warning, index) => (
+                          <p key={`warning-${log.id}-${index}`}>{warning}</p>
+                        ))}
+                      </div>
                     )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>

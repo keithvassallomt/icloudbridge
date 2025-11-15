@@ -17,6 +17,21 @@ end tell
 """
 
 
+ALBUM_EXISTS_SCRIPT = """
+on run argv
+    set albumName to item 1 of argv
+    tell application "Photos"
+        try
+            set _ to first album whose name is albumName
+            return "1"
+        on error
+            return "0"
+        end try
+    end tell
+end run
+"""
+
+
 CREATE_ALBUM_SCRIPT = """
 on run argv
     set albumName to item 1 of argv
@@ -72,9 +87,8 @@ class PhotosAppleScriptAdapter:
         if not album_name:
             raise ValueError("Album name is required")
 
-        stdout = await self._run_script(LIST_ALBUMS_SCRIPT)
-        albums = {name.strip() for name in stdout.split(",") if name.strip()}
-        if album_name in albums:
+        exists_result = (await self._run_script(ALBUM_EXISTS_SCRIPT, album_name)).strip()
+        if exists_result == "1":
             return
 
         await self._run_script(CREATE_ALBUM_SCRIPT, album_name)

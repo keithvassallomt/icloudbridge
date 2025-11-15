@@ -710,6 +710,15 @@ class NotesAdapter:
             logger.error(f"Failed to get notes from {folder_name}: {e}")
             raise RuntimeError(f"Failed to get notes from folder '{folder_name}': {e}") from e
 
+    async def get_recently_deleted_notes(self) -> list[AppleScriptNote]:
+        """Return notes currently in the Recently Deleted folder."""
+
+        try:
+            return await self.get_notes("Recently Deleted")
+        except Exception as exc:
+            logger.warning("Failed to load Recently Deleted notes: %s", exc)
+            return []
+
     async def create_note(
         self, folder_name: str, note_title: str, body_html: str
     ) -> tuple[str, datetime]:

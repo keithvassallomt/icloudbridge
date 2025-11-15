@@ -69,7 +69,10 @@ class PhotoSyncEngine:
         if progress_callback:
             await progress_callback(5, "Scanning source folders...")
 
-        candidates = list(self.scanner.iter_candidates(sources))
+        selected_sources = list(sources) if sources is not None else None
+        scanned_sources = selected_sources if selected_sources is not None else self.scanner.available_sources()
+
+        candidates = list(self.scanner.iter_candidates(selected_sources))
         logger.info("Scanned %s candidate files", len(candidates))
 
         if progress_callback:
@@ -129,7 +132,7 @@ class PhotoSyncEngine:
                 "new_assets": 0,
                 "imported": 0,
                 "dry_run": dry_run,
-                "sources": list(self.scanner.available_sources()),
+                "sources": scanned_sources,
             }
 
         # Skip import if dry_run (simulate) or initial_scan (building DB)
@@ -146,6 +149,7 @@ class PhotoSyncEngine:
                 "dry_run": dry_run,
                 "initial_scan": initial_scan,
                 "pending": [str(record.candidate.path) for record in new_records[:50]],
+                "sources": scanned_sources,
             }
 
         grouped: dict[str, list[PhotoImportRecord]] = defaultdict(list)
@@ -197,6 +201,7 @@ class PhotoSyncEngine:
             "imported": total_imported,
             "dry_run": False,
             "albums": {album: len(records) for album, records in grouped.items()},
+            "sources": scanned_sources,
         }
 
     async def _hash_file(self, path: Path) -> str:

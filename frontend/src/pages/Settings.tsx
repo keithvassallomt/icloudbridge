@@ -83,9 +83,9 @@ export default function Settings() {
   const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
   const [afterSaveAction, setAfterSaveAction] = useState<(() => void) | null>(null);
 
-  const sanitizedConfig = useMemo(() => sanitizeConfigSnapshot(config ? { ...config, passwords_vaultwarden_password: '', passwords_nextcloud_app_password: '' } : {}), [config]);
+  const [savedSnapshot, setSavedSnapshot] = useState<unknown>(null);
   const sanitizedForm = useMemo(() => sanitizeConfigSnapshot(formData), [formData]);
-  const hasUnsavedChanges = Boolean(config) && JSON.stringify(sanitizedForm) !== JSON.stringify(sanitizedConfig);
+  const hasUnsavedChanges = Boolean(savedSnapshot) && JSON.stringify(sanitizedForm) !== JSON.stringify(savedSnapshot);
   const blocker = useBlocker(hasUnsavedChanges);
   const blockerState = blocker.state;
   const blockerProceed = blocker.proceed;
@@ -110,12 +110,14 @@ export default function Settings() {
       setSuccess(null);
       const data = await apiClient.getConfig();
       setConfig(data);
-      setFormData({
+      const nextFormData = {
         ...data,
         passwords_provider: (data.passwords_provider as PasswordProvider) ?? 'vaultwarden',
         passwords_vaultwarden_password: '',
         passwords_nextcloud_app_password: '',
-      });
+      };
+      setFormData(nextFormData);
+      setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
       await loadPasswordStatus();
     } catch (err) {
       setError(formatError(err, 'Failed to load configuration'));
@@ -130,12 +132,14 @@ export default function Settings() {
 
   useEffect(() => {
     if (config) {
-      setFormData({
+      const nextFormData = {
         ...config,
         passwords_provider: (config.passwords_provider as PasswordProvider) ?? 'vaultwarden',
         passwords_vaultwarden_password: '',
         passwords_nextcloud_app_password: '',
-      });
+      };
+      setFormData(nextFormData);
+      setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
     }
   }, [config]);
 
@@ -206,12 +210,14 @@ export default function Settings() {
 
   const handleReset = useCallback(() => {
     if (config) {
-      setFormData({
+      const nextFormData = {
         ...config,
         passwords_provider: (config.passwords_provider as PasswordProvider) ?? 'vaultwarden',
         passwords_vaultwarden_password: '',
         passwords_nextcloud_app_password: '',
-      });
+      };
+      setFormData(nextFormData);
+      setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
       setError(null);
       setSuccess(null);
     }
@@ -276,7 +282,12 @@ export default function Settings() {
       // Save the updated config
       const updated = await apiClient.updateConfig(updatedFormData);
       setConfig(updated);
-      setFormData({ ...updated, passwords_vaultwarden_password: '' });
+      const nextFormData = {
+        ...updated,
+        passwords_vaultwarden_password: '',
+      };
+      setFormData(nextFormData);
+      setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
 
       if (service === 'passwords') {
         await loadPasswordStatus();
@@ -323,12 +334,14 @@ export default function Settings() {
               photos_enabled: false,
             } as AppConfig;
       setConfig(blankConfig);
-      setFormData({
+      const nextFormData = {
         ...blankConfig,
         passwords_provider: (blankConfig.passwords_provider as PasswordProvider) ?? 'vaultwarden',
         passwords_vaultwarden_password: '',
         passwords_nextcloud_app_password: '',
-      });
+      };
+      setFormData(nextFormData);
+      setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
 
       // Temporarily hide wizard until we route back to the dashboard
       setIsFirstRun(false);
@@ -504,12 +517,14 @@ export default function Settings() {
 
         const updated = await apiClient.updateConfig(payload);
         setConfig(updated);
-        setFormData({
+        const nextFormData = {
           ...updated,
           passwords_provider: (updated.passwords_provider as PasswordProvider) ?? 'vaultwarden',
           passwords_vaultwarden_password: '',
           passwords_nextcloud_app_password: '',
-        });
+        };
+        setFormData(nextFormData);
+        setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
         setPendingSavePayload(null);
         setAfterSaveAction(null);
         setSuccess('Configuration saved successfully');
@@ -578,7 +593,12 @@ export default function Settings() {
       // First save the configuration so backend knows where to scan
       const updated = await apiClient.updateConfig(pendingSavePayload);
       setConfig(updated);
-      setFormData({ ...updated, passwords_vaultwarden_password: '' });
+      const nextFormData = {
+        ...updated,
+        passwords_vaultwarden_password: '',
+      };
+      setFormData(nextFormData);
+      setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
 
       setInitialScanProgress(10);
       setInitialScanMessage('Starting initial scan...');

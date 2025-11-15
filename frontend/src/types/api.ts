@@ -12,10 +12,12 @@ export interface VersionResponse {
 }
 
 export interface ServiceStatus {
-  last_sync: string | null;
-  next_sync: string | null;
-  status: string;
   enabled: boolean;
+  status?: string;
+  sync_count?: number;
+  pending?: number;
+  last_sync?: string | SyncLog | null;
+  next_sync?: string | null;
 }
 
 export interface StatusResponse {
@@ -202,10 +204,19 @@ export interface SyncLog {
   error_message: string | null;
 }
 
+export interface PendingNoteInfo {
+  uuid?: string;
+  title?: string;
+  folder?: string;
+  remote_path?: string;
+  reason?: string;
+}
+
 // Schedules
 export interface Schedule {
   id: number;
   service: string;
+  services: string[];
   name: string;
   schedule_type: 'interval' | 'datetime';
   interval_minutes?: number;
@@ -219,7 +230,7 @@ export interface Schedule {
 }
 
 export interface ScheduleCreate {
-  service: string;
+  services: string[];
   name: string;
   schedule_type: 'interval' | 'datetime';
   interval_minutes?: number;
@@ -235,6 +246,7 @@ export interface ScheduleUpdate {
   interval_minutes?: number;
   cron_expression?: string;
   config_json?: Record<string, unknown>;
+  services?: string[];
 }
 
 // Settings

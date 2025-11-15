@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, RefreshCw, PlayCircle, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -102,31 +102,25 @@ export default function Photos() {
   const { activeSyncs } = useSyncStore();
   const activeSync = activeSyncs.get('photos');
 
-  useEffect(() => {
-    loadHistory();
-    loadConfig();
-    loadStatus();
-  }, []);
-
-  const loadConfig = async () => {
+  const loadConfig = useCallback(async () => {
     try {
       const cfg = await apiClient.getConfig();
       setConfig(cfg);
     } catch (err) {
       console.error('Failed to load config:', err);
     }
-  };
+  }, []);
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     try {
       const statusData = await apiClient.getPhotosStatus();
       setStatus(statusData);
     } catch (err) {
       console.error('Failed to load status:', err);
     }
-  };
+  }, []);
 
-  const loadHistory = async () => {
+  const loadHistory = useCallback(async () => {
     try {
       setHistoryLoading(true);
       const historyData = await apiClient.getPhotosHistory(10);
@@ -136,7 +130,23 @@ export default function Photos() {
     } finally {
       setHistoryLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadHistory();
+    loadConfig();
+    loadStatus();
+  }, [loadHistory, loadConfig, loadStatus]);
+
+  const wasSyncingRef = useRef(false);
+  useEffect(() => {
+    const isSyncing = Boolean(activeSync);
+    if (!isSyncing && wasSyncingRef.current) {
+      loadHistory();
+      loadStatus();
+    }
+    wasSyncingRef.current = isSyncing;
+  }, [activeSync, loadHistory, loadStatus]);
 
   const handleSyncAction = async (dryRun: boolean) => {
     try {
@@ -313,8 +323,13 @@ export default function Photos() {
       <section className="rounded-lg border p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold">Sync history</h3>
-            <p className="text-sm text-muted-foreground">Last 10 syncs</p>
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              Sync history
+              {(historyLoading || activeSync) && (
+                <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
+              )}
+            </h3>
+            <p className="text-sm text-muted-foreground">Auto-updates after each sync (last 10)</p>
           </div>
           <Button variant="ghost" size="sm" onClick={handleReset}>
             Reset state
@@ -325,7 +340,10 @@ export default function Photos() {
         ) : (
           <div className="space-y-4">
             {history.map((log) => {
-              const stats = (log.stats || {}) as any;
+              const stats = (log.stats || {}) as PhotosSyncResult['stats'] & { sources?: string[]; pending?: string[] };
+              const albumEntries = stats?.albums ? Object.entries(stats.albums) : [];
+              const sources = Array.isArray(stats?.sources) ? stats.sources : [];
+              const pending = Array.isArray(stats?.pending) ? stats.pending : [];
               return (
                 <div key={log.id} className="rounded-md border-l-4 bg-card/40 p-4" style={{
                   borderColor:
@@ -373,10 +391,52 @@ export default function Photos() {
                     {log.duration_seconds !== null && (
                       <div>
                         <span className="text-muted-foreground">Duration</span>
-                        <p className="font-medium">{log.duration_seconds?.toFixed(1)}s</p>
+                        <p className="font-medium">{log.duration_seconds.toFixed(1)}s</p>
                       </div>
                     )}
                   </div>
+                  {sources.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs text-muted-foreground mb-1">Sources scanned</p>
+                      <div className="flex flex-wrap gap-1">
+                        {sources.map((source) => (
+                          <Badge key={`${log.id}-${source}`} variant="outline" className="text-[11px]">
+                            {source}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {albumEntries.length > 0 && (
+                    <div className="mt-4 space-y-1">
+                      <p className="text-xs text-muted-foreground">Album imports</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        {albumEntries.map(([album, count]) => (
+                          <div
+                            key={`${log.id}-${album}`}
+                            className="flex items-center justify-between rounded border border-muted/40 bg-background/60 px-3 py-1.5"
+                          >
+                            <span className="truncate pr-2">{album}</span>
+                            <span className="font-medium">{count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {pending.length > 0 && (
+                    <div className="mt-4 space-y-1">
+                      <p className="text-xs text-muted-foreground">
+                        Pending imports (showing first {Math.min(pending.length, 5)})
+                      </p>
+                      <ul className="text-[11px] text-muted-foreground space-y-0.5 max-h-32 overflow-y-auto border rounded border-dashed px-3 py-2 bg-background/70">
+                        {pending.slice(0, 5).map((path, idx) => (
+                          <li key={`${log.id}-pending-${idx}`} className="truncate">
+                            {path}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {log.error_message && (
                     <p className="text-xs text-destructive mt-2">{log.error_message}</p>
                   )}

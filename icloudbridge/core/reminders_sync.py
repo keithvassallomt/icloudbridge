@@ -166,37 +166,64 @@ class RemindersSyncEngine:
             # Step 0: Ensure calendars exist on both sides
             # Check if Apple Reminders calendar exists, create if not
             apple_calendars = await self.reminders_adapter.list_calendars()
-            apple_cal_names = {cal.title for cal in apple_calendars}
-            if apple_calendar_name not in apple_cal_names:
-                logger.warning(
-                    f"Apple Reminders calendar '{apple_calendar_name}' not found, creating it..."
+            apple_cal_lookup = {cal.title.lower(): cal for cal in apple_calendars}
+            local_reminders: list[EventKitReminder]
+            effective_apple_name = apple_calendar_name
+            target_apple_calendar = apple_cal_lookup.get(apple_calendar_name.lower())
+            if not target_apple_calendar:
+                if dry_run:
+                    logger.warning(
+                        "Dry run: Apple Reminders calendar '%s' does not exist and would be created during a real sync.",
+                        apple_calendar_name,
+                    )
+                    local_reminders = []
+                else:
+                    logger.warning(
+                        f"Apple Reminders calendar '{apple_calendar_name}' not found, creating it..."
+                    )
+                    created_cal = await self.reminders_adapter.create_calendar(apple_calendar_name)
+                    if not created_cal:
+                        logger.error(f"Failed to create Apple calendar: {apple_calendar_name}")
+                        raise RuntimeError(f"Failed to create Apple calendar: {apple_calendar_name}")
+                    local_reminders = []
+                    effective_apple_name = apple_calendar_name
+            else:
+                effective_apple_name = target_apple_calendar.title
+                # Step 1: Fetch all reminders from Apple Reminders
+                logger.info(f"Fetching reminders from Apple calendar '{effective_apple_name}'...")
+                local_reminders = await self.reminders_adapter.get_reminders(
+                    calendar_name=effective_apple_name
                 )
-                created_cal = await self.reminders_adapter.create_calendar(apple_calendar_name)
-                if not created_cal:
-                    logger.error(f"Failed to create Apple calendar: {apple_calendar_name}")
-                    raise RuntimeError(f"Failed to create Apple calendar: {apple_calendar_name}")
+
+            logger.info(f"Found {len(local_reminders)} local reminders")
 
             # Check if CalDAV calendar exists, create if not
             caldav_calendars = await self.caldav_adapter.list_calendars()
-            caldav_cal_names = {cal["name"] for cal in caldav_calendars}
-            if caldav_calendar_name not in caldav_cal_names:
-                logger.warning(
-                    f"CalDAV calendar '{caldav_calendar_name}' not found, creating it..."
-                )
-                if not await self.caldav_adapter.create_calendar(caldav_calendar_name):
-                    logger.error(f"Failed to create CalDAV calendar: {caldav_calendar_name}")
-                    raise RuntimeError(f"Failed to create CalDAV calendar: {caldav_calendar_name}")
+            caldav_lookup = {cal["name"].lower(): cal for cal in caldav_calendars}
+            effective_caldav_name = caldav_calendar_name
+            target_caldav_calendar = caldav_lookup.get(caldav_calendar_name.lower())
+            if not target_caldav_calendar:
+                if dry_run:
+                    logger.warning(
+                        "Dry run: CalDAV calendar '%s' does not exist and would be created during a real sync.",
+                        caldav_calendar_name,
+                    )
+                    remote_todos = []
+                else:
+                    logger.warning(
+                        f"CalDAV calendar '{caldav_calendar_name}' not found, creating it..."
+                    )
+                    if not await self.caldav_adapter.create_calendar(caldav_calendar_name):
+                        logger.error(f"Failed to create CalDAV calendar: {caldav_calendar_name}")
+                        raise RuntimeError(f"Failed to create CalDAV calendar: {caldav_calendar_name}")
+                    remote_todos = []
+                    effective_caldav_name = caldav_calendar_name
+            else:
+                effective_caldav_name = target_caldav_calendar["name"]
+                # Step 2: Fetch all TODOs from CalDAV
+                logger.info(f"Fetching TODOs from CalDAV calendar '{effective_caldav_name}'...")
+                remote_todos = await self.caldav_adapter.get_todos(calendar_name=effective_caldav_name)
 
-            # Step 1: Fetch all reminders from Apple Reminders
-            logger.info(f"Fetching reminders from Apple calendar '{apple_calendar_name}'...")
-            local_reminders = await self.reminders_adapter.get_reminders(
-                calendar_name=apple_calendar_name
-            )
-            logger.info(f"Found {len(local_reminders)} local reminders")
-
-            # Step 2: Fetch all TODOs from CalDAV
-            logger.info(f"Fetching TODOs from CalDAV calendar '{caldav_calendar_name}'...")
-            remote_todos = await self.caldav_adapter.get_todos(calendar_name=caldav_calendar_name)
             logger.info(f"Found {len(remote_todos)} remote TODOs")
 
             # Step 3: Build mappings
@@ -288,8 +315,8 @@ class RemindersSyncEngine:
 
             stats = await self._execute_sync_plan(
                 sync_plan,
-                apple_calendar_name,
-                caldav_calendar_name,
+                effective_apple_name,
+                effective_caldav_name,
                 local_by_uuid,
                 remote_by_uid,
             )
@@ -461,6 +488,7 @@ class RemindersSyncEngine:
             "unchanged": len(plan["unchanged"]),
             "errors": 0,
         }
+        error_messages: list[str] = []
 
         # Get calendar IDs
         apple_calendars = await self.reminders_adapter.list_calendars()
@@ -512,7 +540,9 @@ class RemindersSyncEngine:
                 logger.info(f"Created in Apple Reminders: {created.title}")
 
             except Exception as e:
-                logger.error(f"Failed to create local reminder '{remote_todo.summary}': {e}")
+                msg = f"Failed to create local reminder '{remote_todo.summary}': {e}"
+                logger.error(msg)
+                error_messages.append(msg)
                 stats["errors"] += 1
 
         # Create in CalDAV
@@ -564,7 +594,9 @@ class RemindersSyncEngine:
                     stats["errors"] += 1
 
             except Exception as e:
-                logger.error(f"Failed to create remote TODO '{local_reminder.title}': {e}")
+                msg = f"Failed to create remote TODO '{local_reminder.title}': {e}"
+                logger.error(msg)
+                error_messages.append(msg)
                 stats["errors"] += 1
 
         # Update in Apple Reminders
@@ -602,7 +634,9 @@ class RemindersSyncEngine:
                 logger.info(f"Updated in Apple Reminders: {updated.title}")
 
             except Exception as e:
-                logger.error(f"Failed to update local reminder '{local_reminder.title}': {e}")
+                msg = f"Failed to update local reminder '{local_reminder.title}': {e}"
+                logger.error(msg)
+                error_messages.append(msg)
                 stats["errors"] += 1
 
         # Update in CalDAV
@@ -661,7 +695,9 @@ class RemindersSyncEngine:
                     stats["errors"] += 1
 
             except Exception as e:
-                logger.error(f"Failed to update remote TODO '{local_reminder.title}': {e}")
+                msg = f"Failed to update remote TODO '{local_reminder.title}': {e}"
+                logger.error(msg)
+                error_messages.append(msg)
                 stats["errors"] += 1
 
         # Delete from Apple Reminders
@@ -674,11 +710,15 @@ class RemindersSyncEngine:
                     stats["deleted_local"] += 1
                     logger.info(f"Deleted from Apple Reminders: {local_reminder.title}")
                 else:
-                    logger.error(f"Failed to delete local reminder '{local_reminder.title}'")
+                    msg = f"Failed to delete local reminder '{local_reminder.title}'"
+                    logger.error(msg)
+                    error_messages.append(msg)
                     stats["errors"] += 1
 
             except Exception as e:
-                logger.error(f"Failed to delete local reminder '{local_reminder.title}': {e}")
+                msg = f"Failed to delete local reminder '{local_reminder.title}': {e}"
+                logger.error(msg)
+                error_messages.append(msg)
                 stats["errors"] += 1
 
         # Delete from CalDAV
@@ -691,13 +731,18 @@ class RemindersSyncEngine:
                     stats["deleted_remote"] += 1
                     logger.info(f"Deleted from CalDAV: {remote_todo.summary}")
                 else:
-                    logger.error(f"Failed to delete remote TODO '{remote_todo.summary}'")
+                    msg = f"Failed to delete remote TODO '{remote_todo.summary}'"
+                    logger.error(msg)
+                    error_messages.append(msg)
                     stats["errors"] += 1
 
             except Exception as e:
-                logger.error(f"Failed to delete remote TODO '{remote_todo.summary}': {e}")
+                msg = f"Failed to delete remote TODO '{remote_todo.summary}': {e}"
+                logger.error(msg)
+                error_messages.append(msg)
                 stats["errors"] += 1
 
+        stats["error_messages"] = error_messages
         return stats
 
     def _convert_priority_to_apple(self, caldav_priority: int) -> int:
@@ -915,6 +960,7 @@ class RemindersSyncEngine:
                         skip_deletions=skip_deletions,
                         deletion_threshold=deletion_threshold,
                     )
+                    stats.setdefault("error_messages", [])
                     all_stats[f"{apple_cal} → {caldav_cal}"] = stats
                 except Exception as e:
                     logger.error(f"Failed to sync {apple_cal} → {caldav_cal}: {e}")
@@ -927,6 +973,7 @@ class RemindersSyncEngine:
                         "deleted_remote": 0,
                         "unchanged": 0,
                         "errors": 1,
+                        "error_messages": [str(e)],
                     }
 
             return all_stats
@@ -1003,12 +1050,19 @@ class RemindersSyncEngine:
         logger.info(f"Discovered {len(caldav_cal_names)} TODO-capable CalDAV calendars: {caldav_cal_names}")
 
         # Build complete mapping
-        mappings = dict(base_mappings)
+        mappings: dict[str, str] = {}
+        mapped_caldav_lower: set[str] = set()
 
         # Create a case-insensitive lookup for CalDAV calendars
         caldav_cal_lookup = {name.lower(): name for name in caldav_cal_names}
         # Create a case-insensitive lookup for Apple calendars
         apple_cal_lookup = {name.lower(): name for name in apple_cal_names}
+
+        # Normalize base mappings using discovered CalDAV calendars (case-insensitive match)
+        for apple_name, caldav_name in base_mappings.items():
+            canonical = caldav_cal_lookup.get(caldav_name.lower(), caldav_name)
+            mappings[apple_name] = canonical
+            mapped_caldav_lower.add(canonical.lower())
 
         # Add unmapped Apple calendars (try to match existing CalDAV calendar first)
         for apple_name in apple_cal_names:
@@ -1032,12 +1086,13 @@ class RemindersSyncEngine:
                     logger.info(f"Auto-mapping (new): {apple_name} → {caldav_name}")
 
                 mappings[apple_name] = caldav_name
+                mapped_caldav_lower.add(caldav_name.lower())
 
         # Add unmapped CalDAV calendars (create corresponding Apple calendar)
         # Skip system calendars like "Deck: Welcome to Nextcloud Deck!"
         for caldav_name in caldav_cal_names:
             # Check if this CalDAV calendar is already mapped (as a value in mappings)
-            already_mapped = caldav_name in mappings.values()
+            already_mapped = caldav_name.lower() in mapped_caldav_lower
 
             # Skip system/special calendars (Deck, etc.)
             is_system_calendar = caldav_name.startswith("Deck:")
@@ -1057,6 +1112,7 @@ class RemindersSyncEngine:
                     logger.info(f"Auto-mapping (new reverse): {apple_name} ← {caldav_name}")
 
                 mappings[apple_name] = caldav_name
+                mapped_caldav_lower.add(caldav_name.lower())
 
         # Sync all mapped calendars
         return await self.sync_all_calendars(

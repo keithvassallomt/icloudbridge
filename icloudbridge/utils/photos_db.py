@@ -107,3 +107,55 @@ class PhotosDB:
                 ),
             )
             await db.commit()
+
+    async def get_stats(self, pending_since: float | None = None) -> dict[str, int]:
+        """Return aggregate counts for imported and pending assets.
+
+        Args:
+            pending_since: Optional UNIX timestamp. Pending assets discovered
+                before this moment are treated as baseline and excluded from
+                counts so that historical discoveries don't permanently bloat
+                the "pending" total once a sync has completed successfully.
+        """
+
+        imported = 0
+        pending_existing = 0
+        stale_ids: list[int] = []
+        pending_rows: list[aiosqlite.Row] = []
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+
+            async with db.execute(
+                "SELECT COUNT(*) AS total FROM photo_assets WHERE last_imported IS NOT NULL"
+            ) as cursor:
+                imported = (await cursor.fetchone())[0]
+
+            async with db.execute(
+                "SELECT id, source_path, first_seen FROM photo_assets WHERE last_imported IS NULL"
+            ) as cursor:
+                pending_rows = await cursor.fetchall()
+
+        for row in pending_rows:
+            first_seen = row["first_seen"] or 0
+            if pending_since is not None and first_seen < pending_since:
+                continue
+
+            path = Path(row["source_path"])
+            if path.exists():
+                pending_existing += 1
+            else:
+                stale_ids.append(row["id"])
+
+        if stale_ids:
+            async with aiosqlite.connect(self.db_path) as db:
+                await db.executemany(
+                    "DELETE FROM photo_assets WHERE id = ?",
+                    [(stale_id,) for stale_id in stale_ids],
+                )
+                await db.commit()
+
+        return {
+            "total_imported": imported,
+            "pending": pending_existing,
+        }

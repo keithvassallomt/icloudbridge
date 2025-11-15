@@ -13,10 +13,11 @@ from icloudbridge.api.dependencies import (
     ConfigDep,
     NotesDBDep,
     PasswordsDBDep,
+    PhotosDBDep,
     RemindersDBDep,
 )
 from icloudbridge.api.models import HealthResponse, StatusResponse, VersionResponse
-from icloudbridge.utils.db import SyncLogsDB
+from icloudbridge.utils.db import SchedulesDB, SyncLogsDB
 
 logger = logging.getLogger(__name__)
 
@@ -53,20 +54,32 @@ async def get_status(
     notes_db: NotesDBDep,
     reminders_db: RemindersDBDep,
     passwords_db: PasswordsDBDep,
+    photos_db: PhotosDBDep,
 ):
     """Get overall sync status for all services.
 
     Returns:
         StatusResponse with status information for each service
     """
-    # Get sync logs database
+    # Get sync + schedule databases
     sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
     await sync_logs_db.initialize()
+    schedules_db = SchedulesDB(config.general.data_dir / "schedules.db")
+    await schedules_db.initialize()
 
     # Get last sync for each service
     notes_logs = await sync_logs_db.get_logs(service="notes", limit=1)
     reminders_logs = await sync_logs_db.get_logs(service="reminders", limit=1)
     passwords_logs = await sync_logs_db.get_logs(service="passwords", limit=1)
+    photos_logs = await sync_logs_db.get_logs(service="photos", limit=1)
+
+    photos_success_logs = await sync_logs_db.get_logs(service="photos", status="success", limit=1)
+    if not photos_success_logs:
+        photos_success_logs = await sync_logs_db.get_logs(service="photos", status="completed", limit=1)
+    photos_pending_since = None
+    if photos_success_logs:
+        last_log = photos_success_logs[0]
+        photos_pending_since = last_log.get("completed_at") or last_log.get("started_at")
 
     # Transform logs to match frontend expectations
     def transform_log(log):
@@ -93,7 +106,7 @@ async def get_status(
                     msg_parts.append(f"updated {stats['updated']}")
                 if stats.get("deleted", 0) > 0:
                     msg_parts.append(f"deleted {stats['deleted']}")
-                message = f"Synced: {', '.join(msg_parts)} note(s)" if msg_parts else "Synced, no changes needed"
+                message = f"Synced: {', '.join(msg_parts)} note(s)" if msg_parts else "No changes detected"
             elif log["service"] == "reminders":
                 calendars_count = stats.get("calendars_synced", 0)
                 if "total_created" in stats:
@@ -115,7 +128,7 @@ async def get_status(
                     msg_parts.append(f"pushed {push_stats['pushed']} to VaultWarden")
                 if pull_stats.get("pulled", 0) > 0:
                     msg_parts.append(f"pulled {pull_stats['pulled']} from VaultWarden")
-                message = f"Synced: {', '.join(msg_parts)}" if msg_parts else "Synced, no changes needed"
+                message = f"Synced: {', '.join(msg_parts)}" if msg_parts else "No changes detected"
         else:
             message = "Sync operation completed"
 
@@ -139,6 +152,7 @@ async def get_status(
     notes_last_sync = transform_log(notes_logs[0]) if notes_logs else None
     reminders_last_sync = transform_log(reminders_logs[0]) if reminders_logs else None
     passwords_last_sync = transform_log(passwords_logs[0]) if passwords_logs else None
+    photos_last_sync = transform_log(photos_logs[0]) if photos_logs else None
 
     # Get counts
     notes_count_result = await notes_db.get_stats()
@@ -150,20 +164,49 @@ async def get_status(
     passwords_count_result = await passwords_db.get_stats()
     passwords_count = passwords_count_result.get("total", 0)
 
+    await photos_db.initialize()
+    photos_stats = await photos_db.get_stats(pending_since=photos_pending_since)
+
+    try:
+        from icloudbridge.api.app import scheduler as app_scheduler
+    except ImportError:
+        app_scheduler = None  # pragma: no cover
+
+    scheduler_running = bool(app_scheduler and getattr(app_scheduler, "is_running", False))
+    try:
+        active_schedules = len(await schedules_db.get_schedules(enabled=True))
+    except Exception:
+        active_schedules = 0
+
+    def service_state(last_sync):
+        return last_sync["status"] if isinstance(last_sync, dict) and last_sync.get("status") else "idle"
+
     return StatusResponse(
         notes={
             "enabled": config.notes.enabled,
             "sync_count": notes_count,
             "last_sync": notes_last_sync,
+            "status": service_state(notes_last_sync),
         },
         reminders={
             "enabled": config.reminders.enabled,
             "sync_count": reminders_count,
             "last_sync": reminders_last_sync,
+            "status": service_state(reminders_last_sync),
         },
         passwords={
             "enabled": config.passwords.enabled,
             "sync_count": passwords_count,
             "last_sync": passwords_last_sync,
+            "status": service_state(passwords_last_sync),
         },
+        photos={
+            "enabled": config.photos.enabled,
+            "sync_count": photos_stats.get("total_imported", 0),
+            "pending": photos_stats.get("pending", 0),
+            "last_sync": photos_last_sync,
+            "status": service_state(photos_last_sync),
+        },
+        scheduler_running=scheduler_running,
+        active_schedules=active_schedules,
     )

@@ -1,5 +1,6 @@
 """Database utilities for tracking note synchronization state."""
 
+import json
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -989,6 +990,8 @@ class SyncLogsDB:
         if status is not None:
             updates.append("status = ?")
             values.append(status)
+            updates.append("completed_at = ?")
+            values.append(datetime.now().timestamp())
 
         if duration_seconds is not None:
             updates.append("duration_seconds = ?")
@@ -1082,7 +1085,8 @@ class SyncLogsDB:
             db.row_factory = aiosqlite.Row
             async with db.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
-                return [dict(row) for row in rows]
+
+        return [dict(row) for row in rows]
 
     async def cleanup_old_logs(self, retention_days: int = 7) -> int:
         """
@@ -1172,6 +1176,7 @@ class SchedulesDB:
                     next_run REAL,
                     last_run REAL,
                     config_json TEXT,
+                    services TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 )
@@ -1196,6 +1201,40 @@ class SchedulesDB:
             await db.commit()
             logger.debug(f"SchedulesDB initialized at {self.db_path}")
 
+        await self._ensure_services_column()
+
+    async def _ensure_services_column(self) -> None:
+        """Add and populate the services column if it is missing or empty."""
+
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute("PRAGMA table_info(schedules)") as cursor:
+                columns = {row["name"] for row in await cursor.fetchall()}
+
+            if "services" not in columns:
+                await db.execute("ALTER TABLE schedules ADD COLUMN services TEXT")
+                await db.commit()
+                logger.debug("Added services column to schedules table")
+
+            async with db.execute("SELECT id, service, services FROM schedules") as cursor:
+                rows = await cursor.fetchall()
+
+            updates = []
+            for row in rows:
+                if row["services"]:
+                    continue
+                primary = row["service"] if row["service"] else None
+                services_json = json.dumps([primary] if primary else [])
+                updates.append((services_json, row["id"]))
+
+            if updates:
+                await db.executemany(
+                    "UPDATE schedules SET services = ? WHERE id = ?",
+                    updates,
+                )
+                await db.commit()
+                logger.debug("Populated services column for existing schedules")
+
     async def create_schedule(
         self,
         service: str,
@@ -1205,6 +1244,7 @@ class SchedulesDB:
         cron_expression: str | None = None,
         config_json: str | None = None,
         enabled: bool = True,
+        services: list[str] | None = None,
     ) -> int:
         """
         Create a new schedule.
@@ -1222,6 +1262,9 @@ class SchedulesDB:
             int: Schedule ID
         """
         now = datetime.now().timestamp()
+        services = services or ([service] if service else [])
+        services_json = json.dumps(services)
+        primary_service = services[0] if services else service
 
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
@@ -1229,18 +1272,19 @@ class SchedulesDB:
                 INSERT INTO schedules (
                     service, name, enabled, schedule_type,
                     interval_minutes, cron_expression, config_json,
-                    created_at, updated_at
+                    services, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    service,
+                    primary_service,
                     name,
                     enabled,
                     schedule_type,
                     interval_minutes,
                     cron_expression,
                     config_json,
+                    services_json,
                     now,
                     now,
                 ),
@@ -1268,7 +1312,7 @@ class SchedulesDB:
                 (schedule_id,),
             ) as cursor:
                 row = await cursor.fetchone()
-                return dict(row) if row else None
+                return self._row_to_schedule(row)
 
     async def get_schedules(
         self,
@@ -1315,6 +1359,7 @@ class SchedulesDB:
         config_json: str | None = None,
         next_run: float | None = None,
         last_run: float | None = None,
+        services: list[str] | None = None,
     ) -> None:
         """
         Update an existing schedule.
@@ -1357,6 +1402,14 @@ class SchedulesDB:
             updates.append("config_json = ?")
             values.append(config_json)
 
+        if services is not None:
+            services_json = json.dumps(services)
+            updates.append("services = ?")
+            values.append(services_json)
+            if services:
+                updates.append("service = ?")
+                values.append(services[0])
+
         if next_run is not None:
             updates.append("next_run = ?")
             values.append(next_run)
@@ -1381,6 +1434,34 @@ class SchedulesDB:
                 values,
             )
             await db.commit()
+
+    def _row_to_schedule(self, row: aiosqlite.Row | None) -> dict | None:
+        """Convert a SQLite row into a dictionary with parsed services."""
+
+        if not row:
+            return None
+
+        schedule = dict(row)
+        services_raw = schedule.get("services")
+        services: list[str] = []
+        if isinstance(services_raw, str) and services_raw:
+            try:
+                decoded = json.loads(services_raw)
+                if isinstance(decoded, list):
+                    services = [str(item) for item in decoded if isinstance(item, str)]
+            except json.JSONDecodeError:
+                logger.warning(
+                    "Invalid services JSON for schedule %s", schedule.get("id")
+                )
+
+        if not services:
+            legacy_service = schedule.get("service")
+            services = [legacy_service] if legacy_service else []
+
+        schedule["services"] = services
+        if services:
+            schedule["service"] = services[0]
+        return schedule
 
     async def delete_schedule(self, schedule_id: int) -> None:
         """

@@ -9,7 +9,16 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import apiClient from '@/lib/api-client';
 import { useSchedulesStore } from '@/store/schedules-store';
+import { cn } from '@/lib/utils';
 import type { Schedule, ScheduleCreate } from '@/types/api';
+
+type ServiceKey = 'notes' | 'reminders' | 'photos';
+
+const SERVICE_OPTIONS: { id: ServiceKey; label: string }[] = [
+  { id: 'notes', label: 'Notes' },
+  { id: 'reminders', label: 'Reminders' },
+  { id: 'photos', label: 'Photos' },
+];
 
 export default function Schedules() {
   const {
@@ -26,7 +35,7 @@ export default function Schedules() {
 
   // Form state
   const [formData, setFormData] = useState<Partial<ScheduleCreate>>({
-    service: 'notes',
+    services: ['notes'],
     name: '',
     schedule_type: 'interval',
     interval_minutes: 60,
@@ -53,6 +62,10 @@ export default function Schedules() {
 
   const handleCreate = async () => {
     try {
+      if (!formData.services || formData.services.length === 0) {
+        setError('Select at least one item to sync');
+        return;
+      }
       setLoading(true);
       setError(null);
 
@@ -103,7 +116,7 @@ export default function Schedules() {
 
   const resetForm = () => {
     setFormData({
-      service: 'notes',
+      services: ['notes'],
       name: '',
       schedule_type: 'interval',
       interval_minutes: 60,
@@ -112,6 +125,15 @@ export default function Schedules() {
       enabled: true,
     });
   };
+
+  const toggleService = (serviceId: ServiceKey) => {
+    const selected = formData.services ?? [];
+    const exists = selected.includes(serviceId);
+    const next = exists ? selected.filter((s) => s !== serviceId) : [...selected, serviceId];
+    setFormData({ ...formData, services: next });
+  };
+
+  const isServiceSelected = (serviceId: ServiceKey) => (formData.services ?? []).includes(serviceId);
 
   const formatDate = (dateStr: string | undefined) => {
     if (!dateStr) return 'Never';
@@ -194,11 +216,11 @@ export default function Schedules() {
               Reminders
             </Button>
             <Button
-              variant={serviceFilter === 'passwords' ? 'default' : 'outline'}
-              onClick={() => setServiceFilter('passwords')}
+              variant={serviceFilter === 'photos' ? 'default' : 'outline'}
+              onClick={() => setServiceFilter('photos')}
               size="sm"
             >
-              Passwords
+              Photos
             </Button>
           </div>
         </CardContent>
@@ -212,29 +234,37 @@ export default function Schedules() {
             <CardDescription>Configure a new automated sync schedule</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="name">Schedule Name</Label>
                 <Input
                   id="name"
-                  placeholder="e.g., Daily Notes Sync"
+                  placeholder="e.g., Daily Sync"
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="service">Service</Label>
-                <select
-                  id="service"
-                  className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                  value={formData.service}
-                  onChange={(e) => setFormData({ ...formData, service: e.target.value })}
-                >
-                  <option value="notes">Notes</option>
-                  <option value="reminders">Reminders</option>
-                  <option value="passwords">Passwords</option>
-                </select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Items to Sync</Label>
+              <div className="flex flex-wrap gap-2">
+                {SERVICE_OPTIONS.map((option) => (
+                  <Button
+                    key={option.id}
+                    type="button"
+                    variant={isServiceSelected(option.id) ? 'default' : 'outline'}
+                    onClick={() => toggleService(option.id)}
+                    size="sm"
+                    aria-pressed={isServiceSelected(option.id)}
+                  >
+                    {option.label}
+                  </Button>
+                ))}
               </div>
+              <p className="text-xs text-muted-foreground">
+                Select one or more data sources for this schedule.
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -330,16 +360,28 @@ export default function Schedules() {
           </Card>
         ) : (
           schedules.map((schedule) => (
-            <Card key={schedule.id}>
+            <Card
+              key={schedule.id}
+              className={cn(
+                !schedule.enabled &&
+                  'border-yellow-400/80 bg-yellow-50/70 dark:border-yellow-500/70 dark:bg-yellow-900/20'
+              )}
+            >
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div>
-                    <CardTitle className="flex items-center gap-2">
+                    <CardTitle className="flex items-center gap-2 flex-wrap">
                       {schedule.name}
                       <Badge variant={schedule.enabled ? 'success' : 'secondary'}>
                         {schedule.enabled ? 'Enabled' : 'Disabled'}
                       </Badge>
-                      <Badge variant="outline">{schedule.service}</Badge>
+                      {(schedule.services?.length ? schedule.services : [schedule.service])
+                        .filter((svc): svc is string => Boolean(svc))
+                        .map((svc) => (
+                          <Badge key={`${schedule.id}-${svc}`} variant="outline">
+                            {svc}
+                          </Badge>
+                        ))}
                     </CardTitle>
                     <CardDescription>{getScheduleDescription(schedule)}</CardDescription>
                   </div>
@@ -357,12 +399,12 @@ export default function Schedules() {
                       variant="outline"
                       onClick={() => handleToggle(schedule)}
                       title={schedule.enabled ? 'Disable' : 'Enable'}
-                    >
-                      {schedule.enabled ? (
-                        <Pause className="w-4 h-4" />
-                      ) : (
-                        <Play className="w-4 h-4" />
+                      className={cn(
+                        !schedule.enabled &&
+                          'border-yellow-400/80 text-yellow-700 bg-yellow-50/90 dark:text-yellow-200 dark:border-yellow-500/80 dark:bg-transparent'
                       )}
+                    >
+                      <Pause className="w-4 h-4" />
                     </Button>
                     <Button
                       size="icon"
