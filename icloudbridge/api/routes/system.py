@@ -6,8 +6,10 @@ import platform
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException, status
+from pydantic import BaseModel
 
 from icloudbridge.api.dependencies import ConfigDep
 from icloudbridge.api.models import (
@@ -16,10 +18,16 @@ from icloudbridge.api.models import (
     FullDiskAccessStatus,
     NotesFolderStatus,
 )
+from icloudbridge.utils.db import SettingsDB
+from icloudbridge.utils.logging import set_logging_level
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class LogLevelPayload(BaseModel):
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 @router.get("/db-paths")
@@ -68,6 +76,35 @@ async def get_system_info(config: ConfigDep) -> dict:
         "python_version": platform.python_version(),
         "data_dir": str(config.general.data_dir),
     }
+
+
+@router.get("/log-level")
+async def get_log_level(config: ConfigDep) -> dict:
+    """Return the current runtime log level."""
+
+    settings_db = SettingsDB(config.general.data_dir / "settings.db")
+    await settings_db.initialize()
+    level = await settings_db.get_setting("log_level")
+    return {"log_level": level or config.general.log_level}
+
+
+@router.put("/log-level")
+async def update_log_level(payload: LogLevelPayload, config: ConfigDep) -> dict:
+    """Update the runtime log level and persist the preference."""
+
+    try:
+        settings_db = SettingsDB(config.general.data_dir / "settings.db")
+        await settings_db.initialize()
+        await settings_db.set_setting("log_level", payload.level)
+        set_logging_level(payload.level)
+        logger.info(f"Log level changed to {payload.level}")
+        return {"log_level": payload.level}
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error(f"Failed to update log level: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update log level",
+        )
 
 
 @router.get("/verify", response_model=SetupVerificationResponse)

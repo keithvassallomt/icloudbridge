@@ -109,7 +109,7 @@ class RichNotesCapture:
         else:
             args.extend(["--file", str(db_path)])
         logger.info("Running rich notes ripper (output=%s)", output_dir)
-        run_rich_ripper(args)
+        run_rich_ripper(args, log_stream=logger, log_category="notes_ripper", log_level="DEBUG")
 
     @staticmethod
     def _find_json(output_dir: Path) -> Path:

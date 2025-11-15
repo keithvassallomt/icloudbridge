@@ -9,6 +9,7 @@ This module provides the main FastAPI application with:
 - Background scheduler for automated syncs
 """
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,12 @@ from icloudbridge.api.exceptions import (
     validation_exception_handler,
 )
 from icloudbridge.core.config import load_config
+from icloudbridge.utils.db import SettingsDB
+from icloudbridge.utils.logging import (
+    attach_websocket_log_handler,
+    set_logging_level,
+    setup_logging,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +51,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Load configuration
     config = load_config()
+    setup_logging(config)
+
+    settings_db = SettingsDB(config.general.data_dir / "settings.db")
+    await settings_db.initialize()
+    stored_level = await settings_db.get_setting("log_level")
+    if stored_level:
+        set_logging_level(stored_level)
+
+    attach_websocket_log_handler(asyncio.get_running_loop(), config)
     logger.info(f"Configuration loaded from {config.general.config_file or 'defaults'}")
 
     # Ensure data directory exists

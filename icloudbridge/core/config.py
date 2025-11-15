@@ -313,6 +313,10 @@ class GeneralConfig(BaseSettings):
     """General application configuration."""
 
     log_level: str = "INFO"
+    log_file_name: str = "icloudbridge.log"
+    log_file_max_bytes: int = 10 * 1024 * 1024  # 10 MB
+    log_file_backup_count: int = 5
+    log_overrides: dict[str, str] = Field(default_factory=lambda: {"notes_ripper": "DEBUG"})
     data_dir: Path = Field(
         default_factory=lambda: Path.home() / ".icloudbridge"
     )
@@ -328,6 +332,51 @@ class GeneralConfig(BaseSettings):
         if v not in valid_levels:
             raise ValueError(f"Log level must be one of: {', '.join(valid_levels)}")
         return v
+
+    @field_validator("log_file_name", mode="before")
+    @classmethod
+    def validate_log_file_name(cls, v: str) -> str:
+        """Ensure log file name is just a filename (no path)."""
+        name = str(v).strip()
+        if "/" in name or "\\" in name:
+            raise ValueError("log_file_name must not include directory separators")
+        return name or "icloudbridge.log"
+
+    @field_validator("log_file_max_bytes", mode="before")
+    @classmethod
+    def validate_log_file_max_bytes(cls, v: int) -> int:
+        """Ensure log file max bytes is positive."""
+        value = int(v)
+        if value <= 0:
+            raise ValueError("log_file_max_bytes must be positive")
+        return value
+
+    @field_validator("log_file_backup_count", mode="before")
+    @classmethod
+    def validate_log_file_backup_count(cls, v: int) -> int:
+        """Ensure we keep at least one backup file."""
+        value = int(v)
+        if value < 1:
+            raise ValueError("log_file_backup_count must be at least 1")
+        return value
+
+    @field_validator("log_overrides", mode="before")
+    @classmethod
+    def normalize_overrides(cls, v: dict[str, str] | None) -> dict[str, str]:
+        """Normalize override levels to uppercase names."""
+        if not v:
+            return {}
+        normalized: dict[str, str] = {}
+        for key, level in v.items():
+            if not key:
+                continue
+            level_name = str(level).upper()
+            if level_name not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+                raise ValueError(
+                    "log_overrides values must be valid log levels (DEBUG/INFO/WARNING/ERROR/CRITICAL)"
+                )
+            normalized[str(key)] = level_name
+        return normalized
 
     @field_validator("data_dir", mode="before")
     @classmethod

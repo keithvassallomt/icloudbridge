@@ -1,11 +1,15 @@
 """Development server runner for iCloudBridge API."""
 
-import sys
+from icloudbridge.core.config import load_config
+from icloudbridge.utils.logging import setup_logging
 
 
 def run():
     """Run the development server with uvicorn."""
     import uvicorn
+
+    config = load_config()
+    setup_logging(config)
 
     uvicorn.run(
         "icloudbridge.api.app:app",
@@ -13,6 +17,7 @@ def run():
         port=8000,
         reload=True,
         log_level="info",
+        log_config=None,
     )
 
 

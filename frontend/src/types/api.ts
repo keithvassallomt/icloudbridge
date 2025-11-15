@@ -282,6 +282,12 @@ export interface RemindersStatusResponse {
   last_sync: SyncLog | null;
 }
 
+export type LogLevel = 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR' | 'CRITICAL';
+
+export interface LogLevelResponse {
+  log_level: LogLevel;
+}
+
 // WebSocket Messages
 export interface WebSocketMessage {
   type: 'sync_progress' | 'log_entry' | 'schedule_run' | 'error' | 'status_update' | 'connection' | 'pong' | 'subscribed' | 'unsubscribed';

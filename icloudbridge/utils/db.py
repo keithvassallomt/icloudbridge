@@ -1532,6 +1532,7 @@ class SettingsDB:
             # Set default values if they don't exist
             await self.set_default("log_retention_days", "7")
             await self.set_default("theme", "system")
+            await self.set_default("log_level", "INFO")
 
     async def set_default(self, key: str, value: str) -> None:
         """

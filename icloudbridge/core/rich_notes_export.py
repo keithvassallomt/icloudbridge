@@ -50,7 +50,7 @@ class RichNotesExporter:
     def _run_ripper(self, db_path: Path, output_dir: Path) -> None:
         args = ["--file", str(db_path), "--output-dir", str(output_dir)]
         logger.info("Running rich notes ripper (output=%s)", output_dir)
-        run_rich_ripper(args)
+        run_rich_ripper(args, log_stream=logger, log_category="notes_ripper", log_level="DEBUG")
 
     def _find_json(self, output_dir: Path) -> Path:
         candidates = list(output_dir.rglob("json/all_notes_*.json"))

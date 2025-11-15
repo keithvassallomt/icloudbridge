@@ -1,10 +1,13 @@
 """Thin wrapper to run the Ruby notes ripper via Poetry."""
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+from icloudbridge.utils.logging import log_subprocess_output
 
 
 def _build_ripper_command(extra_args: list[str]) -> tuple[list[str], dict[str, str], Path]:
@@ -61,9 +64,32 @@ def _build_ripper_command(extra_args: list[str]) -> tuple[list[str], dict[str, s
     return cmd, env, repo_root
 
 
-def run_rich_ripper(extra_args: list[str]) -> None:
+def run_rich_ripper(
+    extra_args: list[str],
+    *,
+    log_stream: logging.Logger | None = None,
+    log_category: str = "notes_ripper",
+    log_level: str = "DEBUG",
+) -> None:
     cmd, env, repo_root = _build_ripper_command(extra_args)
-    subprocess.run(cmd, cwd=repo_root, env=env, check=True)
+    if log_stream is None:
+        subprocess.run(cmd, cwd=repo_root, env=env, check=True)
+        return
+
+    process = subprocess.Popen(
+        cmd,
+        cwd=repo_root,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    log_subprocess_output(process, log_stream, category=log_category, level=log_level)
+    retcode = process.wait()
+    if retcode != 0:
+        raise subprocess.CalledProcessError(retcode, cmd)
 
 
 def main() -> None:

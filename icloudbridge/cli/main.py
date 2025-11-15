@@ -1,14 +1,12 @@
 """Command-line interface for iCloudBridge."""
 
 import asyncio
-import logging
 import sys
 from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
-from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.table import Table
 
@@ -18,6 +16,7 @@ from icloudbridge.core.photos_sync import PhotoSyncEngine
 from icloudbridge.core.reminders_sync import RemindersSyncEngine
 from icloudbridge.core.rich_notes_export import RichNotesExporter
 from icloudbridge.core.sync import NotesSyncEngine
+from icloudbridge.utils.logging import setup_logging
 from icloudbridge.utils.settings_db import get_config_path, set_config_path
 
 # Create Typer app
@@ -29,16 +28,6 @@ app = typer.Typer(
 
 # Create console for rich output
 console = Console()
-
-
-def setup_logging(log_level: str) -> None:
-    """Configure logging with rich handler."""
-    logging.basicConfig(
-        level=log_level.upper(),
-        format="%(message)s",
-        datefmt="[%X]",
-        handlers=[RichHandler(console=console, rich_tracebacks=True)],
-    )
 
 
 @app.callback()
@@ -77,7 +66,7 @@ def main(
     # Set up logging based on config or CLI arg
     if log_level == "INFO" and ctx.obj["config"].general.log_level != "INFO":
         log_level = ctx.obj["config"].general.log_level
-    setup_logging(log_level)
+    setup_logging(ctx.obj["config"], level_name=log_level)
 
 
 @app.command()
@@ -2136,6 +2125,7 @@ def serve(
             port=port,
             reload=reload,
             log_level="info",
+            log_config=None,
         )
     except KeyboardInterrupt:
         console.print("\n[yellow]Server stopped[/yellow]")

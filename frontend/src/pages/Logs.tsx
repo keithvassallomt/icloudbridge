@@ -7,10 +7,21 @@ import type { BadgeProps } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import apiClient from '@/lib/api-client';
 import { useSyncStore } from '@/store/sync-store';
 
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR'] as const;
 const SERVICES = ['notes', 'reminders', 'passwords', 'scheduler', 'api'] as const;
+const BACKEND_LOG_LEVELS = ['INFO', 'DEBUG'] as const;
+type BackendLogLevel = (typeof BACKEND_LOG_LEVELS)[number];
 
 export default function Logs() {
   const { logs, clearLogs } = useSyncStore();
@@ -19,15 +30,68 @@ export default function Logs() {
   const [levelFilter, setLevelFilter] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
+  const [backendLogLevel, setBackendLogLevel] = useState<BackendLogLevel>('INFO');
+  const [backendLevelLoading, setBackendLevelLoading] = useState(true);
+  const [backendLevelError, setBackendLevelError] = useState<string | null>(null);
+  const [updatingBackendLevel, setUpdatingBackendLevel] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new logs arrive
+  const sanitizeBackendLevel = (level?: string | null): BackendLogLevel =>
+    level === 'DEBUG' ? 'DEBUG' : 'INFO';
+
   useEffect(() => {
-    if (autoScroll && logsEndRef.current) {
+    const fetchLevel = async () => {
+      try {
+        setBackendLevelLoading(true);
+        const data = await apiClient.getLogLevel();
+        setBackendLogLevel(sanitizeBackendLevel(data.log_level));
+      } catch (err) {
+        console.error('Failed to load log level', err);
+        setBackendLevelError('Failed to load log level');
+      } finally {
+        setBackendLevelLoading(false);
+      }
+    };
+
+    fetchLevel();
+  }, []);
+
+  // Auto-scroll to bottom of the log container when new logs arrive
+  useEffect(() => {
+    if (!autoScroll) {
+      return;
+    }
+    const container = logsContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+    } else if (logsEndRef.current) {
+      // Fallback: keep old behavior if the container ref is missing for some reason
       logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs, autoScroll]);
+
+  const handleBackendLogLevelChange = async (value: string) => {
+    const nextLevel = sanitizeBackendLevel(value);
+    const previous = backendLogLevel;
+    setBackendLevelError(null);
+    setUpdatingBackendLevel(true);
+    setBackendLogLevel(nextLevel);
+    try {
+      const data = await apiClient.setLogLevel(nextLevel);
+      setBackendLogLevel(sanitizeBackendLevel(data.log_level));
+    } catch (err) {
+      console.error('Failed to update log level', err);
+      setBackendLevelError(
+        err instanceof Error ? err.message : 'Failed to update log level'
+      );
+      setBackendLogLevel(previous);
+    } finally {
+      setUpdatingBackendLevel(false);
+    }
+  };
+
+  const showDebugWarning = backendLogLevel === 'DEBUG';
 
   // Filter logs based on search term, service, and level
   const filteredLogs = logs.filter((log) => {
@@ -116,25 +180,60 @@ export default function Logs() {
             View and filter all sync operations and system logs
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            onClick={() => setShowFilters(!showFilters)}
-            variant="outline"
-            size="sm"
-          >
-            <Filter className="w-4 h-4 mr-2" />
-            Filters
-          </Button>
-          <Button onClick={handleExport} variant="outline" size="sm">
-            <Download className="w-4 h-4 mr-2" />
-            Export
-          </Button>
-          <Button onClick={handleClearLogs} variant="outline" size="sm">
-            <Trash2 className="w-4 h-4 mr-2" />
-            Clear
-          </Button>
+        <div className="flex flex-col items-end gap-2">
+          <div className="flex items-end gap-3">
+            <div className="text-right">
+              <Label className="text-xs text-muted-foreground mb-1 block">Server log level</Label>
+              <Select
+                value={backendLogLevel}
+                onValueChange={handleBackendLogLevelChange}
+                disabled={backendLevelLoading || updatingBackendLevel}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue placeholder="Select level" />
+                </SelectTrigger>
+                <SelectContent>
+                  {BACKEND_LOG_LEVELS.map((level) => (
+                    <SelectItem key={level} value={level}>
+                      {level}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => setShowFilters(!showFilters)}
+                variant="outline"
+                size="sm"
+              >
+                <Filter className="w-4 h-4 mr-2" />
+                Filters
+              </Button>
+              <Button onClick={handleExport} variant="outline" size="sm">
+                <Download className="w-4 h-4 mr-2" />
+                Export
+              </Button>
+              <Button onClick={handleClearLogs} variant="outline" size="sm">
+                <Trash2 className="w-4 h-4 mr-2" />
+                Clear
+              </Button>
+            </div>
+          </div>
+          {backendLevelError && (
+            <p className="text-xs text-destructive">{backendLevelError}</p>
+          )}
         </div>
       </div>
+
+      {showDebugWarning && (
+        <Alert variant="warning">
+          <AlertTitle>Debug logging enabled</AlertTitle>
+          <AlertDescription>
+            Using a debug logging level is only meant for troubleshooting and will produce a large amount of logs, which will slow down all sync operations.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Stats */}
       <div className="grid gap-4 md:grid-cols-4">
