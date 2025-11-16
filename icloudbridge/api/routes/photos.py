@@ -30,15 +30,17 @@ async def sync_photos(
             detail="Photo sync disabled in configuration",
         )
 
-    # Create sync log
+    # Create sync log only for real runs. Dry-run simulations shouldn't clutter history.
     sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
     await sync_logs_db.initialize()
 
-    log_id = await sync_logs_db.create_log(
-        service="photos",
-        sync_type="manual",
-        status="running",
-    )
+    log_id = None
+    if not request.dry_run and not request.initial_scan:
+        log_id = await sync_logs_db.create_log(
+            service="photos",
+            sync_type="manual",
+            status="running",
+        )
 
     # Send initial progress update
     await send_sync_progress(
@@ -69,13 +71,14 @@ async def sync_photos(
 
         duration = datetime.now().timestamp() - start_time
 
-        # Update sync log
-        await sync_logs_db.update_log(
-            log_id=log_id,
-            status="success",
-            duration_seconds=duration,
-            stats_json=json.dumps(stats),
-        )
+        if log_id is not None:
+            # Update sync log for real runs
+            await sync_logs_db.update_log(
+                log_id=log_id,
+                status="success",
+                duration_seconds=duration,
+                stats_json=json.dumps(stats),
+            )
 
         # Send success progress update
         await send_sync_progress(
@@ -92,13 +95,14 @@ async def sync_photos(
         duration = datetime.now().timestamp() - start_time
         logger.exception("Photo sync failed: %s", exc)
 
-        # Update sync log with error
-        await sync_logs_db.update_log(
-            log_id=log_id,
-            status="error",
-            duration_seconds=duration,
-            error_message=str(exc),
-        )
+        if log_id is not None:
+            # Update sync log with error for real runs
+            await sync_logs_db.update_log(
+                log_id=log_id,
+                status="error",
+                duration_seconds=duration,
+                error_message=str(exc),
+            )
 
         # Send error progress update
         await send_sync_progress(
@@ -132,9 +136,17 @@ async def get_status(photos_db: PhotosDBDep, config: ConfigDep):
         photos_success_logs = await sync_logs_db.get_logs(service="photos", status="completed", limit=1)
 
     photos_pending_since = None
+    last_skipped_existing = 0
     if photos_success_logs:
         last_log = photos_success_logs[0]
         photos_pending_since = last_log.get("completed_at") or last_log.get("started_at")
+        stats_json = last_log.get("stats_json")
+        if stats_json:
+            try:
+                stats_payload = json.loads(stats_json)
+                last_skipped_existing = int(stats_payload.get("skipped_existing", 0) or 0)
+            except (ValueError, TypeError):
+                last_skipped_existing = 0
 
     await photos_db.initialize()
     stats = await photos_db.get_stats(pending_since=photos_pending_since)
@@ -157,6 +169,7 @@ async def get_status(photos_db: PhotosDBDep, config: ConfigDep):
         "total_imported": stats.get("total_imported", 0),
         "pending": stats.get("pending", 0),
         "last_sync": last_sync,
+        "skipped_existing": last_skipped_existing,
         "sources": list(config.photos.sources.keys()) if config.photos.sources else [],
     }
 

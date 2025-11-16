@@ -20,7 +20,7 @@ from icloudbridge.sources.photos import (
     PhotoSourceScanner,
     PhotosAppleScriptAdapter,
 )
-from icloudbridge.utils.exif import extract_capture_timestamp
+from icloudbridge.utils.exif import extract_capture_timestamp, extract_original_filename
 from icloudbridge.utils.photos_db import PhotosDB
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,9 @@ class PhotoSyncEngine:
         self.meta_dir = data_dir / "photos" / "meta"
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.meta_dir.mkdir(parents=True, exist_ok=True)
+        self._name_exists_cache: dict[str, bool] = {}
+        self._original_name_cache: dict[Path, str | None] = {}
+        self._existing_live_stems: set[str] = set()
 
     async def initialize(self) -> None:
         await self.db.initialize()
@@ -65,6 +68,9 @@ class PhotoSyncEngine:
             raise RuntimeError("No photo sources configured")
 
         await self.initialize()
+        self._name_exists_cache.clear()
+        self._original_name_cache.clear()
+        self._existing_live_stems.clear()
 
         if progress_callback:
             await progress_callback(5, "Scanning source folders...")
@@ -73,12 +79,14 @@ class PhotoSyncEngine:
         scanned_sources = selected_sources if selected_sources is not None else self.scanner.available_sources()
 
         candidates = list(self.scanner.iter_candidates(selected_sources))
-        logger.info("Scanned %s candidate files", len(candidates))
+        if not initial_scan:
+            candidates.sort(key=lambda candidate: 0 if candidate.media_type == "image" else 1)
 
         if progress_callback:
             await progress_callback(10, f"Found {len(candidates)} files, analyzing...")
 
         new_records: list[PhotoImportRecord] = []
+        skipped_existing = 0
         total_candidates = len(candidates)
 
         for idx, candidate in enumerate(candidates):
@@ -98,18 +106,42 @@ class PhotoSyncEngine:
             if existing:
                 continue
 
+            if (
+                not initial_scan
+                and candidate.media_type == "video"
+                and candidate.path.stem in self._existing_live_stems
+            ):
+                logger.debug(
+                    "Skipping %s (live photo video already present in Photos)",
+                    candidate.path,
+                )
+                skipped_existing += 1
+                continue
+
             # Extract EXIF timestamp for images, fall back to mtime
             captured_at = candidate.mtime
-            if candidate.media_type == "image":
+            if not initial_scan and candidate.media_type == "image":
                 exif_timestamp = await asyncio.to_thread(extract_capture_timestamp, candidate.path)
                 if exif_timestamp:
                     captured_at = exif_timestamp
 
-            # Always record discoveries in the database so that:
-            # - Status endpoint shows accurate "pending" count
-            # - Subsequent syncs can skip already-discovered files
-            # Note: last_imported will remain NULL until actual import
-            if True:  # Always write discoveries
+            if not initial_scan:
+                filename_for_lookup: str | None = None
+                if candidate.media_type == "image" and captured_at:
+                    filename_for_lookup = await self._get_original_filename(candidate)
+                    if not filename_for_lookup:
+                        filename_for_lookup = candidate.path.name
+
+                if await self._already_in_library(filename=filename_for_lookup):
+                    logger.debug("Skipping %s (already in Photos)", candidate.path)
+                    self._existing_live_stems.add(candidate.path.stem)
+                    skipped_existing += 1
+                    continue
+
+            # Only persist discoveries when we're preparing for a real import.
+            # The simulator (dry-run) must stay read-only so running it doesn't
+            # permanently suppress pending imports once hashes are cached.
+            if not dry_run:
                 await self.db.record_discovery(
                     content_hash=file_hash,
                     path=candidate.path,
@@ -132,6 +164,7 @@ class PhotoSyncEngine:
                 "new_assets": 0,
                 "imported": 0,
                 "dry_run": dry_run,
+                "skipped_existing": skipped_existing,
                 "sources": scanned_sources,
             }
 
@@ -149,6 +182,7 @@ class PhotoSyncEngine:
                 "dry_run": dry_run,
                 "initial_scan": initial_scan,
                 "pending": [str(record.candidate.path) for record in new_records[:50]],
+                "skipped_existing": skipped_existing,
                 "sources": scanned_sources,
             }
 
@@ -200,6 +234,7 @@ class PhotoSyncEngine:
             "new_assets": len(new_records),
             "imported": total_imported,
             "dry_run": False,
+            "skipped_existing": skipped_existing,
             "albums": {album: len(records) for album, records in grouped.items()},
             "sources": scanned_sources,
         }
@@ -215,6 +250,32 @@ class PhotoSyncEngine:
             return h.hexdigest()
 
         return await asyncio.to_thread(_reader)
+
+    async def _get_original_filename(self, candidate: PhotoCandidate) -> str | None:
+        cached = self._original_name_cache.get(candidate.path)
+        if cached is not None:
+            return cached
+
+        value = await asyncio.to_thread(extract_original_filename, candidate.path)
+        self._original_name_cache[candidate.path] = value
+        return value
+
+    async def _already_in_library(self, *, filename: str | None) -> bool:
+        if not filename:
+            return False
+
+        cached_name = self._name_exists_cache.get(filename)
+        if cached_name is not None:
+            return cached_name
+
+        try:
+            exists_by_name = await self.apple.asset_exists_by_name(filename)
+        except Exception as exc:  # pragma: no cover - Photos may be unavailable
+            logger.warning("Failed to query Photos by name %s: %s", filename, exc)
+            exists_by_name = False
+
+        self._name_exists_cache[filename] = exists_by_name
+        return exists_by_name
 
     async def _write_manifest(self, records: list[PhotoImportRecord]) -> Path:
         manifest = self.temp_dir / f"import_{uuid4().hex}.txt"

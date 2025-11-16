@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Image, RefreshCw, PlayCircle, Activity } from 'lucide-react';
+import { Image, RefreshCw, PlayCircle, Activity, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import apiClient from '@/lib/api-client';
 import { useSyncStore } from '@/store/sync-store';
 import type { AppConfig, SyncLog } from '@/types/api';
 import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface PhotosStatus {
   enabled: boolean;
@@ -16,6 +17,7 @@ interface PhotosStatus {
   pending?: number;
   last_sync?: string;
   sources?: string[];
+  skipped_existing?: number;
 }
 
 interface PhotosSyncResult {
@@ -28,6 +30,7 @@ interface PhotosSyncResult {
     albums?: Record<string, number>;
     pending?: string[];
     sources?: string[];
+    skipped_existing?: number;
   };
 }
 
@@ -43,7 +46,7 @@ function SyncStatsView({ result }: { result: PhotosSyncResult | null }) {
         <span>{stats.dry_run ? 'Simulation results' : 'Sync results'}</span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
         <div>
           <p className="text-muted-foreground">Discovered</p>
           <p className="font-medium">{stats.discovered ?? 0}</p>
@@ -55,6 +58,10 @@ function SyncStatsView({ result }: { result: PhotosSyncResult | null }) {
         <div>
           <p className="text-muted-foreground">Imported</p>
           <p className="font-medium">{stats.imported ?? 0}</p>
+        </div>
+        <div>
+          <p className="text-muted-foreground">Skipped</p>
+          <p className="font-medium">{stats.skipped_existing ?? 0}</p>
         </div>
       </div>
 
@@ -234,26 +241,42 @@ export default function Photos() {
       {status && status.enabled && (
         <div className="rounded-lg border p-4 space-y-3">
           <h3 className="text-lg font-semibold">Status</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div>
-              <p className="text-muted-foreground">Total Imported</p>
-              <p className="font-medium">{status.total_imported ?? 0}</p>
+          <TooltipProvider>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+              <div>
+                <p className="text-muted-foreground">Total Imported</p>
+                <p className="font-medium">{status.total_imported ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Pending</p>
+                <p className="font-medium">{status.pending ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Last Sync</p>
+                <p className="font-medium text-xs">
+                  {status.last_sync ? new Date(status.last_sync).toLocaleString() : 'Never'}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Sources</p>
+                <p className="font-medium">{status.sources?.length ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground flex items-center gap-1">
+                  Skipped
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Photos are skipped when they are already in your Apple Photos library.
+                    </TooltipContent>
+                  </Tooltip>
+                </p>
+                <p className="font-medium">{status.skipped_existing ?? 0}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-muted-foreground">Pending</p>
-              <p className="font-medium">{status.pending ?? 0}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Last Sync</p>
-              <p className="font-medium text-xs">
-                {status.last_sync ? new Date(status.last_sync).toLocaleString() : 'Never'}
-              </p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Sources</p>
-              <p className="font-medium">{status.sources?.length ?? 0}</p>
-            </div>
-          </div>
+          </TooltipProvider>
           {status.sources && status.sources.length > 0 && (
             <div className="flex gap-2 flex-wrap">
               {status.sources.map((source) => (
@@ -359,10 +382,16 @@ export default function Photos() {
                       <p className="text-xs text-muted-foreground">{formatDate(log.started_at)}</p>
                     </div>
                     <div className="flex gap-2">
-                      {log.status === 'success' && typeof stats.imported === 'number' && stats.imported > 0 && (
-                        <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                          +{stats.imported}
-                        </Badge>
+                      {log.status === 'success' && typeof stats.imported === 'number' && (
+                        stats.imported > 0 ? (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                            +{stats.imported}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-xs">
+                            No new photos detected
+                          </Badge>
+                        )
                       )}
                       <Badge variant={log.status === 'success' ? 'success' : log.status === 'error' ? 'destructive' : 'default'}>
                         {log.status}
@@ -386,6 +415,12 @@ export default function Photos() {
                       <div>
                         <span className="text-muted-foreground">Imported</span>
                         <p className="font-medium">{stats.imported}</p>
+                      </div>
+                    )}
+                    {typeof stats.skipped_existing === 'number' && (
+                      <div>
+                        <span className="text-muted-foreground">Skipped</span>
+                        <p className="font-medium">{stats.skipped_existing}</p>
                       </div>
                     )}
                     {log.duration_seconds !== null && (

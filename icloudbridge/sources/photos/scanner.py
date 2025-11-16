@@ -21,6 +21,7 @@ class PhotoCandidate:
     size: int
     mtime: datetime
     album: str | None
+    original_name: str | None = None
 
     @property
     def extension(self) -> str:

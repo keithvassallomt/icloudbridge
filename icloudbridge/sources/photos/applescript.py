@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -63,7 +64,7 @@ on run argv
 
     tell application "Photos"
         set targetAlbum to album albumName
-        set importedItems to import fileList into targetAlbum with skip check duplicates
+        set importedItems to import fileList into targetAlbum
 
         -- Extract local identifiers from imported items
         set idList to {}
@@ -75,6 +76,23 @@ on run argv
         set AppleScript's text item delimiters to ","
         return idList as string
     end tell
+end run
+"""
+
+
+CHECK_ITEM_EXISTS_BY_NAME_SCRIPT = """
+on run argv
+    set targetName to item 1 of argv
+
+    tell application "Photos"
+        set matches to media items whose filename is targetName
+    end tell
+
+    if (count of matches) is 0 then
+        return "0"
+    end if
+
+    return "1"
 end run
 """
 
@@ -109,6 +127,10 @@ class PhotosAppleScriptAdapter:
             return []
 
         return [identifier.strip() for identifier in result.split(",") if identifier.strip()]
+
+    async def asset_exists_by_name(self, filename: str) -> bool:
+        result = await self._run_script(CHECK_ITEM_EXISTS_BY_NAME_SCRIPT, filename)
+        return result.strip() == "1"
 
     async def _run_script(self, script: str, *args: str) -> str:
         """Execute an AppleScript snippet via `osascript`."""

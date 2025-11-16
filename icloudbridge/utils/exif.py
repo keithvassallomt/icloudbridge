@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 
@@ -108,3 +110,38 @@ def extract_exif_metadata(path: Path) -> dict[str, any]:
     except Exception as e:
         logger.warning(f"Failed to extract EXIF metadata from {path.name}: {e}")
         return {}
+
+
+def extract_original_filename(path: Path) -> str | None:
+    """Best-effort extraction of the original camera filename."""
+
+    # Try Spotlight metadata first (macOS-only)
+    try:
+        result = subprocess.run(
+            ["mdls", "-name", "kMDItemOriginalFilename", "-raw", str(path)],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        value = result.stdout.strip()
+        if value and value != "(null)":
+            return value
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        logger.debug("mdls unavailable or returned no original filename for %s", path)
+
+    # Fall back to EXIF metadata
+    metadata = extract_exif_metadata(path)
+    for key in ("OriginalFilename", "DocumentName", "ImageUniqueID"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    # Heuristic: many Nextcloud naming templates append the original
+    # sequence number at the end (e.g., "2025-11-16 12-06-53 3643.HEIC").
+    # Use that trailing number to reconstruct the typical IMG_#### name.
+    match = re.search(r"(\d{3,})$", path.stem)
+    if match:
+        sequence = match.group(1)
+        return f"IMG_{sequence}{path.suffix.upper()}"
+
+    return None
