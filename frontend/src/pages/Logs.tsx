@@ -20,7 +20,7 @@ import { useSyncStore } from '@/store/sync-store';
 
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR'] as const;
 const SERVICES = ['notes', 'reminders', 'passwords', 'scheduler', 'api'] as const;
-const BACKEND_LOG_LEVELS = ['INFO', 'DEBUG'] as const;
+const BACKEND_LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR'] as const;
 type BackendLogLevel = (typeof BACKEND_LOG_LEVELS)[number];
 
 export default function Logs() {
@@ -37,8 +37,10 @@ export default function Logs() {
   const logsEndRef = useRef<HTMLDivElement>(null);
   const logsContainerRef = useRef<HTMLDivElement>(null);
 
-  const sanitizeBackendLevel = (level?: string | null): BackendLogLevel =>
-    level === 'DEBUG' ? 'DEBUG' : 'INFO';
+  const sanitizeBackendLevel = (level?: string | null): BackendLogLevel => {
+    const normalized = (level ?? '').toUpperCase() as BackendLogLevel;
+    return BACKEND_LOG_LEVELS.includes(normalized) ? normalized : 'INFO';
+  };
 
   useEffect(() => {
     const fetchLevel = async () => {
