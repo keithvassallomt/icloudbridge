@@ -706,40 +706,29 @@ export default function FirstRunWizard() {
                       )}
                     </div>
                     <p className="text-sm text-muted-foreground">
-                      Python needs Full Disk Access to read your Notes database.
+                      iCloudBridge needs Full Disk Access to read your Notes database.
                     </p>
 
-                    {verification && (
+                    {verification && !verification.full_disk_access.has_access && (
                       <div className="space-y-2">
-                        <div className="p-3 bg-muted rounded-md text-sm">
-                          <div className="font-medium mb-1">Python Path:</div>
-                          <code className="text-xs break-all">{verification.full_disk_access.python_path}</code>
-                        </div>
-
-                        {!verification.full_disk_access.has_access && (
-                          <div className="space-y-2">
-                            <p className="text-sm">To grant Full Disk Access:</p>
-                            <ol className="text-sm text-muted-foreground space-y-1 ml-4 list-decimal">
-                              <li>Open System Settings → Privacy & Security → Full Disk Access</li>
-                              <li>Click the lock icon to make changes</li>
-                              <li>Click the + button</li>
-                              <li>Navigate to and select the Python executable above</li>
-                              <li>Restart this application</li>
-                            </ol>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                // Try to open System Preferences directly to FDA settings
-                                window.open('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
-                              }}
-                              className="w-full"
-                            >
-                              <ExternalLink className="w-4 h-4 mr-2" />
-                              Open System Settings
-                            </Button>
-                          </div>
-                        )}
+                        <p className="text-sm">To grant Full Disk Access:</p>
+                        <ol className="text-sm text-muted-foreground space-y-1 ml-4 list-decimal">
+                          <li>Open System Settings → Privacy & Security → Full Disk Access</li>
+                          <li>Click the lock icon to make changes</li>
+                          <li>Drag the iCloudBridge app to the list, or click + to add it</li>
+                          <li>Restart this application</li>
+                        </ol>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            window.open('x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles');
+                          }}
+                          className="w-full"
+                        >
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          Open System Settings
+                        </Button>
                       </div>
                     )}
 

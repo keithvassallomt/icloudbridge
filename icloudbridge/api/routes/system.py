@@ -249,7 +249,6 @@ async def browse_folders(path: str = "~") -> dict:
         Dictionary containing current path, parent path, and list of subdirectories
 
     Security:
-        - Only allows browsing within user's home directory
         - Does not expose hidden system directories
         - Returns only directories, not files
     """
@@ -258,21 +257,13 @@ async def browse_folders(path: str = "~") -> dict:
         browse_path = Path(path).expanduser().resolve()
         home_path = Path.home().resolve()
 
-        # Security check: ensure path is within user's home directory
-        try:
-            browse_path.relative_to(home_path)
-        except ValueError:
-            # Path is outside home directory, default to home
-            logger.warning(f"Attempted to browse outside home directory: {browse_path}")
-            browse_path = home_path
-
         # Check if path exists and is a directory
         if not browse_path.exists() or not browse_path.is_dir():
             browse_path = home_path
 
-        # Get parent directory (or None if at home)
+        # Get parent directory (or None if at root)
         parent_path = None
-        if browse_path != home_path:
+        if browse_path.parent != browse_path:  # Not at filesystem root
             parent_path = str(browse_path.parent)
 
         # List subdirectories (excluding hidden directories)
