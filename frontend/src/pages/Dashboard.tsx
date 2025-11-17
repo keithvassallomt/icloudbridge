@@ -231,7 +231,7 @@ export default function Dashboard() {
                   size="sm"
                   variant="outline"
                   asChild
-                  className="bg-white"
+                  className="bg-white text-black hover:text-black dark:bg-white dark:text-black dark:hover:text-black"
                 >
                   <Link to="/settings">
                     <ExternalLink className="w-4 h-4 mr-2" />

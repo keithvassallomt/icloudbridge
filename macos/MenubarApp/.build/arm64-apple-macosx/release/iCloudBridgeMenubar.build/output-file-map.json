@@ -34,6 +34,12 @@
     "swift-dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/StatusIconProvider.swiftdeps",
     "diagnostics": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/StatusIconProvider.dia"
   },
+  "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/SyncStatusObserver.swift": {
+    "object": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver.swift.o",
+    "swiftmodule": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver~partial.swiftmodule",
+    "swift-dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver.swiftdeps",
+    "diagnostics": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver.dia"
+  },
   "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/main.swift": {
     "object": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/main.swift.o",
     "swiftmodule": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/main~partial.swiftmodule",

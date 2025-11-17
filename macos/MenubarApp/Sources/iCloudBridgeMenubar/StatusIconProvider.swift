@@ -1,28 +1,24 @@
 import Cocoa
 
 final class StatusIconProvider {
-    private let lightIcon: NSImage?
-    private let darkIcon: NSImage?
+    private let icon: NSImage?
 
     init() {
-        lightIcon = StatusIconProvider.loadImage(named: "status-icon-light")
-        darkIcon = StatusIconProvider.loadImage(named: "status-icon-dark")
+        icon = StatusIconProvider.loadImage(named: "status-icon-dark")
     }
 
     private static func loadImage(named resource: String) -> NSImage? {
-        guard let url = Bundle.module.url(forResource: resource, withExtension: "png") else {
-            NSLog("Unable to locate status icon resource: \(resource)")
-            return nil
+        // Look in main bundle Resources directory (works for both dev and release builds)
+        if let url = Bundle.main.url(forResource: resource, withExtension: "png") {
+            return NSImage(contentsOf: url)
         }
-        return NSImage(contentsOf: url)
+
+        NSLog("Unable to locate status icon resource: \(resource) in bundle: \(Bundle.main.bundlePath)")
+        NSLog("Resource URL: \(String(describing: Bundle.main.resourceURL))")
+        return nil
     }
 
     func image(for appearance: NSAppearance?) -> NSImage? {
-        let lookedUp = appearance ?? NSApp.effectiveAppearance
-        if lookedUp.bestMatch(from: [.darkAqua, .vibrantDark]) != nil {
-            // Use the white icon on dark appearances
-            return lightIcon
-        }
-        return darkIcon
+        icon
     }
 }

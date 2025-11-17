@@ -830,8 +830,13 @@ const renderChangeBadge = (
                       </thead>
                       <tbody>
                         {lists.map((list) => {
-                          const mappedName = listMappings[list.name] || '';
-                          const caldavName = mappedName ? resolveCalDavName(mappedName) : '—';
+                          // In auto mode, default to same name if no explicit mapping
+                          const mappedName = listMappings[list.name] || list.name;
+                          const caldavName = resolveCalDavName(mappedName);
+                          // Check if the CalDAV calendar exists
+                          const caldavExists = caldavCalendars.some(
+                            (cal) => cal.toLowerCase() === caldavName.toLowerCase()
+                          );
                           return (
                             <tr key={list.name} className="border-b">
                               <td className="p-3">
@@ -844,11 +849,42 @@ const renderChangeBadge = (
                                 </div>
                               </td>
                               <td className="p-3">
-                                <span className="text-muted-foreground">{caldavName}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-muted-foreground">{caldavName}</span>
+                                  {!caldavExists && (
+                                    <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
+                                      will be created
+                                    </Badge>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
                         })}
+
+                        {/* Show unmapped CalDAV calendars that will create Apple lists */}
+                        {getUnmappedCaldavCalendars()
+                          .filter((calendar) => {
+                            // In auto mode, exclude CalDAV calendars that match existing Apple list names
+                            return !lists.some((list) => list.name.toLowerCase() === calendar.toLowerCase());
+                          })
+                          .map((calendar) => (
+                            <tr key={`caldav-${calendar}`} className="border-b bg-muted/20">
+                              <td className="p-3">
+                                <div className="flex items-center gap-2">
+                                  <Calendar className="w-4 h-4 text-muted-foreground" />
+                                  <span className="font-medium text-muted-foreground italic">{calendar}</span>
+                                  <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
+                                    will be created
+                                  </Badge>
+                                </div>
+                              </td>
+                              <td className="p-3">
+                                <span className="text-muted-foreground">{calendar}</span>
+                              </td>
+                            </tr>
+                          ))
+                        }
                       </tbody>
                     </table>
                   </div>

@@ -148,10 +148,62 @@ def stage_app_bundle(version: str, menubar_binary: Path, backend_app_path: Path)
 
     copy_binary(menubar_binary, macos_dir / "iCloudBridgeMenubar")
 
+    # Copy menubar resources (icons) from bundle to Resources directory
+    menubar_bundle = menubar_binary.parent / "iCloudBridgeMenubar_iCloudBridgeMenubar.bundle"
+    if menubar_bundle.exists():
+        for resource in menubar_bundle.iterdir():
+            if resource.is_file():
+                shutil.copy2(resource, resources_dir / resource.name)
+
     public_dir = resources_dir / "public"
     if public_dir.exists():
         shutil.rmtree(public_dir)
     shutil.copytree(FRONTEND_DIR / "dist", public_dir)
+
+
+def sign_app_bundle() -> None:
+    """Ad-hoc sign the complete app bundle after assembly."""
+    print("→ Signing app bundle")
+
+    # Sign frameworks first (from deepest to shallowest)
+    frameworks_dir = APP_ROOT / "Contents" / "Frameworks"
+    if frameworks_dir.exists():
+        for framework in frameworks_dir.rglob("*.framework"):
+            if framework.is_dir():
+                print(f"  Signing {framework.name}")
+                subprocess.run(
+                    ["codesign", "--force", "--sign", "-", str(framework)],
+                    stderr=subprocess.DEVNULL,  # Suppress warnings about ambiguous formats
+                    check=False  # Don't fail on framework signing errors
+                )
+
+        for dylib in frameworks_dir.rglob("*.dylib"):
+            if dylib.is_file():
+                subprocess.run(
+                    ["codesign", "--force", "--sign", "-", str(dylib)],
+                    stderr=subprocess.DEVNULL,
+                    check=False
+                )
+
+    # Sign all executables in MacOS directory
+    macos_dir = APP_ROOT / "Contents" / "MacOS"
+    for binary in macos_dir.iterdir():
+        if binary.is_file() and binary.stat().st_mode & 0o111:
+            print(f"  Signing {binary.name}")
+            run([
+                "codesign",
+                "--force",
+                "--sign", "-",
+                str(binary)
+            ])
+
+    # Sign the main app bundle
+    run([
+        "codesign",
+        "--force",
+        "--sign", "-",
+        str(APP_ROOT)
+    ])
 
 
 def create_dmg() -> Path:
@@ -200,6 +252,7 @@ def main() -> None:
     else:
         backend_app = build_backend_with_briefcase()
     stage_app_bundle(version, menubar_binary, backend_app)
+    sign_app_bundle()
     dmg_path = None
     if not args.skip_dmg:
         dmg_path = create_dmg()

@@ -7,14 +7,26 @@ final class MenuController {
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let openWebItem = NSMenuItem(title: "Open Web UI", action: #selector(openWebUI), keyEquivalent: "")
-    private let toggleLoginItem = NSMenuItem(title: "Install Login Item", action: #selector(toggleLoginItemAction), keyEquivalent: "")
+    private let toggleLoginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItemAction), keyEquivalent: "")
     private let quitItem = NSMenuItem(title: "Quit iCloudBridge", action: #selector(quitApp), keyEquivalent: "q")
+    private let activityIndicator: NSProgressIndicator = {
+        let indicator = NSProgressIndicator()
+        indicator.style = .spinning
+        indicator.controlSize = .small
+        indicator.isDisplayedWhenStopped = false
+        indicator.translatesAutoresizingMaskIntoConstraints = false
+        return indicator
+    }()
+
+    private var indicatorConstraintsInstalled = false
+    private var syncObserver: SyncStatusObserver?
 
     init(backendManager: BackendProcessManager, launchAgentManager: LaunchAgentManager) {
         self.backendManager = backendManager
         self.launchAgentManager = launchAgentManager
         configureStatusItem()
         rebuildMenu()
+        observeSyncStatus()
         DistributedNotificationCenter.default().addObserver(
             self,
             selector: #selector(handleInterfaceStyleChange),
@@ -29,6 +41,8 @@ final class MenuController {
 
     private func configureStatusItem() {
         updateStatusIcon()
+        installActivityIndicatorIfNeeded()
+        setSyncIndicatorVisible(false)
     }
 
     private func rebuildMenu() {
@@ -65,12 +79,39 @@ final class MenuController {
         }
     }
 
-    private func refreshLoginItemState() {
-        if launchAgentManager.isInstalled() {
-            toggleLoginItem.title = "Remove Login Item"
-        } else {
-            toggleLoginItem.title = "Install Login Item"
+    private func installActivityIndicatorIfNeeded() {
+        guard !indicatorConstraintsInstalled, let button = statusItem.button else {
+            return
         }
+
+        button.addSubview(activityIndicator)
+        NSLayoutConstraint.activate([
+            activityIndicator.widthAnchor.constraint(equalToConstant: 12),
+            activityIndicator.heightAnchor.constraint(equalToConstant: 12),
+            activityIndicator.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -1),
+            activityIndicator.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -1),
+        ])
+        indicatorConstraintsInstalled = true
+    }
+
+    private func setSyncIndicatorVisible(_ visible: Bool) {
+        installActivityIndicatorIfNeeded()
+        if visible {
+            activityIndicator.startAnimation(nil)
+        } else {
+            activityIndicator.stopAnimation(nil)
+        }
+    }
+
+    private func observeSyncStatus() {
+        syncObserver = SyncStatusObserver()
+        syncObserver?.onSyncStateChange = { [weak self] isSyncing in
+            self?.setSyncIndicatorVisible(isSyncing)
+        }
+    }
+
+    private func refreshLoginItemState() {
+        toggleLoginItem.state = launchAgentManager.isInstalled() ? .on : .off
     }
 
     @objc private func openWebUI() {

@@ -16,20 +16,6 @@
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/status-icon-dark.png"
         }
       ]
-    },
-    "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/status-icon-light.png" : {
-      "inputs" : [
-        {
-          "kind" : "file",
-          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/Resources/status-icon-light.png"
-        }
-      ],
-      "outputs" : [
-        {
-          "kind" : "file",
-          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/status-icon-light.png"
-        }
-      ]
     }
   },
   "explicitTargetDependencyImportCheckingMode" : {
@@ -71,6 +57,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/SyncStatusObserver.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/main.swift"
         },
         {
@@ -99,6 +89,7 @@
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/LaunchAgentManager.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/MenuController.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/StatusIconProvider.swift.o",
+        "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/main.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/resource_bundle_accessor.swift.o"
       ],
@@ -120,7 +111,6 @@
         "-entry-point-function-name",
         "-Xfrontend",
         "iCloudBridgeMenubar_main",
-        "-color-diagnostics",
         "-swift-version",
         "5",
         "-plugin-path",
@@ -179,6 +169,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/main.swift.o"
         },
         {
@@ -197,6 +191,7 @@
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/LaunchAgentManager.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/MenuController.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/StatusIconProvider.swift",
+        "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/SyncStatusObserver.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/main.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/DerivedSources/resource_bundle_accessor.swift"
       ],
@@ -220,6 +215,7 @@
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/LaunchAgentManager.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/MenuController.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/StatusIconProvider.swift",
+      "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/SyncStatusObserver.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/main.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/DerivedSources/resource_bundle_accessor.swift",
       "-I",
@@ -241,7 +237,6 @@
       "-entry-point-function-name",
       "-Xfrontend",
       "iCloudBridgeMenubar_main",
-      "-color-diagnostics",
       "-swift-version",
       "5",
       "-plugin-path",
@@ -325,6 +320,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/SyncStatusObserver.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/main.swift"
         },
         {
@@ -360,6 +359,10 @@
         {
           "kind" : "file",
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/StatusIconProvider.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver.swift.o"
         },
         {
           "kind" : "file",
