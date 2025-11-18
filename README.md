@@ -87,6 +87,13 @@ iCloudBridge is a one-man show - I basically built this to scratch my own itch. 
 
    Linting/tests run quickly and keep the Briefcase build happy.
 
+## Acknowledgements
+
+iCloudBridge uses some existing open-source code created by the fantastic community. In particular:
+
+- [Apple Cloud Notes Parser](https://github.com/threeplanetssoftware/apple_cloud_notes_parser) - a fantastic project which decodes as much as possible of Apple's arcane Notes format.
+- [/u/z1ts](https://www.reddit.com/user/z1ts/) on Reddit, who created a fantastic sample Apple Shortcut for how to add rich content to Apple Notes (see their [Reddit Post](https://www.reddit.com/r/shortcuts/comments/1h54bkh/notes_checkbox_lists_rtf_md_pics_links_etc/)). 
+
 ## Disclaimer
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

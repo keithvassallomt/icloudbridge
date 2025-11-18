@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Key, RefreshCw, Upload, PlayCircle, Activity, FileDown, Download } from 'lucide-react';
+import { Key, RefreshCw, Upload, PlayCircle, Activity, FileDown, Download, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import apiClient from '@/lib/api-client';
 import { useSyncStore } from '@/store/sync-store';
 import type { AppConfig, PasswordsDownloadInfo, PasswordsSyncResponse, SyncLog } from '@/types/api';
@@ -60,65 +61,184 @@ function DownloadLink({ info }: { info: PasswordsDownloadInfo }) {
 }
 
 function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncResponse | null; providerLabel: string }) {
+  const [pushOpen, setPushOpen] = useState(true);
+  const [pullOpen, setPullOpen] = useState(true);
+  const [pushEntriesOpen, setPushEntriesOpen] = useState(false);
+  const [pullEntriesOpen, setPullEntriesOpen] = useState(false);
+
   if (!result) {
     return null;
   }
 
   const { stats } = result;
+  const hasPushStats = stats.push && (stats.push.created > 0 || stats.push.skipped > 0 || stats.push.failed > 0);
+  const hasPullStats = stats.pull && stats.pull.new_entries > 0;
+
+  if (!hasPushStats && !hasPullStats) {
+    return (
+      <div className="rounded-md border bg-card/40 p-4">
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>{result.simulate ? 'Simulation results' : 'Sync results'}</span>
+          <span>{stats.total_time ? `${stats.total_time.toFixed(1)}s` : ''}</span>
+        </div>
+        <p className="text-sm text-muted-foreground mt-3">No changes detected.</p>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-4 rounded-md border bg-card/40 p-4">
+    <div className="space-y-3 rounded-md border bg-card/40 p-4">
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>{result.simulate ? 'Simulation results' : 'Sync results'}</span>
         <span>{stats.total_time ? `${stats.total_time.toFixed(1)}s` : ''}</span>
       </div>
 
-      {stats.push && (
-        <div className="space-y-2">
-          <div className="text-sm font-semibold">{providerLabel} updates</div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div>
-              <p className="text-muted-foreground">Queued</p>
-              <p className="font-medium">{stats.push.queued ?? 0}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Created</p>
-              <p className="font-medium">{stats.push.created ?? 0}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Skipped</p>
-              <p className="font-medium">{stats.push.skipped ?? 0}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground">Failed</p>
-              <p className="font-medium">{stats.push.failed ?? 0}</p>
-            </div>
+      {hasPullStats && stats.pull && (
+        <Collapsible open={pullOpen} onOpenChange={setPullOpen}>
+          <div className="rounded-lg border bg-background">
+            <CollapsibleTrigger className="flex w-full items-center justify-between p-3 hover:bg-accent/50 transition-colors">
+              <div className="flex items-center gap-2">
+                {pullOpen ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+                <span className="font-semibold text-sm">Apple Passwords Import</span>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                New: {stats.pull?.new_entries ?? 0}
+              </div>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="px-3 pb-3 pt-1 space-y-3">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-md bg-muted/50 p-2">
+                    <p className="text-muted-foreground text-xs">New</p>
+                    <p className="font-semibold text-lg">{stats.pull?.new_entries ?? 0}</p>
+                  </div>
+                  <div className="rounded-md bg-muted/50 p-2">
+                    <p className="text-muted-foreground text-xs">Updated</p>
+                    <p className="font-semibold text-lg">0</p>
+                  </div>
+                </div>
+                {stats.pull?.entries && stats.pull.entries.length > 0 && (
+                  <Collapsible open={pullEntriesOpen} onOpenChange={setPullEntriesOpen}>
+                    <CollapsibleTrigger className="flex w-full items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                      {pullEntriesOpen ? (
+                        <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3" />
+                      )}
+                      <span>View {stats.pull.entries.length} password{stats.pull.entries.length !== 1 ? 's' : ''}</span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-2">
+                      <div className="rounded-md border bg-muted/20 max-h-48 overflow-y-auto">
+                        <div className="p-2 space-y-1">
+                          {stats.pull.entries.map((entry, idx) => (
+                            <div key={idx} className="text-xs p-1.5 rounded hover:bg-muted/50">
+                              <div className="font-medium">{entry.title}</div>
+                              {entry.username && (
+                                <div className="text-muted-foreground text-[10px]">{entry.username}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+                {result.download && (stats.pull?.new_entries ?? 0) > 0 && (
+                  <DownloadLink info={result.download} />
+                )}
+                {(stats.pull?.new_entries ?? 0) === 0 && (
+                  <p className="text-xs text-muted-foreground">No new entries found.</p>
+                )}
+              </div>
+            </CollapsibleContent>
           </div>
-          {stats.push.errors?.length ? (
-            <ul className="text-xs text-destructive list-disc list-inside">
-              {stats.push.errors.map((err, idx) => (
-                <li key={`${err}-${idx}`}>{err}</li>
-              ))}
-            </ul>
-          ) : null}
-        </div>
+        </Collapsible>
       )}
 
-      {stats.pull && (
-        <div className="space-y-3 border-t pt-3">
-          <div className="text-sm font-semibold">Apple Passwords import</div>
-          <div className="flex flex-col gap-2 text-sm">
-            <div className="flex items-center justify-between">
-              <span className="text-muted-foreground">New entries</span>
-              <span className="font-medium">{stats.pull.new_entries ?? 0}</span>
-            </div>
-            {result.download && stats.pull.new_entries > 0 && (
-              <DownloadLink info={result.download} />
-            )}
-            {stats.pull.new_entries === 0 && (
-              <p className="text-xs text-muted-foreground">No new entries found.</p>
-            )}
+      {hasPushStats && stats.push && (
+        <Collapsible open={pushOpen} onOpenChange={setPushOpen}>
+          <div className="rounded-lg border bg-background">
+            <CollapsibleTrigger className="flex w-full items-center justify-between p-3 hover:bg-accent/50 transition-colors">
+              <div className="flex items-center gap-2">
+                {pushOpen ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+                <span className="font-semibold text-sm">{providerLabel} Import</span>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                New: {stats.push?.created ?? 0}
+              </div>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="px-3 pb-3 pt-1 space-y-3">
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-md bg-muted/50 p-2">
+                    <p className="text-muted-foreground text-xs">New</p>
+                    <p className="font-semibold text-lg">{stats.push?.created ?? 0}</p>
+                  </div>
+                  <div className="rounded-md bg-muted/50 p-2">
+                    <p className="text-muted-foreground text-xs">Updated</p>
+                    <p className="font-semibold text-lg">0</p>
+                  </div>
+                </div>
+                {stats.push?.entries && stats.push.entries.length > 0 && (
+                  <Collapsible open={pushEntriesOpen} onOpenChange={setPushEntriesOpen}>
+                    <CollapsibleTrigger className="flex w-full items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                      {pushEntriesOpen ? (
+                        <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3" />
+                      )}
+                      <span>View {stats.push.entries.length} password{stats.push.entries.length !== 1 ? 's' : ''}</span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-2">
+                      <div className="rounded-md border bg-muted/20 max-h-48 overflow-y-auto">
+                        <div className="p-2 space-y-1">
+                          {stats.push.entries.map((entry, idx) => (
+                            <div key={idx} className="text-xs p-1.5 rounded hover:bg-muted/50">
+                              <div className="font-medium">{entry.title}</div>
+                              {entry.username && (
+                                <div className="text-muted-foreground text-[10px]">{entry.username}</div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
+                )}
+                {((stats.push?.skipped ?? 0) > 0 || (stats.push?.failed ?? 0) > 0) && (
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-md bg-muted/30 p-2">
+                      <p className="text-muted-foreground text-xs">Skipped</p>
+                      <p className="font-medium">{stats.push?.skipped ?? 0}</p>
+                    </div>
+                    <div className="rounded-md bg-muted/30 p-2">
+                      <p className="text-muted-foreground text-xs">Failed</p>
+                      <p className="font-medium">{stats.push?.failed ?? 0}</p>
+                    </div>
+                  </div>
+                )}
+                {stats.push?.errors && stats.push.errors.length > 0 && (
+                  <div className="rounded-md bg-destructive/10 p-2">
+                    <p className="text-xs font-medium text-destructive mb-1">Errors:</p>
+                    <ul className="text-xs text-destructive list-disc list-inside space-y-0.5">
+                      {stats.push.errors.map((err, idx) => (
+                        <li key={`${err}-${idx}`}>{err}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
           </div>
-        </div>
+        </Collapsible>
       )}
     </div>
   );

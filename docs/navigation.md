@@ -40,5 +40,4 @@ If you want to start fresh, click the "Complete Reset" button at the bottom of t
 
 ---
 
-[> Next - Note Synchronisation](notes.md)
-
+[< Previous - First-Run Wizard](firstrun.md) | [Next - Note Synchronisation >](notes.md)

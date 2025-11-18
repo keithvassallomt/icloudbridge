@@ -130,4 +130,4 @@ Once all steps are complete, you're ready to start using iCloudBridge! Click "Ge
 
 ---
 
-[> Next - Using the WebUI](navigation.md)
+[< Previous - Installing & Running iCloudBridge](installing.md) | [Next - Using the Web UI >](navigation.md)

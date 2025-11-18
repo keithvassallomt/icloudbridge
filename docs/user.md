@@ -2,7 +2,7 @@
 
 iCloudBridge provides a web-based interface to manage and interact with your iCloud data. This guide will walk you through the features and usage of the WebUI.
 
-Table of Contents
+## Contents
 - [Installing & Running iCloudBridge](installing.md)
 - [The First-Run Wizard](firstrun.md)
 - [Using the WebUI](navigation.md)

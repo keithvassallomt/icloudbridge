@@ -69,4 +69,4 @@ And that's all there is to it! Check out the [Schedules](schedules.md) page to s
 
 ---
 
-[> Next - Reminder Synchronisation](reminders.md)
+[< Previous - Using the Web UI](navigation.md) | [Next - Reminder Synchronisation >](reminders.md)

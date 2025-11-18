@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Clock, RefreshCw, Plus, Play, Pause, Trash2 } from 'lucide-react';
+import { Clock, RefreshCw, Plus, Play, Pause, Trash2, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,8 +7,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import apiClient from '@/lib/api-client';
 import { useSchedulesStore } from '@/store/schedules-store';
+import { useAppStore } from '@/store/app-store';
 import { cn } from '@/lib/utils';
 import type { Schedule, ScheduleCreate } from '@/types/api';
 
@@ -20,6 +22,41 @@ const SERVICE_OPTIONS: { id: ServiceKey; label: string }[] = [
   { id: 'photos', label: 'Photos' },
 ];
 
+// Check if a cron expression runs more frequently than every 10 minutes
+const isCronTooFrequent = (cronExpr: string): boolean => {
+  if (!cronExpr?.trim()) return false;
+
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length < 5) return false;
+
+  const minutePart = parts[0];
+
+  // Check for */N where N < 10 (e.g., */5 means every 5 minutes)
+  const intervalMatch = minutePart.match(/^\*\/(\d+)$/);
+  if (intervalMatch) {
+    const interval = parseInt(intervalMatch[1]);
+    return interval < 10;
+  }
+
+  // Check for single * (runs every minute)
+  if (minutePart === '*') return true;
+
+  // Check for comma-separated values (e.g., 0,5,10 - runs every 5 minutes)
+  if (minutePart.includes(',')) {
+    const values = minutePart.split(',').map(v => parseInt(v.trim())).filter(v => !isNaN(v));
+    if (values.length >= 2) {
+      values.sort((a, b) => a - b);
+      for (let i = 1; i < values.length; i++) {
+        if (values[i] - values[i - 1] < 10) return true;
+      }
+      // Also check wrap-around (e.g., 55,0,5)
+      if (values[0] + 60 - values[values.length - 1] < 10) return true;
+    }
+  }
+
+  return false;
+};
+
 export default function Schedules() {
   const {
     schedules,
@@ -28,6 +65,8 @@ export default function Schedules() {
     setServiceFilter,
   } = useSchedulesStore();
 
+  const { config } = useAppStore();
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -35,7 +74,7 @@ export default function Schedules() {
 
   // Form state
   const [formData, setFormData] = useState<Partial<ScheduleCreate>>({
-    services: ['notes'],
+    services: [],
     name: '',
     schedule_type: 'interval',
     interval_minutes: 60,
@@ -43,6 +82,26 @@ export default function Schedules() {
     config_json: {},
     enabled: true,
   });
+
+  // Check if schedule runs too frequently
+  const showFrequencyWarning =
+    (formData.schedule_type === 'interval' && (formData.interval_minutes ?? 60) < 10) ||
+    (formData.schedule_type === 'datetime' && isCronTooFrequent(formData.cron_expression ?? ''));
+
+  // Check if a service is configured
+  const isServiceConfigured = (serviceId: ServiceKey): boolean => {
+    if (!config) return false;
+    switch (serviceId) {
+      case 'notes':
+        return config.notes_enabled ?? false;
+      case 'reminders':
+        return config.reminders_enabled ?? false;
+      case 'photos':
+        return config.photos_enabled ?? false;
+      default:
+        return false;
+    }
+  };
 
   const loadSchedules = useCallback(async () => {
     try {
@@ -116,7 +175,7 @@ export default function Schedules() {
 
   const resetForm = () => {
     setFormData({
-      services: ['notes'],
+      services: [],
       name: '',
       schedule_type: 'interval',
       interval_minutes: 60,
@@ -127,6 +186,11 @@ export default function Schedules() {
   };
 
   const toggleService = (serviceId: ServiceKey) => {
+    // Don't allow selecting unconfigured services
+    if (!isServiceConfigured(serviceId)) {
+      return;
+    }
+
     const selected = formData.services ?? [];
     const exists = selected.includes(serviceId);
     const next = exists ? selected.filter((s) => s !== serviceId) : [...selected, serviceId];
@@ -248,20 +312,42 @@ export default function Schedules() {
 
             <div className="space-y-2">
               <Label>Items to Sync</Label>
-              <div className="flex flex-wrap gap-2">
-                {SERVICE_OPTIONS.map((option) => (
-                  <Button
-                    key={option.id}
-                    type="button"
-                    variant={isServiceSelected(option.id) ? 'default' : 'outline'}
-                    onClick={() => toggleService(option.id)}
-                    size="sm"
-                    aria-pressed={isServiceSelected(option.id)}
-                  >
-                    {option.label}
-                  </Button>
-                ))}
-              </div>
+              <TooltipProvider>
+                <div className="flex flex-wrap gap-2">
+                  {SERVICE_OPTIONS.map((option) => {
+                    const configured = isServiceConfigured(option.id);
+                    const button = (
+                      <Button
+                        key={option.id}
+                        type="button"
+                        variant={isServiceSelected(option.id) ? 'default' : 'outline'}
+                        onClick={() => toggleService(option.id)}
+                        size="sm"
+                        aria-pressed={isServiceSelected(option.id)}
+                        disabled={!configured}
+                        className={cn(!configured && 'cursor-not-allowed opacity-50')}
+                      >
+                        {option.label}
+                      </Button>
+                    );
+
+                    if (!configured) {
+                      return (
+                        <Tooltip key={option.id}>
+                          <TooltipTrigger asChild>
+                            {button}
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{option.label} is not configured. Please configure it in Settings first.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    }
+
+                    return button;
+                  })}
+                </div>
+              </TooltipProvider>
               <p className="text-xs text-muted-foreground">
                 Select one or more data sources for this schedule.
               </p>
@@ -288,6 +374,16 @@ export default function Schedules() {
                 </Button>
               </div>
             </div>
+
+            {showFrequencyWarning && (
+              <Alert variant="warning">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Warning</AlertTitle>
+                <AlertDescription>
+                  It is strongly recommended to not create schedules at less than a 10 minute interval, to allow synchronisation to complete.
+                </AlertDescription>
+              </Alert>
+            )}
 
             {formData.schedule_type === 'interval' ? (
               <div className="space-y-2">

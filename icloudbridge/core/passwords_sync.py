@@ -534,15 +534,51 @@ class PasswordsSyncEngine:
             create_missing=not simulate,
         )
 
+        # Track which entries will actually be created (for UI display)
+        entries_that_will_be_created = []
+
+        # Fetch existing provider entries to determine what's new (used by simulate and bulk modes)
+        existing_keys: set[tuple[str, str | None, str]] = set()
+        if simulate or bulk_push:
+            try:
+                existing_entries = await provider.list_passwords()
+                existing_keys = {
+                    (
+                        (entry.get("label") or entry.get("title") or "").lower().strip(),
+                        (entry.get("url") or "").lower().strip() if entry.get("url") else None,
+                        (entry.get("username") or "").lower().strip(),
+                    )
+                    for entry in existing_entries
+                }
+            except Exception as exc:
+                logger.warning("Failed to fetch existing entries: %s", exc)
+
+        # Determine which entries will be created (for simulate and bulk modes)
+        if simulate or bulk_push:
+            for entry in entries_to_push:
+                entry_key = (
+                    entry.title.lower().strip(),
+                    entry.url.lower().strip() if entry.url else None,
+                    entry.username.lower().strip(),
+                )
+                if entry_key not in existing_keys:
+                    entries_that_will_be_created.append(entry)
+
         if simulate:
             push_stats = {
-                "created": 0,
-                "skipped": len(entries_to_push),
+                "created": len(entries_that_will_be_created),
+                "skipped": len(entries_to_push) - len(entries_that_will_be_created),
                 "failed": 0,
                 "errors": [],
             }
+            logger.info(
+                "Simulation: %s new, %s already exist",
+                len(entries_that_will_be_created),
+                len(entries_to_push) - len(entries_that_will_be_created),
+            )
         elif bulk_push:
-            push_stats = await provider.bulk_import(entries_to_push)
+            push_stats = await provider.bulk_import(entries_that_will_be_created)
+            # Note: we're only pushing entries that don't already exist
         else:
             # Create entries individually
             created = 0
@@ -557,13 +593,14 @@ class PasswordsSyncEngine:
             max_retries = 5
             total_entries = len(entries_to_push)
 
-            existing_provider_keys: set[tuple[str, str]] = set()
+            existing_provider_keys: set[tuple[str, str | None, str]] = set()
             if not simulate:
                 try:
                     existing_entries = await provider.list_passwords()
                     existing_provider_keys = {
                         (
-                            (entry.get("label") or "").lower().strip(),
+                            (entry.get("label") or entry.get("title") or "").lower().strip(),
+                            (entry.get("url") or "").lower().strip() if entry.get("url") else None,
                             (entry.get("username") or "").lower().strip(),
                         )
                         for entry in existing_entries
@@ -579,7 +616,11 @@ class PasswordsSyncEngine:
             for index, entry in enumerate(entries_to_push, start=1):
                 logger.info("Syncing password %s/%s: %s", index, total_entries, entry.title)
 
-                entry_key = (entry.title.lower().strip(), entry.username.lower().strip())
+                entry_key = (
+                    entry.title.lower().strip(),
+                    entry.url.lower().strip() if entry.url else None,
+                    entry.username.lower().strip(),
+                )
                 if not simulate and entry_key in existing_provider_keys:
                     skipped += 1
                     logger.info("Skipping password already present on provider: %s", entry.title)
@@ -590,6 +631,7 @@ class PasswordsSyncEngine:
                     try:
                         await provider.create_password(entry)
                         created += 1
+                        entries_that_will_be_created.append(entry)
                         success_streak += 1
                         if not simulate:
                             existing_provider_keys.add(entry_key)
@@ -641,6 +683,11 @@ class PasswordsSyncEngine:
                 "errors": errors,
             }
 
+        # Collect entry titles for UI display - only include entries that will be created
+        entry_titles = [
+            {"title": entry.title, "username": entry.username} for entry in entries_that_will_be_created
+        ]
+
         return {
             "import": import_stats,
             "queued": len(entries_to_push),
@@ -650,6 +697,7 @@ class PasswordsSyncEngine:
             "errors": push_stats.get("errors") if isinstance(push_stats, dict) else [],
             "folders_created": folders_created,
             "simulate": simulate,
+            "entries": entry_titles,
         }
 
     @staticmethod
@@ -739,10 +787,14 @@ class PasswordsSyncEngine:
         elif not new_entries:
             logger.info("No new entries from provider")
 
+        # Collect entry titles for UI display
+        entry_titles = [{"title": entry.title, "username": entry.username} for entry in new_entries]
+
         return {
             "new_entries": len(new_entries),
             "download_path": str(output_path) if output_path else None,
             "simulate": simulate,
+            "entries": entry_titles,
         }
 
     async def _ensure_provider_folders(

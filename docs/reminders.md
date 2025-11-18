@@ -59,5 +59,4 @@ And that's all there is to it! Check out the [Schedules](schedules.md) page to s
 
 ---
 
-[> Next - Password Synchronisation](passwords.md)
-
+[< Previous - Note Synchronisation](notes.md) | [Next - Password Synchronisation >](passwords.md)

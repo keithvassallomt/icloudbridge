@@ -20,4 +20,4 @@ From here, you can also choose to Start iCloudBridge at Login. You probably want
 
 ---
 
-[> Next - The First-Run Wizard](firstrun.md)
+[< Previous - Contents](user.md) | [Next - The First-Run Wizard >](firstrun.md)

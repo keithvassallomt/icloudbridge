@@ -126,6 +126,11 @@ export interface PasswordImportStats {
   total_processed: number;
 }
 
+export interface PasswordEntryInfo {
+  title: string;
+  username: string;
+}
+
 export interface PasswordPushStats {
   queued: number;
   created: number;
@@ -135,6 +140,7 @@ export interface PasswordPushStats {
   folders_created: number;
   simulate: boolean;
   import?: PasswordImportStats;
+  entries?: PasswordEntryInfo[];
 }
 
 export interface PasswordPullStats {
@@ -143,6 +149,7 @@ export interface PasswordPullStats {
   download_token?: string;
   download_filename?: string;
   download_expires_at?: string;
+  entries?: PasswordEntryInfo[];
 }
 
 export interface PasswordsDownloadInfo {
