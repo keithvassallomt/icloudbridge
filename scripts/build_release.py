@@ -28,11 +28,17 @@ RELEASE_ROOT = BUILD_DIR / "Release"
 APP_NAME = "iCloudBridge.app"
 APP_ROOT = RELEASE_ROOT / APP_NAME
 INFO_PLIST_TEMPLATE = ROOT / "macos" / "AppBundle" / "Info.plist"
+ENTITLEMENTS_FILE = ROOT / "macos" / "AppBundle" / "Entitlements.plist"
 FRONTEND_DIR = ROOT / "frontend"
 MENUBAR_DIR = ROOT / "macos" / "MenubarApp"
 BRIEFCASE_APP_PATH = (
     ROOT / "build" / "backend" / "macos" / "app" / "iCloudBridgeBackend.app"
 )
+DMGCANVAS_TEMPLATE = ROOT / "assets" / "icb_dmg_canvas.dmgcanvas"
+
+# Code signing constants
+DEVELOPER_ID = "Developer ID Application: Keith Vassallo (W4SF9AYV8T)"
+NOTARYTOOL_PROFILE = "notarytool-profile"
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None) -> None:
@@ -161,9 +167,26 @@ def stage_app_bundle(version: str, menubar_binary: Path, backend_app_path: Path)
     shutil.copytree(FRONTEND_DIR / "dist", public_dir)
 
 
-def sign_app_bundle() -> None:
-    """Ad-hoc sign the complete app bundle after assembly."""
-    print("→ Signing app bundle")
+def sign_app_bundle(production: bool = False) -> None:
+    """Sign the complete app bundle after assembly.
+
+    Args:
+        production: If True, use Developer ID certificate with hardened runtime.
+                   If False, use ad-hoc signing for development.
+    """
+    sign_identity = DEVELOPER_ID if production else "-"
+    print(f"→ Signing app bundle ({'production' if production else 'debug'})")
+
+    # Build base codesign arguments
+    base_args = ["codesign", "--force", "--sign", sign_identity]
+
+    # Add hardened runtime and entitlements for production builds
+    if production:
+        base_args.extend([
+            "--options", "runtime",
+            "--entitlements", str(ENTITLEMENTS_FILE),
+            "--timestamp"
+        ])
 
     # Sign frameworks first (from deepest to shallowest)
     frameworks_dir = APP_ROOT / "Contents" / "Frameworks"
@@ -171,16 +194,20 @@ def sign_app_bundle() -> None:
         for framework in frameworks_dir.rglob("*.framework"):
             if framework.is_dir():
                 print(f"  Signing {framework.name}")
+                args = base_args.copy()
+                args.append(str(framework))
                 subprocess.run(
-                    ["codesign", "--force", "--sign", "-", str(framework)],
+                    args,
                     stderr=subprocess.DEVNULL,  # Suppress warnings about ambiguous formats
                     check=False  # Don't fail on framework signing errors
                 )
 
         for dylib in frameworks_dir.rglob("*.dylib"):
             if dylib.is_file():
+                args = base_args.copy()
+                args.append(str(dylib))
                 subprocess.run(
-                    ["codesign", "--force", "--sign", "-", str(dylib)],
+                    args,
                     stderr=subprocess.DEVNULL,
                     check=False
                 )
@@ -190,28 +217,41 @@ def sign_app_bundle() -> None:
     for binary in macos_dir.iterdir():
         if binary.is_file() and binary.stat().st_mode & 0o111:
             print(f"  Signing {binary.name}")
-            run([
-                "codesign",
-                "--force",
-                "--sign", "-",
-                str(binary)
-            ])
+            args = base_args.copy()
+            args.append(str(binary))
+            run(args)
 
     # Sign the main app bundle
-    run([
-        "codesign",
-        "--force",
-        "--sign", "-",
-        str(APP_ROOT)
-    ])
+    args = base_args.copy()
+    args.append(str(APP_ROOT))
+    run(args)
 
 
-def create_dmg() -> Path:
+def create_dmg(use_dmgcanvas: bool = False) -> Path:
+    """Create a DMG for distribution.
+
+    Args:
+        use_dmgcanvas: If True, use DMGCanvas for a fancy DMG. If False, use hdiutil for basic DMG.
+    """
     dmg = RELEASE_ROOT / "iCloudBridge.dmg"
     if dmg.exists():
         dmg.unlink()
-    run(
-        [
+
+    if use_dmgcanvas:
+        if not DMGCANVAS_TEMPLATE.exists():
+            raise FileNotFoundError(f"DMGCanvas template not found at {DMGCANVAS_TEMPLATE}")
+
+        print("→ Creating DMG with DMGCanvas")
+        # DMGCanvas command-line tool expects: dmgcanvas <template> <output> -app <app-bundle>
+        run([
+            "dmgcanvas",
+            str(DMGCANVAS_TEMPLATE),
+            str(dmg),
+            "-app", str(APP_ROOT)
+        ])
+    else:
+        print("→ Creating DMG with hdiutil")
+        run([
             "hdiutil",
             "create",
             "-volname",
@@ -222,14 +262,44 @@ def create_dmg() -> Path:
             "-format",
             "UDZO",
             str(dmg),
-        ]
-    )
+        ])
+
     return dmg
+
+
+def notarize_dmg(dmg_path: Path) -> None:
+    """Notarize the DMG with Apple's notary service.
+
+    This will:
+    1. Submit the DMG to Apple for notarization
+    2. Wait for the notarization to complete
+    3. Staple the notarization ticket to the DMG
+    """
+    print("→ Submitting DMG for notarization (this may take a few minutes)")
+
+    # Submit for notarization
+    run([
+        "xcrun", "notarytool", "submit",
+        str(dmg_path),
+        "--keychain-profile", NOTARYTOOL_PROFILE,
+        "--wait"
+    ])
+
+    # Staple the notarization ticket to the DMG
+    print("→ Stapling notarization ticket")
+    run([
+        "xcrun", "stapler", "staple",
+        str(dmg_path)
+    ])
+
+    print("✓ Notarization complete")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--skip-dmg", action="store_true", help="Skip DMG creation (debug)")
+    parser.add_argument("--skip-dmg", action="store_true", help="Skip DMG creation")
+    parser.add_argument("--production", action="store_true", help="Use production code signing and notarization")
+    parser.add_argument("--notarize", action="store_true", help="Notarize the DMG (requires --production)")
     parser.add_argument(
         "--backend-app",
         type=Path,
@@ -237,6 +307,12 @@ def main() -> None:
         default=os.environ.get("ICLOUDBRIDGE_BACKEND_APP"),
     )
     args = parser.parse_args()
+
+    # Validate arguments
+    if args.notarize and not args.production:
+        parser.error("--notarize requires --production")
+    if args.notarize and args.skip_dmg:
+        parser.error("--notarize requires DMG creation (cannot use --skip-dmg)")
 
     version = read_version()
     clean_release_dir()
@@ -252,15 +328,21 @@ def main() -> None:
     else:
         backend_app = build_backend_with_briefcase()
     stage_app_bundle(version, menubar_binary, backend_app)
-    sign_app_bundle()
+    sign_app_bundle(production=args.production)
+
     dmg_path = None
     if not args.skip_dmg:
-        dmg_path = create_dmg()
+        dmg_path = create_dmg(use_dmgcanvas=args.production)
+
+        if args.notarize and dmg_path:
+            notarize_dmg(dmg_path)
 
     print("\nBuild complete:")
     print(f"  App bundle: {APP_ROOT}")
     if dmg_path:
         print(f"  DMG: {dmg_path}")
+        if args.notarize:
+            print("  ✓ Notarized and stapled")
 
 
 if __name__ == "__main__":

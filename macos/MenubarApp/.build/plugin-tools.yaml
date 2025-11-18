@@ -26,11 +26,11 @@ commands:
     outputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.product/Objects.LinkFileList"]
     description: "Write auxiliary file /Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.product/Objects.LinkFileList"
 
-  "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/status-icon-dark.png":
+  "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/icloudbridge_menubar.pdf":
     tool: copy-tool
-    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/Resources/status-icon-dark.png"]
-    outputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/status-icon-dark.png"]
-    description: "Copying /Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/Resources/status-icon-dark.png"
+    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/Resources/icloudbridge_menubar.pdf"]
+    outputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/icloudbridge_menubar.pdf"]
+    description: "Copying /Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/Resources/icloudbridge_menubar.pdf"
 
   "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt":
     tool: write-auxiliary-file
@@ -72,6 +72,6 @@ commands:
 
   "iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module-resources":
     tool: phony
-    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/status-icon-dark.png"]
+    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/icloudbridge_menubar.pdf"]
     outputs: ["<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module-resources>"]
 

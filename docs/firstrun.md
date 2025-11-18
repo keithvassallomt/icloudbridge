@@ -41,9 +41,15 @@ Once all shortcuts are installed, you can click "Refresh Status" to verify.
 
 Next, we need to make sure iCloudBridge has permission to read your Apple Notes database. 
 
-TODO: Screenshot goes here
+![First-Run Wizard - Notes Permissions Request](images/docs_frw_notes5.png)
 
-Once permissions have been granted, you should see a green checkmark.
+Click "Open System Settings" to open the correct page in System Settings and grand iCloudBridge Full Disk Access. The app should already be in the list - so all you need to do is enable the toggle. If it's not there, you can drag the iCloudBridge icon to that list, or click "+" and find iCloudBridge (probably in your Applications folder). 
+
+![First-Run Wizard - Notes Permissions Request](images/docs_frw_notes5.1.png)
+
+![First-Run Wizard - Notes Permissions Request](images/docs_frw_notes5.2.png)
+
+When the prompt comes up, go ahead and click "Quit & Reopen". Once that's done, click "Check Access" in the iCloudBridge UI - you should see a green checkmark. 
 
 ![First-Run Wizard - Notes Permissions Granted](images/docs_frw_notes6.png)
 
@@ -107,6 +113,9 @@ By default, iCloudBridge will add photos and videos to an album called "iCloudBr
 If you've chosen to synchronise Apple Reminders or Apple Passwords, iCloudBridge will now test the connection to your CalDAV server or Bitwarden/Vaultwarden/Nextcloud Passwords app.
 
 ![First-Run Wizard - Connection Test](images/docs_frw_test1.png)
+
+> [!NOTE]
+> The first time you run the connection test, macOS might prompt you to allow iCloudBridge to "find and communicate with devices on your local network". Make sure you allow this, then click "Test Connection" again for the test to succeed. 
 
 ## First-Run Wizard: Initial Photo Scan
 If you've chosen to synchronise Apple Photos, iCloudBridge will now perform an initial scan of your chosen photo folder. Depending on how many photos/videos you have, this may take some time.

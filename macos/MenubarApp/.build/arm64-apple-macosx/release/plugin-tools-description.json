@@ -3,17 +3,17 @@
 
   ],
   "copyCommands" : {
-    "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/status-icon-dark.png" : {
+    "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/icloudbridge_menubar.pdf" : {
       "inputs" : [
         {
           "kind" : "file",
-          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/Resources/status-icon-dark.png"
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/Resources/icloudbridge_menubar.pdf"
         }
       ],
       "outputs" : [
         {
           "kind" : "file",
-          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/status-icon-dark.png"
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar_iCloudBridgeMenubar.bundle/icloudbridge_menubar.pdf"
         }
       ]
     }

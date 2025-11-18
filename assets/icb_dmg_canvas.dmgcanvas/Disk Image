@@ -1,0 +1,80 @@
+{
+  "diskImage" : {
+    "appleID" : "keithv@me.com",
+    "autoopen" : true,
+    "background" : {
+      "image" : "backgroundImage",
+      "imageScaleOption" : 50,
+      "layoutObjects" : [
+        {
+          "alignment" : 1,
+          "bounds" : "{{286, 410}, {328, 71}}",
+          "hasShadow" : true,
+          "identifier" : "locbdkjeyw",
+          "layoutObjectType" : "text",
+          "shadowAngle" : 315,
+          "shadowBlurRadius" : 3,
+          "shadowColor" : "{0.000000, 0.000000, 0.000000, 1.000000}",
+          "shadowOffset" : 3,
+          "shadowOpacity" : 0.25,
+          "stringRTF" : "{\\rtf1\\ansi\\ansicpg1252\\cocoartf2867\n\\cocoatextscaling0\\cocoaplatform0{\\fonttbl\\f0\\fnil\\fcharset0 GillSans-Light;}\n{\\colortbl;\\red255\\green255\\blue255;}\n{\\*\\expandedcolortbl;;}\n\\pard\\tx560\\tx1120\\tx1680\\tx2240\\tx2800\\tx3360\\tx3920\\tx4480\\tx5040\\tx5600\\tx6160\\tx6720\\pardirnatural\\qc\\partightenfactor0\n\n\\f0\\fs120 \\cf0 iCloudBridge}",
+          "uid" : "locbdkjeyw",
+          "verticalAlignment" : 0
+        }
+      ],
+      "type" : 0
+    },
+    "codeSigningIdentityString" : "2F001C8D6864E389A1C6E5D3B8F3BF8B19332801",
+    "defaultLicenseLanguage" : "English",
+    "iconPreviewVisible" : false,
+    "iconSize" : 175,
+    "itemInfoVisible" : false,
+    "labelPosition" : 0,
+    "licenses" : [
+      {
+        "agreeButtonTitle" : "Agree",
+        "disagreeButtonTitle" : "Disagree",
+        "language" : "English",
+        "printButtonTitle" : "Print",
+        "prompt" : "IMPORTANT - Read this License Agreement carefully before clicking on the \"Agree\" button. By clicking on the \"Agree\" button, you agree to be bound by the terms of the License Agreement.",
+        "saveButtonTitle" : "Save…",
+        "systemLanguageID" : 0
+      }
+    ],
+    "nameFontSize" : 12,
+    "statusBarVisible" : false,
+    "suggestedDiskImageName" : "TaskBridge-arm-0.1.3-beta.5.dmg",
+    "teamID" : "W4SF9AYV8T",
+    "toolbarVisible" : false,
+    "uid" : "bccvvtrwvb",
+    "validationScheme" : 2,
+    "viewLayout" : 0,
+    "volumeIcon" : "volumeIcon",
+    "volumeName" : "iCloudBridge",
+    "volumeSize" : 0,
+    "volumeSizeOption" : "Automatic",
+    "windowContentHeight" : 500,
+    "windowContents" : [
+      {
+        "filePath" : "\/Users\/keithv\/LocalCode\/keithvassallomt\/iCloudBridge\/build\/Release\/iCloudBridge.app",
+        "iconSize" : 100,
+        "invisible" : false,
+        "isAnAlias" : false,
+        "location" : "{225, 257}",
+        "relativeFilePath" : "..\/build\/Release\/iCloudBridge.app"
+      },
+      {
+        "filePath" : "\/Applications",
+        "iconSize" : 100,
+        "invisible" : false,
+        "isAnAlias" : true,
+        "location" : "{679, 263}",
+        "relativeFilePath" : "..\/..\/..\/..\/..\/..\/Applications"
+      }
+    ],
+    "windowContentWidth" : 900,
+    "windowLeft" : 200,
+    "windowTop" : 120
+  },
+  "version" : 4
+}

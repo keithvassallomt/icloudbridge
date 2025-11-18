@@ -27,16 +27,6 @@ final class MenuController {
         configureStatusItem()
         rebuildMenu()
         observeSyncStatus()
-        DistributedNotificationCenter.default().addObserver(
-            self,
-            selector: #selector(handleInterfaceStyleChange),
-            name: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
-            object: nil
-        )
-    }
-
-    deinit {
-        DistributedNotificationCenter.default().removeObserver(self)
     }
 
     private func configureStatusItem() {
@@ -60,19 +50,15 @@ final class MenuController {
         refreshLoginItemState()
     }
 
-    @objc private func handleInterfaceStyleChange() {
-        updateStatusIcon()
-    }
-
     private func updateStatusIcon() {
         guard let button = statusItem.button else {
             return
         }
 
-        if let icon = iconProvider.image(for: button.effectiveAppearance) {
+        if let icon = iconProvider.image() {
             icon.size = NSSize(width: 18, height: 18)
             button.image = icon
-            button.image?.isTemplate = false
+            button.image?.isTemplate = true
             button.title = ""
         } else {
             button.title = "☁︎"
