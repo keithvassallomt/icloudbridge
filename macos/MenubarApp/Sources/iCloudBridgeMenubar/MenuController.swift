@@ -9,6 +9,16 @@ final class MenuController {
     private let openWebItem = NSMenuItem(title: "Open Web UI", action: #selector(openWebUI), keyEquivalent: "")
     private let toggleLoginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItemAction), keyEquivalent: "")
     private let quitItem = NSMenuItem(title: "Quit iCloudBridge", action: #selector(quitApp), keyEquivalent: "q")
+    private let backendStartingIndicator: NSImageView = {
+        let view = NSImageView()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        view.isHidden = true
+        if let symbol = NSImage(systemSymbolName: "clock.arrow.circlepath", accessibilityDescription: "Starting backend") {
+            view.image = symbol
+            view.contentTintColor = .systemOrange
+        }
+        return view
+    }()
     private let activityIndicator: NSProgressIndicator = {
         let indicator = NSProgressIndicator()
         indicator.style = .spinning
@@ -19,7 +29,10 @@ final class MenuController {
     }()
 
     private var indicatorConstraintsInstalled = false
+    private var backendStartingConstraintsInstalled = false
     private var syncObserver: SyncStatusObserver?
+    private var backendStartupAlertShown = false
+    private var backendStartupProbeScheduled = false
 
     init(backendManager: BackendProcessManager, launchAgentManager: LaunchAgentManager) {
         self.backendManager = backendManager
@@ -27,6 +40,7 @@ final class MenuController {
         configureStatusItem()
         rebuildMenu()
         observeSyncStatus()
+        startBackendStartupMonitor()
     }
 
     private func configureStatusItem() {
@@ -89,6 +103,58 @@ final class MenuController {
         }
     }
 
+    private func installBackendStartingIndicatorIfNeeded() {
+        guard !backendStartingConstraintsInstalled, let button = statusItem.button else {
+            return
+        }
+
+        button.addSubview(backendStartingIndicator)
+        NSLayoutConstraint.activate([
+            backendStartingIndicator.widthAnchor.constraint(equalToConstant: 12),
+            backendStartingIndicator.heightAnchor.constraint(equalToConstant: 12),
+            backendStartingIndicator.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -1),
+            backendStartingIndicator.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -1),
+        ])
+        backendStartingConstraintsInstalled = true
+    }
+
+    private func setBackendStartingIndicatorVisible(_ visible: Bool) {
+        installBackendStartingIndicatorIfNeeded()
+        backendStartingIndicator.isHidden = !visible
+    }
+
+    private func startBackendStartupMonitor() {
+        setBackendStartingIndicatorVisible(true)
+        scheduleBackendReadinessProbe()
+    }
+
+    private func scheduleBackendReadinessProbe() {
+        guard !backendStartupProbeScheduled else { return }
+        backendStartupProbeScheduled = true
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.backendStartupProbeScheduled = false
+            self?.probeBackendReadiness()
+        }
+    }
+
+    private func probeBackendReadiness() {
+        let healthURL = URL(string: "http://127.0.0.1:27731/api/health")!
+        let task = URLSession.shared.dataTask(with: healthURL) { [weak self] _, response, error in
+            guard let self else { return }
+            if error == nil, let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                DispatchQueue.main.async {
+                    self.setBackendStartingIndicatorVisible(false)
+                }
+            } else {
+                DispatchQueue.main.async {
+                    self.setBackendStartingIndicatorVisible(true)
+                    self.scheduleBackendReadinessProbe()
+                }
+            }
+        }
+        task.resume()
+    }
+
     private func observeSyncStatus() {
         syncObserver = SyncStatusObserver()
         syncObserver?.onSyncStateChange = { [weak self] isSyncing in
@@ -104,7 +170,7 @@ final class MenuController {
         checkBackendHealthAndOpenUI()
     }
 
-    private func checkBackendHealthAndOpenUI() {
+    private func checkBackendHealthAndOpenUI(showAlertIfStarting: Bool = true) {
         let healthURL = URL(string: "http://127.0.0.1:27731/api/health")!
 
         // Try to connect to backend
@@ -116,11 +182,17 @@ final class MenuController {
                 DispatchQueue.main.async {
                     guard let url = URL(string: "http://127.0.0.1:27731/") else { return }
                     NSWorkspace.shared.open(url)
+                    self.backendStartupAlertShown = false
+                    self.setBackendStartingIndicatorVisible(false)
                 }
             } else {
                 // Backend not ready yet, show alert and retry
                 DispatchQueue.main.async {
-                    self.showBackendStartingAlert()
+                    if showAlertIfStarting {
+                        self.showBackendStartingAlert()
+                    }
+                    self.setBackendStartingIndicatorVisible(true)
+                    self.scheduleBackendHealthRetry()
                 }
             }
         }
@@ -128,19 +200,21 @@ final class MenuController {
     }
 
     private func showBackendStartingAlert() {
+        guard !backendStartupAlertShown else { return }
+        backendStartupAlertShown = true
+
         let alert = NSAlert()
-        alert.messageText = "Starting Backend"
-        alert.informativeText = "The iCloudBridge backend is starting up. This takes a few seconds on first launch.\n\nThe web UI will open automatically when ready."
+        alert.messageText = "Backend is starting"
+        alert.informativeText = "iCloudBridge is starting the sync engine, which takes a few seconds. The Web UI will be displayed automatically once this is done."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
 
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            // User clicked OK, wait and retry
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self] in
-                self?.checkBackendHealthAndOpenUI()
-            }
+        alert.runModal()
+    }
+
+    private func scheduleBackendHealthRetry() {
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.checkBackendHealthAndOpenUI(showAlertIfStarting: false)
         }
     }
 

@@ -91,7 +91,15 @@ final class LaunchAgentManager {
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
         try data.write(to: agentPlistURL, options: .atomic)
 
-        try runLaunchctl(arguments: ["bootstrap", currentUserIdentifier, agentPlistURL.path])
+        let bundleID = Bundle.main.bundleIdentifier ?? label
+        let alreadyRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
+
+        if alreadyRunning {
+            // Avoid spawning a second instance when enabling login item from a running app
+            _ = try? runLaunchctl(arguments: ["enable", "\(currentUserIdentifier)/\(label)"])
+        } else {
+            try runLaunchctl(arguments: ["bootstrap", currentUserIdentifier, agentPlistURL.path])
+        }
     }
 
     func remove() throws {
@@ -127,6 +135,20 @@ final class LaunchAgentManager {
         guard let resources = Bundle.main.resourceURL else {
             return URL(fileURLWithPath: "/tmp/icloudbridge-backend")
         }
-        return resources.appendingPathComponent("backend/icloudbridge-backend")
+
+        // Prefer the top-level packaged backend (matches BackendProcessManager)
+        let primary = resources.appendingPathComponent("icloudbridge-backend")
+        if FileManager.default.isExecutableFile(atPath: primary.path) {
+            return primary
+        }
+
+        // Fallback to legacy backend/ path
+        let legacy = resources.appendingPathComponent("backend/icloudbridge-backend")
+        if FileManager.default.isExecutableFile(atPath: legacy.path) {
+            return legacy
+        }
+
+        // Development/testing escape hatch
+        return URL(fileURLWithPath: "/tmp/icloudbridge-backend")
     }
 }
