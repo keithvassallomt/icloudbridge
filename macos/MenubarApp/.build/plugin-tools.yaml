@@ -4,16 +4,33 @@ client:
 tools: {}
 targets:
   "PackageStructure": ["<PackageStructure>"]
+  "iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.exe": ["<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.exe>"]
+  "iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.module": ["<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.module>"]
   "iCloudBridgeMenubar-arm64-apple-macosx26.0-release.exe": ["<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.exe>"]
   "iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module": ["<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module>"]
-  "main": ["<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.exe>","<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module>"]
-  "test": ["<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.exe>","<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module>"]
+  "main": ["<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.exe>","<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.module>","<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.exe>","<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module>"]
+  "test": ["<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.exe>","<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.module>","<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.exe>","<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module>"]
 default: "main"
 nodes:
   "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/":
     is-directory-structure: true
     content-exclusion-patterns: [".git",".build"]
+  "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/LoginItemHelper/":
+    is-directory-structure: true
+    content-exclusion-patterns: [".git",".build"]
 commands:
+  "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/sources":
+    tool: write-auxiliary-file
+    inputs: ["<sources-file-list>","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/LoginItemHelper/main.swift"]
+    outputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/sources"]
+    description: "Write auxiliary file /Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/sources"
+
+  "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.product/Objects.LinkFileList":
+    tool: write-auxiliary-file
+    inputs: ["<link-file-list>","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/main.swift.o"]
+    outputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.product/Objects.LinkFileList"]
+    description: "Write auxiliary file /Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.product/Objects.LinkFileList"
+
   "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/sources":
     tool: write-auxiliary-file
     inputs: ["<sources-file-list>","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/AppDelegate.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/BackendProcessManager.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/LaunchAgentManager.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/MenuController.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/StatusIconProvider.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/SyncStatusObserver.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/main.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/DerivedSources/resource_bundle_accessor.swift"]
@@ -39,6 +56,16 @@ commands:
     always-out-of-date: "true"
     description: "Write auxiliary file /Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt"
 
+  "<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.exe>":
+    tool: phony
+    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper"]
+    outputs: ["<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.exe>"]
+
+  "<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.module>":
+    tool: phony
+    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/main.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/Modules/iCloudBridgeLoginHelper.swiftmodule"]
+    outputs: ["<iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.module>"]
+
   "<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.exe>":
     tool: phony
     inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar"]
@@ -48,6 +75,20 @@ commands:
     tool: phony
     inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/AppDelegate.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/BackendProcessManager.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/LaunchAgentManager.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/MenuController.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/StatusIconProvider.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/main.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/resource_bundle_accessor.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/Modules/iCloudBridgeMenubar.swiftmodule"]
     outputs: ["<iCloudBridgeMenubar-arm64-apple-macosx26.0-release.module>"]
+
+  "C.iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.exe":
+    tool: shell
+    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/main.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.product/Objects.LinkFileList"]
+    outputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper"]
+    description: "Linking ./.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-L","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release","-o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper","-module-name","iCloudBridgeLoginHelper","-Xlinker","-no_warn_duplicate_libraries","-emit-executable","-Xlinker","-dead_strip","-Xlinker","-alias","-Xlinker","_iCloudBridgeLoginHelper_main","-Xlinker","_main","-Xlinker","-rpath","-Xlinker","@loader_path","@/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.product/Objects.LinkFileList","-Xlinker","-rpath","-Xlinker","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-6.2/macosx","-target","arm64-apple-macosx13.0","-Xlinker","-sectcreate","-Xlinker","__TEXT","-Xlinker","__info_plist","-Xlinker","Sources/LoginItemHelper/Info.plist","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g"]
+
+  "C.iCloudBridgeLoginHelper-arm64-apple-macosx26.0-release.module":
+    tool: shell
+    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/LoginItemHelper/main.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/swift-version--58304C5D6DBC2206.txt","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/sources"]
+    outputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/main.swift.o","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/Modules/iCloudBridgeLoginHelper.swiftmodule"]
+    description: "Compiling Swift Module 'iCloudBridgeLoginHelper' (1 sources)"
+    args: ["/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc","-module-name","iCloudBridgeLoginHelper","-emit-dependencies","-emit-module","-emit-module-path","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/Modules/iCloudBridgeLoginHelper.swiftmodule","-output-file-map","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/output-file-map.json","-whole-module-optimization","-num-threads","10","-c","@/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/sources","-I","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/Modules","-target","arm64-apple-macosx13.0","-whole-module-optimization","-num-threads","10","-serialize-diagnostics","-O","-j10","-DSWIFT_PACKAGE","-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE","-module-cache-path","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/ModuleCache","-parseable-output","-Xfrontend","-entry-point-function-name","-Xfrontend","iCloudBridgeLoginHelper_main","-parse-as-library","-color-diagnostics","-swift-version","5","-plugin-path","/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing","-sdk","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-F","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-I","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-L","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib","-g","-Xcc","-isysroot","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.1.sdk","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks","-Xcc","-F","-Xcc","/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks","-Xcc","-fPIC","-Xcc","-g","-package-name","menubarapp"]
 
   "C.iCloudBridgeMenubar-arm64-apple-macosx26.0-release.exe":
     tool: shell
@@ -65,7 +106,7 @@ commands:
 
   "PackageStructure":
     tool: package-structure-tool
-    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Package.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Package.resolved"]
+    inputs: ["/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/LoginItemHelper/","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Package.swift","/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Package.resolved"]
     outputs: ["<PackageStructure>"]
     description: "Planning build"
     allow-missing-inputs: true

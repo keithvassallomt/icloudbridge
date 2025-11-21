@@ -1,0 +1,13 @@
+{
+  "": {
+    "dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/iCloudBridgeLoginHelper.d",
+    "object": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/iCloudBridgeLoginHelper.o",
+    "swift-dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/master.swiftdeps"
+  },
+  "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/LoginItemHelper/main.swift": {
+    "object": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/main.swift.o",
+    "swiftmodule": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/main.swiftdeps",
+    "diagnostics": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper.build/main.dia"
+  }
+}

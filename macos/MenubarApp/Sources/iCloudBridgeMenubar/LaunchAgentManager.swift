@@ -1,8 +1,10 @@
 import Cocoa
+import ServiceManagement
 
 enum LaunchAgentError: LocalizedError {
     case bundlePathMissing
     case backendMissing
+    case loginHelperMissing
     case processFailed(message: String)
 
     var errorDescription: String? {
@@ -11,6 +13,8 @@ enum LaunchAgentError: LocalizedError {
             return "Could not locate the menubar bundle path."
         case .backendMissing:
             return "Backend executable is missing from the app bundle."
+        case .loginHelperMissing:
+            return "Login helper is missing from the app bundle."
         case .processFailed(let message):
             return message
         }
@@ -20,93 +24,29 @@ enum LaunchAgentError: LocalizedError {
 final class LaunchAgentManager {
     private let label = "com.icloudbridge.server"
     private let fm = FileManager.default
+    private let loginHelperIdentifier = "app.icloudbridge.loginhelper"
 
     private var currentUserIdentifier: String {
         let uid = getuid()
         return "gui/\(uid)"
     }
 
-    private var agentsDirectory: URL {
-        fm.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library")
-            .appendingPathComponent("LaunchAgents")
-    }
-
-    private var agentPlistURL: URL {
-        agentsDirectory.appendingPathComponent("\(label).plist")
-    }
-
-    private func menubarExecutablePath() -> String? {
-        guard
-            let bundlePath = Bundle.main.bundlePath as String?,
-            let executableName = Bundle.main.infoDictionary?["CFBundleExecutable"] as? String
-        else {
-            return nil
-        }
-        return "\(bundlePath)/Contents/MacOS/\(executableName)"
-    }
-
     func isInstalled() -> Bool {
-        let dataExists = fm.fileExists(atPath: agentPlistURL.path)
-        guard dataExists else { return false }
-
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/bin/launchctl")
-        task.arguments = ["print", "\(currentUserIdentifier)/\(label)"]
-        do {
-            try task.run()
-            task.waitUntilExit()
-            return task.terminationStatus == 0
-        } catch {
-            NSLog("launchctl print failed: \(error.localizedDescription)")
-            return false
-        }
+        guard #available(macOS 13.0, *) else { return false }
+        let service = SMAppService.loginItem(identifier: loginHelperIdentifier)
+        return service.status == .enabled
     }
 
     func install() throws {
-        guard let menubarPath = menubarExecutablePath() else {
-            throw LaunchAgentError.bundlePathMissing
+        guard #available(macOS 13.0, *) else {
+            throw LaunchAgentError.processFailed(message: "Start at Login requires macOS 13 or later.")
         }
-
-        let backendPath = backendExecutablePath()
-        guard fm.isExecutableFile(atPath: backendPath.path) else {
-            throw LaunchAgentError.backendMissing
-        }
-
-        try fm.createDirectory(at: agentsDirectory, withIntermediateDirectories: true)
-
-        let plist: [String: Any] = [
-            "Label": label,
-            "ProgramArguments": [menubarPath],
-            "RunAtLoad": true,
-            "ProcessType": "Interactive",
-            "KeepAlive": ["SuccessfulExit": false],
-            "EnvironmentVariables": [
-                "ICLOUDBRIDGE_LOG_ROOT": "\(NSHomeDirectory())/Library/Logs/iCloudBridge",
-                "ICLOUDBRIDGE_SERVER_HOST": "127.0.0.1",
-                "ICLOUDBRIDGE_SERVER_PORT": "27731",
-            ],
-        ]
-
-        let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-        try data.write(to: agentPlistURL, options: .atomic)
-
-        let bundleID = Bundle.main.bundleIdentifier ?? label
-        let alreadyRunning = !NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).isEmpty
-
-        if alreadyRunning {
-            // Avoid spawning a second instance when enabling login item from a running app
-            _ = try? runLaunchctl(arguments: ["enable", "\(currentUserIdentifier)/\(label)"])
-        } else {
-            try runLaunchctl(arguments: ["bootstrap", currentUserIdentifier, agentPlistURL.path])
-        }
+        try installWithSMAppService()
     }
 
     func remove() throws {
-        _ = try? runLaunchctl(arguments: ["bootout", "\(currentUserIdentifier)/\(label)"])
-        if fm.fileExists(atPath: agentPlistURL.path) {
-            try fm.removeItem(at: agentPlistURL)
-        }
+        guard #available(macOS 13.0, *) else { return }
+        try removeWithSMAppService()
     }
 
     @discardableResult
@@ -150,5 +90,51 @@ final class LaunchAgentManager {
 
         // Development/testing escape hatch
         return URL(fileURLWithPath: "/tmp/icloudbridge-backend")
+    }
+
+    @available(macOS 13.0, *)
+    private func installWithSMAppService() throws {
+        let backendPath = backendExecutablePath()
+        guard fm.isExecutableFile(atPath: backendPath.path) else {
+            throw LaunchAgentError.backendMissing
+        }
+
+        // SMAppService requires the helper to be embedded at Contents/Library/LoginItems inside the running bundle.
+        guard let appBundle = Bundle.main.bundleURL as URL?, appBundle.pathExtension == "app" else {
+            throw LaunchAgentError.bundlePathMissing
+        }
+        let helperBundle = appBundle
+            .appendingPathComponent("Contents")
+            .appendingPathComponent("Library")
+            .appendingPathComponent("LoginItems")
+            .appendingPathComponent("iCloudBridgeLoginHelper.app")
+        guard fm.fileExists(atPath: helperBundle.path) else {
+            throw LaunchAgentError.loginHelperMissing
+        }
+
+        let service = SMAppService.loginItem(identifier: loginHelperIdentifier)
+        try service.register()
+    }
+
+    @available(macOS 13.0, *)
+    private func removeWithSMAppService() throws {
+        guard let appBundle = Bundle.main.bundleURL as URL?, appBundle.pathExtension == "app" else {
+            return
+        }
+        let helperBundle = appBundle
+            .appendingPathComponent("Contents")
+            .appendingPathComponent("Library")
+            .appendingPathComponent("LoginItems")
+            .appendingPathComponent("iCloudBridgeLoginHelper.app")
+        let service = SMAppService.loginItem(identifier: loginHelperIdentifier)
+
+        // Attempt SM removal, then force bootout of the helper label
+        try? service.unregister()
+        _ = try? runLaunchctl(arguments: ["bootout", "gui/\(getuid())/\(loginHelperIdentifier)"])
+
+        if fm.fileExists(atPath: helperBundle.path) {
+            // Best-effort cleanup of helper bundle remnants
+            try? fm.removeItem(at: helperBundle)
+        }
     }
 }

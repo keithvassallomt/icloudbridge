@@ -14,9 +14,11 @@ Once you've downloaded the app, simply double-click the `.dmg` file and drag the
 
 On launching iCloudBridge, you'll see a menubar icon appear at the top of your screen. For this first few seconds, the sync engine will be starting up, and therefore the Web UI will be unavailable. This is indicated by a clock on the menubar icon:
 
-TODO: SCREENSHIT
+![iCloudBridge Backend Starting](images/docs_starting.png)
 
 Also, if you try to launch the Web UI at this point, you will be informed that the sync engine is still starting. Once it has started, the Web UI will open automatically.
+
+![iCloudBridge Backend Starting Notification](images/docs_starting_notify.png)
 
 Once iCloudBridge has started, click on the menubar icon and select "Open Web UI" from the dropdown menu. This will open the web interface in your default browser.
 

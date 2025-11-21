@@ -93,6 +93,10 @@ def build_menubar_binary() -> Path:
     return binary
 
 
+def login_helper_binary_path() -> Path:
+    return MENUBAR_DIR / ".build" / "release" / "iCloudBridgeLoginHelper"
+
+
 def copy_binary(src: Path, dest: Path) -> None:
     shutil.copy2(src, dest)
     dest.chmod(0o755)
@@ -175,6 +179,34 @@ def stage_app_bundle(version: str, menubar_binary: Path, backend_binary: Path) -
         shutil.rmtree(public_dir)
     shutil.copytree(FRONTEND_DIR / "dist", public_dir)
 
+    # Build login helper app bundle into LoginItems so SMAppService can expose a nice name/icon in System Settings
+    helper_bin = login_helper_binary_path()
+    login_items_dir = contents / "Library" / "LoginItems"
+    helper_app_dir = login_items_dir / "iCloudBridgeLoginHelper.app"
+    if helper_bin.exists():
+        helper_macos_dir = helper_app_dir / "Contents" / "MacOS"
+        helper_macos_dir.mkdir(parents=True, exist_ok=True)
+        dest_bin = helper_macos_dir / helper_bin.name
+        shutil.copy2(helper_bin, dest_bin)
+        dest_bin.chmod(0o755)
+
+        # Write helper Info.plist
+        helper_plist_src = MENUBAR_DIR / "Sources" / "LoginItemHelper" / "Info.plist"
+        helper_plist_dst = helper_app_dir / "Contents" / "Info.plist"
+        helper_plist_dst.parent.mkdir(parents=True, exist_ok=True)
+        if helper_plist_src.exists():
+            shutil.copy2(helper_plist_src, helper_plist_dst)
+            try:
+                plist_data = plistlib.loads(helper_plist_dst.read_bytes())
+                plist_data["CFBundleShortVersionString"] = version
+                plist_data["CFBundleVersion"] = version
+                with helper_plist_dst.open("wb") as fh:
+                    plistlib.dump(plist_data, fh)
+            except Exception as exc:
+                print(f"WARNING: could not update helper Info.plist: {exc}")
+    else:
+        print("WARNING: login helper binary not found; Background Items entry may be generic.")
+
 
 def sign_app_bundle(production: bool = False) -> None:
     """Sign the app bundle with the --onefile backend.
@@ -214,7 +246,17 @@ def sign_app_bundle(production: bool = False) -> None:
         args.append(str(menubar_binary))
         run(args)
 
-    # 3. Sign outer app bundle
+    # 3. Sign login helper app if present (needed for SMAppService)
+    helper_app = APP_ROOT / "Contents" / "Library" / "LoginItems" / "iCloudBridgeLoginHelper.app"
+    if helper_app.exists():
+        print(f"  Signing login helper {helper_app.name}")
+        helper_args = ["codesign", "--force", "--sign", sign_identity]
+        if production:
+            helper_args.extend(["--options", "runtime", "--timestamp"])
+        helper_args.append(str(helper_app))
+        run(helper_args)
+
+    # 4. Sign outer app bundle last
     print(f"  Signing {APP_ROOT.name}")
     args = ["codesign", "--force", "--sign", sign_identity]
     if production:
