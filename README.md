@@ -37,55 +37,206 @@ iCloudBridge features a web-based GUI. After launching the app, click on the men
 iCloudBridge can also be run from the command line. For documentation on how to use the command line interface, see the [Usage](docs/USAGE.md) guide.
 
 ## Development & Contribution
-iCloudBridge is a one-man show - I basically built this to scratch my own itch. However, if you find it useful and would like to contribute, please feel free to open issues or pull requests on GitHub. Here's how to get started with development:
 
-1. Clone the repository
+iCloudBridge is a one-man show - I basically built this to scratch my own itch. However, if you find it useful and would like to contribute, please feel free to open issues or pull requests on GitHub.
 
-        git clone https://github.com/keithvassallomt/icloudbridge.git
+### Tech Stack
 
-2. Install prerequisites: macOS 13+, Xcode Command Line Tools (`xcode-select --install`), Python 3.11 with [Poetry](https://python-poetry.org/), Node.js 18+ (with `npm`), and [`just`](https://github.com/casey/just). Homebrew users can run `brew install python@3.11 node just` followed by `pipx install poetry`.
+- **Backend**: Python 3.11+ with FastAPI, packaged with PyInstaller
+- **Frontend**: React + TypeScript with Vite, TailwindCSS, and shadcn/ui components
+- **Desktop App**: Swift-based macOS menubar app
+- **Build Tool**: Just command runner for task automation
+- **Apple Integration**: PyObjC for Notes/Reminders, AppleScript for Photos, native Shortcuts for Passwords
 
-3. Install backend dependencies with Poetry:
+### Prerequisites
 
-        cd icloudbridge
-        poetry install
+Before you begin, ensure you have:
 
-   Optional but handy: `poetry shell` drops you into the virtualenv for ad‑hoc commands.
+- **macOS 13.0+** (Ventura or later)
+- **Xcode Command Line Tools**: Install with `xcode-select --install`
+- **Python 3.11 or 3.12**: `brew install python@3.11`
+- **Poetry**: Python dependency management - `pipx install poetry`
+- **Node.js 18+**: `brew install node`
+- **Just**: Command runner - `brew install just`
 
-4. Install frontend dependencies once:
+Quick install (Homebrew):
+```bash
+brew install python@3.11 node just
+pipx install poetry
+```
 
-        npm --prefix frontend install
+### Getting Started
 
-5. Run the backend development server (FastAPI + reload) from the project root:
+1. **Clone the repository**
 
-        poetry run dev-server
+   ```bash
+   git clone https://github.com/keithvassallomt/icloudbridge.git
+   cd icloudbridge
+   ```
 
-   Uvicorn listens on `http://localhost:8000` and exposes both `/api/*` and `/api/ws`.
+2. **Install dependencies**
 
-6. In another terminal, serve the React WebUI with hot reload:
+   ```bash
+   # Install backend dependencies
+   just install
 
-        npm --prefix frontend run dev
+   # Install frontend dependencies
+   npm --prefix frontend install
+   ```
 
-   Vite proxies `/api` calls to the dev backend, so browsing http://localhost:3000 mirrors the packaged UI.
+3. **Run the development environment**
 
-7. Build the macOS app bundle without a DMG (quick iteration):
+   Open two terminal windows/tabs:
 
-        just build
+   **Terminal 1 - Backend (FastAPI server with hot reload)**:
+   ```bash
+   just dev
+   ```
+   Backend runs on `http://localhost:8000` with `/api/*` and WebSocket at `/api/ws`
 
-   This runs `scripts/build_release.py --skip-dmg` and leaves `build/Release/iCloudBridge.app` ready to drag/install.
+   **Terminal 2 - Frontend (Vite dev server)**:
+   ```bash
+   npm --prefix frontend run dev
+   ```
+   Frontend runs on `http://localhost:3000` with API proxy to backend
 
-8. Produce the full signed bundle + compressed DMG for distribution:
+   Navigate to `http://localhost:3000` in your browser to see the WebUI.
 
-        just release
+4. **Optional: Activate Poetry shell**
 
-   You can forward flags to the build script via `just release "--skip-dmg"` or `just release "--backend-app /path/to/custom.app"`.
+   For running ad-hoc commands or debugging:
+   ```bash
+   poetry shell
+   ```
 
-9. Before sending a PR, run the quality gates:
+### Development Workflow
 
-        poetry run ruff check .
-        poetry run pytest
+#### Code Quality
 
-   Linting/tests run quickly and keep the Briefcase build happy.
+Before committing, ensure your code passes quality checks:
+
+```bash
+# Run linter
+just lint
+
+# Auto-format code
+just format
+
+# Run tests
+just test
+```
+
+#### Building the App
+
+iCloudBridge offers several build configurations:
+
+**Debug Build (ad-hoc signed, no DMG)**:
+```bash
+just build-debug
+```
+Output: `build/Debug/iCloudBridge.app`
+
+**Production Build (Developer ID signed, no DMG)**:
+```bash
+just build
+```
+Output: `build/Release/iCloudBridge.app`
+
+**Full Release (signed + notarized DMG)**:
+```bash
+just release
+```
+Output: `dist/iCloudBridge.dmg`
+
+**Backend Only (PyInstaller)**:
+```bash
+just build-backend
+```
+Output: `dist/icloudbridge-backend`
+
+#### Cleaning Build Artifacts
+
+```bash
+just clean
+```
+Removes `build/`, `dist/`, DMG files, and Python cache.
+
+#### Verifying Code Signing
+
+After building a production app:
+```bash
+just verify-signing
+```
+Validates code signature and Gatekeeper acceptance.
+
+### Project Structure
+
+```
+icloudbridge/
+├── icloudbridge/          # Python backend source
+│   ├── api/              # FastAPI routes
+│   ├── services/         # Sync logic (notes, reminders, photos, passwords)
+│   ├── models/           # Pydantic models
+│   └── utils/            # Helpers and utilities
+├── frontend/             # React frontend
+│   ├── src/
+│   │   ├── components/   # React components
+│   │   ├── pages/        # Page components
+│   │   ├── hooks/        # Custom hooks
+│   │   ├── lib/          # Utilities and API client
+│   │   └── store/        # Zustand state management
+│   └── public/           # Static assets
+├── macos/                # macOS menubar app
+│   └── MenubarApp/       # Swift menubar application
+├── scripts/              # Build and automation scripts
+├── docs/                 # User documentation
+├── justfile              # Task runner configuration
+└── pyproject.toml        # Python dependencies
+```
+
+### Key Components
+
+**Backend Services**:
+- `notes.py` - Apple Notes sync using PyObjC
+- `reminders.py` - CalDAV sync for Apple Reminders
+- `photos.py` - Photo library sync via AppleScript
+- `passwords.py` - Password sync using Shortcuts automation
+
+**Frontend Pages**:
+- Dashboard, Notes, Reminders, Photos, Passwords, Schedules, Logs, Settings
+
+**API Endpoints**:
+- REST API at `/api/*` for CRUD operations
+- WebSocket at `/api/ws` for real-time sync updates
+
+### Debugging Tips
+
+1. **Backend logs**: Backend server logs appear in the terminal running `just dev`
+2. **Frontend debugging**: Use React DevTools and browser console
+3. **WebSocket issues**: Check WebSocket connection status in the sidebar footer
+4. **Build issues**: Try `just clean` before rebuilding
+5. **Permission errors**: Ensure Full Disk Access is granted in System Settings > Privacy & Security
+
+### Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Make your changes
+4. Run quality checks: `just lint && just test`
+5. Commit your changes: `git commit -m 'Add amazing feature'`
+6. Push to the branch: `git push origin feature/amazing-feature`
+7. Open a Pull Request
+
+**Note**: All PRs should pass linting and tests before merging.
+
+### Release Process
+
+For maintainers creating a release:
+
+1. Update version in `pyproject.toml` and `frontend/src/components/Layout.tsx`
+2. Build and notarize: `just release`
+3. Create GitHub release with `dist/iCloudBridge.dmg`
+4. Update documentation site if needed
 
 ## Acknowledgements
 
