@@ -3,10 +3,14 @@ set shell := ["zsh", "-c"]
 # Install dependencies
 install:
 	poetry install
+	cd frontend && npm install
+	cd tools/notes_cloud_ripper && bundle install
 
 # Install only main dependencies (no dev tools)
 install-main:
 	poetry install --only main
+	cd frontend && npm install
+	cd tools/notes_cloud_ripper && bundle install
 
 # Clean all build artifacts
 clean:
