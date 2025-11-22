@@ -12,7 +12,17 @@ Once you've downloaded the app, simply double-click the `.dmg` file and drag the
 
 ## Launching the WebUI
 
-On launching iCloudBridge, you'll see a menubar icon appear at the top of your screen. For this first few seconds, the sync engine will be starting up, and therefore the Web UI will be unavailable. This is indicated by a clock on the menubar icon:
+When you start iCloudBridge for the first time, a setup window will appear. This ensures that your system has all the requirements necessary to run the sync engine, and also ensures that iCloudBridge has the necessary permissions.
+
+![iCloudBridge Backend Starting](images/docs_preflight.png)
+
+If any of the requirements fail to install, a "Logs" button will appear. You can use these when asking for help in our [GitHub Issues](https://github.com/keithvassallomt/icloudbridge/issues) page. 
+
+You will also see buttons allowing you to grant iCloudBridge the necessary permissions. At a bare minimum, you must grant iCloudBridge Full Disk Access and Acccessibility permissions. During your initial syncs, iCloudBridge may ask for additional permissions depending on what you choose to sync. 
+
+Once you have all requirements, the sync engine will start!
+
+You'll see a menubar icon appear at the top of your screen. Until the sync engine starts, you'll see a clock icon on the menubar icon:
 
 ![iCloudBridge Backend Starting](images/docs_starting.png)
 
