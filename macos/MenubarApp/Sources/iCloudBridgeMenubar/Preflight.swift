@@ -1,17 +1,20 @@
 import Cocoa
+import ApplicationServices
 
 enum Requirement: CaseIterable {
     case homebrew
     case python
     case ruby
     case fullDiskAccess
+    case accessibility
 
     var title: String {
         switch self {
         case .homebrew: return "Homebrew"
         case .python: return "Python 3.12 (Homebrew)"
         case .ruby: return "Ruby >= 3.4 (Homebrew)"
-        case .fullDiskAccess: return "Full Disk Access"
+        case .fullDiskAccess: return "Notes Full Disk Access"
+        case .accessibility: return "Accessibility"
         }
     }
 }
@@ -117,6 +120,7 @@ final class PreflightManager {
     private let queue = DispatchQueue(label: "app.icloudbridge.preflight")
     private var statuses: [RequirementStatus] = Requirement.allCases.map { RequirementStatus(requirement: $0, state: .pending) }
     private var brewPath: String?
+    private var installing = Set<Requirement>()
 
     var onEvent: ((PreflightEvent) -> Void)?
 
@@ -129,30 +133,32 @@ final class PreflightManager {
         update(.python, state: .checking)
         update(.ruby, state: .checking)
         update(.fullDiskAccess, state: .checking)
+        update(.accessibility, state: .checking)
 
         queue.async { [weak self] in
             guard let self else { return }
             let brewState = self.checkHomebrew()
             self.update(.homebrew, state: brewState)
 
-            let pythonState: RequirementState
             if brewState.isSatisfied {
-                pythonState = self.checkPython()
-            } else {
-                pythonState = .actionRequired("Requires Homebrew to install python@3.12")
-            }
-            self.update(.python, state: pythonState)
+                let pythonState = self.checkPython()
+                self.update(.python, state: pythonState)
+                if !pythonState.isSatisfied { self.installIfNeeded(.python) }
 
-            let rubyState: RequirementState
-            if brewState.isSatisfied {
-                rubyState = self.checkRuby()
+                let rubyState = self.checkRuby()
+                self.update(.ruby, state: rubyState)
+                if !rubyState.isSatisfied { self.installIfNeeded(.ruby) }
             } else {
-                rubyState = .actionRequired("Requires Homebrew to install Ruby")
+                self.update(.python, state: .actionRequired("Requires Homebrew to install python@3.12"))
+                self.update(.ruby, state: .actionRequired("Requires Homebrew to install Ruby"))
+                self.installIfNeeded(.homebrew)
             }
-            self.update(.ruby, state: rubyState)
 
             let fdaState = self.checkFullDiskAccess()
             self.update(.fullDiskAccess, state: fdaState)
+
+            // Accessibility prompt must execute on the main thread; update state there.
+            self.checkAccessibilityAsync()
         }
     }
 
@@ -210,6 +216,32 @@ final class PreflightManager {
         NSWorkspace.shared.open(url)
     }
 
+    func openAccessibilityPreferences() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func checkAccessibilityAsync() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            if AXIsProcessTrusted() {
+                self.update(.accessibility, state: .satisfied("Accessibility permission granted"))
+                return
+            }
+            let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            self.update(.accessibility, state: .actionRequired("Grant Accessibility permission in System Settings > Privacy & Security > Accessibility"))
+
+            // Re-check shortly after prompting in case the user just granted it.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                guard let self else { return }
+                if AXIsProcessTrusted() {
+                    self.update(.accessibility, state: .satisfied("Accessibility permission granted"))
+                }
+            }
+        }
+    }
+
     private func update(_ requirement: Requirement, state: RequirementState) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
@@ -221,6 +253,22 @@ final class PreflightManager {
             if self.statuses.allSatisfy({ $0.state.isSatisfied }) {
                 self.onEvent?(.allSatisfied)
             }
+        }
+    }
+
+    private func installIfNeeded(_ requirement: Requirement) {
+        guard !installing.contains(requirement) else { return }
+        installing.insert(requirement)
+
+        switch requirement {
+        case .homebrew:
+            installHomebrew()
+        case .python:
+            installPython()
+        case .ruby:
+            installRuby()
+        case .fullDiskAccess, .accessibility:
+            break
         }
     }
 
@@ -242,7 +290,13 @@ final class PreflightManager {
         if result.status == 0, !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let components = result.output.split(separator: " ")
             let versionString = components.dropFirst().first.map(String.init) ?? ""
-            return .satisfied("python@3.12 installed (\(versionString))")
+            let binDir = "/opt/homebrew/opt/python@3.12/bin"
+            let py3 = "\(binDir)/python3"
+            let py312 = "\(binDir)/python3.12"
+            if FileManager.default.isExecutableFile(atPath: py3) || FileManager.default.isExecutableFile(atPath: py312) {
+                return .satisfied("python@3.12 installed (\(versionString))")
+            }
+            return .actionRequired("python@3.12 not linked at expected path")
         }
         return .actionRequired("python@3.12 not installed")
     }
@@ -258,7 +312,11 @@ final class PreflightManager {
             let versionString = parts.dropFirst().first.map(String.init) ?? ""
             let detected = Semver(versionString)
             if detected >= Semver("3.4.0") {
-                return .satisfied("Ruby installed (\(versionString))")
+                let rubyPath = "/opt/homebrew/opt/ruby/bin/ruby"
+                if FileManager.default.isExecutableFile(atPath: rubyPath) {
+                    return .satisfied("Ruby installed (\(versionString))")
+                }
+                return .actionRequired("Ruby not linked at expected path")
             }
             return .actionRequired("Ruby \(versionString) found; need >= 3.4")
         }

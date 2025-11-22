@@ -2,6 +2,7 @@ import Cocoa
 
 final class PreflightCoordinator {
     private let preflightManager = PreflightManager()
+    private let runtimeInstaller = RuntimeInstaller()
     private weak var backendManager: BackendProcessManager?
     private var windowController: PreflightWindowController?
     private var backendStarted = false
@@ -19,41 +20,147 @@ final class PreflightCoordinator {
         preflightManager.onEvent = { [weak self] event in
             self?.handle(event: event)
         }
+        runtimeInstaller.onProgress = { [weak self] in
+            self?.refreshRuntimeStatuses()
+        }
     }
 
     func start() {
         preflightManager.runFullCheck()
     }
 
+    func presentPreflightWindow() {
+        showWindow(force: true)
+    }
+
     private func handle(event: PreflightEvent) {
         switch event {
         case .statusesUpdated(let statuses):
             latestStatuses = statuses
-            let snapshot = PreflightSnapshot(
-                statuses: statuses,
-                suppressNext: shouldSuppressWhenHealthy,
-                allSatisfied: statuses.allSatisfy { $0.state.isSatisfied }
-            )
-            if shouldShowWindow(for: statuses) {
-                showWindow()
+            maybeStartRuntimeInstalls()
+
+            let snapshot = currentSnapshot()
+            let blockingIssue = statuses.contains { status in
+                switch status.state {
+                case .actionRequired, .failed:
+                    return true
+                default:
+                    return false
+                }
             }
-            windowController?.apply(snapshot: snapshot)
+
+            if blockingIssue {
+                showWindow(force: true)
+                windowController?.apply(snapshot: snapshot)
+                return
+            }
+
+            if allRequirementsSatisfied() {
+                ensureBackendRunning(showWindowIfAllowed: true, forceShowWindow: false, snapshot: snapshot)
+            }
+            // If still checking/ installing but no blocking issues, don't force the window.
 
         case .allSatisfied:
-            startBackendIfNeeded()
-            if shouldAutoCloseOnSuccess() {
-                windowController?.close()
+            if allRequirementsSatisfied() {
+                ensureBackendRunning(showWindowIfAllowed: !shouldSuppressWhenHealthy, forceShowWindow: false, snapshot: currentSnapshot())
             }
         }
     }
 
-    private func showWindow() {
+    private func refreshRuntimeStatuses() {
+        let snapshot = PreflightSnapshot(
+            statuses: augmentedStatuses(base: latestStatuses),
+            suppressNext: shouldSuppressWhenHealthy,
+            allSatisfied: allRequirementsSatisfied(),
+            progress: runtimeProgress(),
+            logs: runtimeLogs()
+        )
+        windowController?.apply(snapshot: snapshot)
+        if allRequirementsSatisfied() {
+            ensureBackendRunning(showWindowIfAllowed: !shouldSuppressWhenHealthy, forceShowWindow: false, snapshot: snapshot)
+        }
+    }
+
+    private func currentSnapshot() -> PreflightSnapshot {
+        PreflightSnapshot(
+            statuses: augmentedStatuses(base: latestStatuses),
+            suppressNext: shouldSuppressWhenHealthy,
+            allSatisfied: allRequirementsSatisfied(),
+            progress: runtimeProgress(),
+            logs: runtimeLogs()
+        )
+    }
+
+    private func augmentedStatuses(base: [RequirementStatus]) -> [RequirementStatus] {
+        var result = base
+        if let idx = result.firstIndex(where: { $0.requirement == .python }) {
+            let state = runtimeInstaller.pythonState
+            if state.isRunning {
+                result[idx].state = .installing(state.message)
+            } else if state.succeeded {
+                result[idx].state = .satisfied(state.message)
+            } else {
+                result[idx].state = .actionRequired(state.message)
+            }
+        }
+        if let idx = result.firstIndex(where: { $0.requirement == .ruby }) {
+            let state = runtimeInstaller.rubyState
+            if state.isRunning {
+                result[idx].state = .installing(state.message)
+            } else if state.succeeded {
+                result[idx].state = .satisfied(state.message)
+            } else {
+                result[idx].state = .actionRequired(state.message)
+            }
+        }
+        return result
+    }
+
+    private func allRequirementsSatisfied() -> Bool {
+        let augmented = augmentedStatuses(base: latestStatuses)
+        let baseSatisfied = augmented.allSatisfy { $0.state.isSatisfied }
+        let runtimeSatisfied = runtimeInstaller.pythonState.succeeded && runtimeInstaller.rubyState.succeeded
+        return baseSatisfied && runtimeSatisfied
+    }
+
+    private func runtimeProgress() -> [Requirement: Double] {
+        var map: [Requirement: Double] = [:]
+        map[.python] = runtimeInstaller.pythonState.progress
+        map[.ruby] = runtimeInstaller.rubyState.progress
+        return map
+    }
+
+    private func runtimeLogs() -> [Requirement: URL?] {
+        var map: [Requirement: URL?] = [:]
+        map[.python] = runtimeInstaller.pythonState.logURL
+        map[.ruby] = runtimeInstaller.rubyState.logURL
+        return map
+    }
+
+    private func maybeStartRuntimeInstalls() {
+        guard let resources = Bundle.main.resourceURL else { return }
+        if let pythonStatus = latestStatuses.first(where: { $0.requirement == .python }), pythonStatus.state.isSatisfied {
+            if !runtimeInstaller.pythonState.isRunning && !runtimeInstaller.pythonState.succeeded {
+                let backendDir = resources.appendingPathComponent("backend_src", isDirectory: true)
+                runtimeInstaller.ensurePython(from: backendDir)
+            }
+        }
+        if let rubyStatus = latestStatuses.first(where: { $0.requirement == .ruby }), rubyStatus.state.isSatisfied {
+            if !runtimeInstaller.rubyState.isRunning && !runtimeInstaller.rubyState.succeeded {
+                let rubyDir = resources.appendingPathComponent("ruby_deps", isDirectory: true)
+                runtimeInstaller.ensureRuby(from: rubyDir)
+            }
+        }
+    }
+
+    private func showWindow(force: Bool = false) {
         if windowController == nil {
             let controller = PreflightWindowController()
             controller.onInstallHomebrew = { [weak self] in self?.preflightManager.installHomebrew() }
             controller.onInstallPython = { [weak self] in self?.preflightManager.installPython() }
             controller.onInstallRuby = { [weak self] in self?.preflightManager.installRuby() }
             controller.onOpenFullDiskAccess = { [weak self] in self?.preflightManager.openFullDiskAccessPreferences() }
+            controller.onOpenAccessibility = { [weak self] in self?.preflightManager.openAccessibilityPreferences() }
             controller.onRefresh = { [weak self] in self?.preflightManager.runFullCheck() }
             controller.onCloseRequested = { [weak self] in self?.handleCloseRequested() }
             controller.onToggleSuppress = { [weak self] suppress in
@@ -68,24 +175,17 @@ final class PreflightCoordinator {
             let snapshot = PreflightSnapshot(
                 statuses: preflightManager.currentStatuses(),
                 suppressNext: shouldSuppressWhenHealthy,
-                allSatisfied: false
+                allSatisfied: false,
+                progress: runtimeProgress(),
+                logs: runtimeLogs()
             )
             controller.apply(snapshot: snapshot)
         } else {
-            windowController?.showWindow(nil)
-            windowController?.window?.makeKeyAndOrderFront(nil)
+            if force || !(windowController?.window?.isVisible ?? false) {
+                windowController?.showWindow(nil)
+                windowController?.window?.makeKeyAndOrderFront(nil)
+            }
         }
-    }
-
-    private func shouldShowWindow(for statuses: [RequirementStatus]) -> Bool {
-        if !hasShownOnce { return true }
-        if statuses.contains(where: { !$0.state.isSatisfied }) { return true }
-        return !shouldSuppressWhenHealthy
-    }
-
-    private func shouldAutoCloseOnSuccess() -> Bool {
-        // Only relevant if a window is already open; on first run we want the user to see the window even when healthy.
-        return windowController == nil && shouldSuppressWhenHealthy
     }
 
     private var hasShownOnce: Bool {
@@ -96,17 +196,40 @@ final class PreflightCoordinator {
         defaults.bool(forKey: suppressKey)
     }
 
-    private func startBackendIfNeeded() {
-        guard !backendStarted else { return }
-        backendStarted = true
-        backendManager?.start()
+    private func ensureBackendRunning(showWindowIfAllowed: Bool, forceShowWindow: Bool, snapshot: PreflightSnapshot?) {
+        guard let backendManager else { return }
+
+        backendManager.backendHealthy { [weak self] healthy in
+            guard let self else { return }
+            if healthy {
+                self.backendStarted = true
+                self.handlePostBackend(showWindowIfAllowed: showWindowIfAllowed, forceShowWindow: forceShowWindow, snapshot: snapshot, healthy: true)
+                return
+            }
+
+            self.backendStarted = true
+            self.backendManager?.start()
+            self.handlePostBackend(showWindowIfAllowed: showWindowIfAllowed, forceShowWindow: forceShowWindow, snapshot: snapshot, healthy: false)
+        }
+    }
+
+    private func handlePostBackend(showWindowIfAllowed: Bool, forceShowWindow: Bool, snapshot: PreflightSnapshot?, healthy: Bool) {
+        if showWindowIfAllowed {
+            if forceShowWindow || !shouldSuppressWhenHealthy {
+                showWindow(force: true)
+                if let snapshot { windowController?.apply(snapshot: snapshot) }
+            } else if shouldSuppressWhenHealthy && healthy {
+                windowController?.close()
+            }
+        }
     }
 
     private func handleCloseRequested() {
-        let allSatisfied = latestStatuses.allSatisfy { $0.state.isSatisfied }
+        let allSatisfied = allRequirementsSatisfied()
         if !allSatisfied {
+            // Keep the app alive so the menu bar and retry actions remain available.
             backendManager?.stop()
-            NSApp.terminate(nil)
+            windowController?.close()
             return
         }
         windowController?.close()

@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -38,14 +40,49 @@ class RichNotesExporter:
 
     def _copy_note_store(self, destination: Path) -> None:
         script = self.repo_root / "tools" / "note_db_copy" / "copy_note_db.py"
+        python = self._preferred_python()
         cmd = [
-            "/usr/bin/python3",
+            python,
             str(script),
             "--dest",
             str(destination),
         ]
-        logger.info("Copying Apple Notes database -> %s", destination)
-        subprocess.run(cmd, check=True)
+        env = os.environ.copy()
+        env["PYTHONHOME"] = ""
+        env["PYTHONPATH"] = ""
+        env["VIRTUAL_ENV"] = ""
+        env["ICLOUDBRIDGE_VENV_PYTHON"] = python
+        logger.error(
+            "copy_note_db (export): python=%s cmd=%s env_pythonhome=%s env_pythonpath=%s env_virtual_env=%s",
+            str(python),
+            " ".join(cmd),
+            env.get("PYTHONHOME", ""),
+            env.get("PYTHONPATH", ""),
+            env.get("VIRTUAL_ENV", ""),
+        )
+        try:
+            subprocess.run(cmd, check=True, env=env)
+        except Exception as exc:  # pragma: no cover - runtime logging
+            logger.exception("copy_note_db export failed: %s", exc)
+            raise
+
+    @staticmethod
+    def _preferred_python() -> str:
+        env_python = os.environ.get("ICLOUDBRIDGE_VENV_PYTHON")
+        if env_python and Path(env_python).is_file():
+            return env_python
+
+        app_support = Path.home() / "Library" / "Application Support" / "iCloudBridge" / "venv" / "bin" / "python3"
+        if app_support.is_file():
+            return str(app_support)
+
+        logger.error(
+            "No managed python found. Checked ICLOUDBRIDGE_VENV_PYTHON=%s and %s; falling back to %s",
+            env_python,
+            app_support,
+            sys.executable,
+        )
+        return sys.executable
 
     def _run_ripper(self, db_path: Path, output_dir: Path) -> None:
         args = ["--file", str(db_path), "--output-dir", str(output_dir)]

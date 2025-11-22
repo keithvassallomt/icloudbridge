@@ -3,10 +3,12 @@ import Cocoa
 final class MenuController {
     private let backendManager: BackendProcessManager
     private let launchAgentManager: LaunchAgentManager
+    private weak var preflightCoordinator: PreflightCoordinator?
     private let iconProvider = StatusIconProvider()
 
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let openWebItem = NSMenuItem(title: "Open Web UI", action: #selector(openWebUI), keyEquivalent: "")
+    private let showPreflightItem = NSMenuItem(title: "Show Initial Setup", action: #selector(showPreflight), keyEquivalent: "")
     private let toggleLoginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLoginItemAction), keyEquivalent: "")
     private let quitItem = NSMenuItem(title: "Quit iCloudBridge", action: #selector(quitApp), keyEquivalent: "q")
     private let backendStartingIndicator: NSImageView = {
@@ -34,9 +36,10 @@ final class MenuController {
     private var backendStartupAlertShown = false
     private var backendStartupProbeScheduled = false
 
-    init(backendManager: BackendProcessManager, launchAgentManager: LaunchAgentManager) {
+    init(backendManager: BackendProcessManager, launchAgentManager: LaunchAgentManager, preflightCoordinator: PreflightCoordinator?) {
         self.backendManager = backendManager
         self.launchAgentManager = launchAgentManager
+        self.preflightCoordinator = preflightCoordinator
         configureStatusItem()
         rebuildMenu()
         observeSyncStatus()
@@ -51,11 +54,13 @@ final class MenuController {
 
     private func rebuildMenu() {
         openWebItem.target = self
+        showPreflightItem.target = self
         toggleLoginItem.target = self
         quitItem.target = self
 
         let menu = NSMenu()
         menu.addItem(openWebItem)
+        menu.addItem(showPreflightItem)
         menu.addItem(toggleLoginItem)
         menu.addItem(NSMenuItem.separator())
         menu.addItem(quitItem)
@@ -166,6 +171,10 @@ final class MenuController {
         toggleLoginItem.state = launchAgentManager.isInstalled() ? .on : .off
     }
 
+    @objc private func showPreflight() {
+        preflightCoordinator?.presentPreflightWindow()
+    }
+
     @objc private func openWebUI() {
         checkBackendHealthAndOpenUI()
     }
@@ -233,6 +242,7 @@ final class MenuController {
 
     @objc private func quitApp() {
         backendManager.stop()
+        backendManager.killProcessesOnPort(27731)
         NSApp.terminate(nil)
     }
 

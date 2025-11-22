@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import os
 import subprocess
 import tempfile
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -85,8 +87,9 @@ class RichNotesCapture:
 
     def _copy_notes_container(self, destination: Path) -> Path:
         script = self.repo_root / "tools" / "note_db_copy" / "copy_note_db.py"
+        python = self._preferred_python()
         cmd = [
-            "/usr/bin/python3",
+            python,
             str(script),
             "--mode",
             "container",
@@ -95,12 +98,48 @@ class RichNotesCapture:
             "--source",
             str(Path.home() / "Library/Group Containers/group.com.apple.notes"),
         ]
-        logger.info("Copying Apple Notes container -> %s", destination)
-        subprocess.run(cmd, check=True)
+        env = os.environ.copy()
+        env["PYTHONHOME"] = ""
+        env["PYTHONPATH"] = ""
+        env["VIRTUAL_ENV"] = ""
+        env["ICLOUDBRIDGE_VENV_PYTHON"] = python
+        logger.error(
+            "copy_note_db: python=%s cmd=%s env_pythonhome=%s env_pythonpath=%s env_virtual_env=%s",
+            str(python),
+            " ".join(cmd),
+            env.get("PYTHONHOME", ""),
+            env.get("PYTHONPATH", ""),
+            env.get("VIRTUAL_ENV", ""),
+        )
+        try:
+            subprocess.run(cmd, check=True, env=env)
+        except Exception as exc:  # pragma: no cover - runtime logging
+            logger.exception("copy_note_db failed: %s", exc)
+            raise
         note_store = destination / "NoteStore.sqlite"
         if not note_store.exists():
             raise FileNotFoundError(f"NoteStore.sqlite not found in copied container {destination}")
         return note_store
+
+    def _preferred_python(self) -> str:
+        """Pick the managed venv python when available or fail loudly."""
+        env_python = os.environ.get("ICLOUDBRIDGE_VENV_PYTHON")
+        if env_python and Path(env_python).is_file():
+            logger.info("Using ENV python: %s", env_python)
+            return env_python
+
+        app_support = Path.home() / "Library" / "Application Support" / "iCloudBridge" / "venv" / "bin" / "python3"
+        if app_support.is_file():
+            logger.info("Using App Support Python: ", app_support)
+            return str(app_support)
+
+        logger.error(
+            "No managed python found. Checked ICLOUDBRIDGE_VENV_PYTHON=%s and %s; falling back to %s", 
+            env_python,
+            app_support,
+            sys.executable,
+        )
+        return sys.executable
 
     def _run_ripper(self, db_path: Path, output_dir: Path) -> None:
         args = ["--output-dir", str(output_dir)]

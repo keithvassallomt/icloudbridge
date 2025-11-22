@@ -2,11 +2,14 @@
 triple:          'arm64-apple-darwin'
 binary-path:     '/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeLoginHelper'
 relocations:
-  - { offset: 0xEA59D, size: 0x8, addend: 0x0, symName: '_$s23iCloudBridgeLoginHelper0c4ItemD0V4mainyyFZySo20NSRunningApplicationCSg_s5Error_pSgtYbcfU_', symObjAddr: 0x0, symBinAddr: 0x100000C98, symSize: 0x1A8 }
-  - { offset: 0xEA653, size: 0x8, addend: 0x0, symName: '_$sSo20NSRunningApplicationCSgs5Error_pSgIeghgg_ACSo7NSErrorCSgIeyBhyy_TR', symObjAddr: 0x1A8, symBinAddr: 0x100000E40, symSize: 0x78 }
-  - { offset: 0xEA66B, size: 0x8, addend: 0x0, symName: _block_copy_helper, symObjAddr: 0x51C, symBinAddr: 0x1000011B4, symSize: 0x10 }
-  - { offset: 0xEA67F, size: 0x8, addend: 0x0, symName: _block_destroy_helper, symObjAddr: 0x52C, symBinAddr: 0x1000011C4, symSize: 0x8 }
-  - { offset: 0xEA77A, size: 0x8, addend: 0x0, symName: '_$s23iCloudBridgeLoginHelper0c4ItemD0V4mainyyFZySo20NSRunningApplicationCSg_s5Error_pSgtYbcfU_', symObjAddr: 0x0, symBinAddr: 0x100000C98, symSize: 0x1A8 }
-  - { offset: 0xEA903, size: 0x8, addend: 0x0, symName: _iCloudBridgeLoginHelper_main, symObjAddr: 0x220, symBinAddr: 0x100000EB8, symSize: 0x18 }
-  - { offset: 0xEA9AE, size: 0x8, addend: 0x0, symName: '_$s23iCloudBridgeLoginHelper0c4ItemD0V4mainyyFZTf4d_n', symObjAddr: 0x238, symBinAddr: 0x100000ED0, symSize: 0x2E4 }
+  - { offset: 0xEA59D, size: 0x8, addend: 0x0, symName: _iCloudBridgeLoginHelper_main, symObjAddr: 0x0, symBinAddr: 0x100000CE8, symSize: 0x2E4 }
+  - { offset: 0xEA5C1, size: 0x8, addend: 0x0, symName: '_$s23iCloudBridgeLoginHelper6appURL10Foundation0F0Vvp', symObjAddr: 0x2540, symBinAddr: 0x100008078, symSize: 0x0 }
+  - { offset: 0xEA5DB, size: 0x8, addend: 0x0, symName: '_$s23iCloudBridgeLoginHelper13configurationSo28NSWorkspaceOpenConfigurationCvp', symObjAddr: 0x2558, symBinAddr: 0x100008090, symSize: 0x0 }
+  - { offset: 0xEA5E9, size: 0x8, addend: 0x0, symName: _iCloudBridgeLoginHelper_main, symObjAddr: 0x0, symBinAddr: 0x100000CE8, symSize: 0x2E4 }
+  - { offset: 0xEA647, size: 0x8, addend: 0x0, symName: ___swift_allocate_value_buffer, symObjAddr: 0x2E4, symBinAddr: 0x100000FCC, symSize: 0x40 }
+  - { offset: 0xEA65B, size: 0x8, addend: 0x0, symName: ___swift_project_value_buffer, symObjAddr: 0x324, symBinAddr: 0x10000100C, symSize: 0x18 }
+  - { offset: 0xEA66F, size: 0x8, addend: 0x0, symName: '_$s23iCloudBridgeLoginHelperySo20NSRunningApplicationCSg_s5Error_pSgtYbcfU_', symObjAddr: 0x33C, symBinAddr: 0x100001024, symSize: 0x178 }
+  - { offset: 0xEA74D, size: 0x8, addend: 0x0, symName: '_$sSo20NSRunningApplicationCSgs5Error_pSgIeghgg_ACSo7NSErrorCSgIeyBhyy_TR', symObjAddr: 0x4B4, symBinAddr: 0x10000119C, symSize: 0x78 }
+  - { offset: 0xEA765, size: 0x8, addend: 0x0, symName: _block_copy_helper, symObjAddr: 0x52C, symBinAddr: 0x100001214, symSize: 0x10 }
+  - { offset: 0xEA779, size: 0x8, addend: 0x0, symName: _block_destroy_helper, symObjAddr: 0x53C, symBinAddr: 0x100001224, symSize: 0x8 }
 ...

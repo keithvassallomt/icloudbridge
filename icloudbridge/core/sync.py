@@ -571,7 +571,7 @@ class NotesSyncEngine:
             return stats
 
         except Exception as e:
-            logger.error(f"Sync failed for folder {folder_name}: {e}")
+            logger.exception("Sync failed for folder %s", folder_name)
             raise RuntimeError(f"Sync failed for folder '{folder_name}': {e}") from e
         finally:
             self.notes_adapter.clear_rich_cache(cleanup_workspace=True)
@@ -914,7 +914,7 @@ class NotesSyncEngine:
                     for note in apple_notes:
                         mapped_note_uuids.add(note.uuid)
                 except Exception as e:
-                    logger.warning(f"Failed to get notes from '{apple_folder}' for cleanup: {e}")
+                    logger.exception("Failed to get notes from '%s' for cleanup", apple_folder)
 
             # Delete database entries for notes not in mapped folders
             deleted_count = 0

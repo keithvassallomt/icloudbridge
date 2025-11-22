@@ -72,7 +72,6 @@
         "-entry-point-function-name",
         "-Xfrontend",
         "iCloudBridgeLoginHelper_main",
-        "-parse-as-library",
         "-color-diagnostics",
         "-swift-version",
         "5",
@@ -161,6 +160,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/RuntimeInstaller.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/StatusIconProvider.swift"
         },
         {
@@ -199,6 +202,7 @@
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/Preflight.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/PreflightCoordinator.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/PreflightWindow.swift.o",
+        "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/RuntimeInstaller.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/StatusIconProvider.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/SyncStatusObserver.swift.o",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/main.swift.o",
@@ -289,6 +293,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/RuntimeInstaller.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/StatusIconProvider.swift.o"
         },
         {
@@ -317,6 +325,7 @@
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/Preflight.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/PreflightCoordinator.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/PreflightWindow.swift",
+        "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/RuntimeInstaller.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/StatusIconProvider.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/SyncStatusObserver.swift",
         "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/main.swift",
@@ -357,7 +366,6 @@
       "-entry-point-function-name",
       "-Xfrontend",
       "iCloudBridgeLoginHelper_main",
-      "-parse-as-library",
       "-color-diagnostics",
       "-swift-version",
       "5",
@@ -409,6 +417,7 @@
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/Preflight.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/PreflightCoordinator.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/PreflightWindow.swift",
+      "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/RuntimeInstaller.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/StatusIconProvider.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/SyncStatusObserver.swift",
       "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/main.swift",
@@ -555,6 +564,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/RuntimeInstaller.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/StatusIconProvider.swift"
         },
         {
@@ -606,6 +619,10 @@
         {
           "kind" : "file",
           "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/PreflightWindow.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/arm64-apple-macosx/release/iCloudBridgeMenubar.build/RuntimeInstaller.swift.o"
         },
         {
           "kind" : "file",

@@ -1,0 +1,108 @@
+GEM
+  remote: https://rubygems.org/
+  specs:
+    CFPropertyList (3.0.7)
+      base64
+      nkf
+      rexml
+    aes_key_wrap (1.1.0)
+    base64 (0.3.0)
+    bigdecimal (3.3.1)
+    cgi (0.5.0)
+    csv (3.3.5)
+    diff-lcs (1.6.2)
+    fileutils (1.8.0)
+    google-protobuf (4.33.0)
+      bigdecimal
+      rake (>= 13)
+    google-protobuf (4.33.0-aarch64-linux-gnu)
+      bigdecimal
+      rake (>= 13)
+    google-protobuf (4.33.0-aarch64-linux-musl)
+      bigdecimal
+      rake (>= 13)
+    google-protobuf (4.33.0-arm64-darwin)
+      bigdecimal
+      rake (>= 13)
+    google-protobuf (4.33.0-x86_64-darwin)
+      bigdecimal
+      rake (>= 13)
+    google-protobuf (4.33.0-x86_64-linux-gnu)
+      bigdecimal
+      rake (>= 13)
+    google-protobuf (4.33.0-x86_64-linux-musl)
+      bigdecimal
+      rake (>= 13)
+    keyed_archive (1.1.0)
+      CFPropertyList (~> 3.0)
+    nkf (0.2.0)
+    nokogiri (1.18.10-aarch64-linux-gnu)
+      racc (~> 1.4)
+    nokogiri (1.18.10-aarch64-linux-musl)
+      racc (~> 1.4)
+    nokogiri (1.18.10-arm-linux-gnu)
+      racc (~> 1.4)
+    nokogiri (1.18.10-arm-linux-musl)
+      racc (~> 1.4)
+    nokogiri (1.18.10-arm64-darwin)
+      racc (~> 1.4)
+    nokogiri (1.18.10-x86_64-darwin)
+      racc (~> 1.4)
+    nokogiri (1.18.10-x86_64-linux-gnu)
+      racc (~> 1.4)
+    nokogiri (1.18.10-x86_64-linux-musl)
+      racc (~> 1.4)
+    openssl (3.3.2)
+    racc (1.8.1)
+    rake (13.3.1)
+    rexml (3.4.4)
+    rspec (3.13.2)
+      rspec-core (~> 3.13.0)
+      rspec-expectations (~> 3.13.0)
+      rspec-mocks (~> 3.13.0)
+    rspec-core (3.13.6)
+      rspec-support (~> 3.13.0)
+    rspec-expectations (3.13.5)
+      diff-lcs (>= 1.2.0, < 2.0)
+      rspec-support (~> 3.13.0)
+    rspec-mocks (3.13.7)
+      diff-lcs (>= 1.2.0, < 2.0)
+      rspec-support (~> 3.13.0)
+    rspec-support (3.13.6)
+    sqlite3 (2.8.0-aarch64-linux-gnu)
+    sqlite3 (2.8.0-aarch64-linux-musl)
+    sqlite3 (2.8.0-arm-linux-gnu)
+    sqlite3 (2.8.0-arm-linux-musl)
+    sqlite3 (2.8.0-arm64-darwin)
+    sqlite3 (2.8.0-x86_64-darwin)
+    sqlite3 (2.8.0-x86_64-linux-gnu)
+    sqlite3 (2.8.0-x86_64-linux-musl)
+    zlib (1.1.0)
+
+PLATFORMS
+  aarch64-linux-gnu
+  aarch64-linux-musl
+  arm-linux-gnu
+  arm-linux-musl
+  arm64-darwin
+  x86_64-darwin
+  x86_64-linux-gnu
+  x86_64-linux-musl
+
+DEPENDENCIES
+  CFPropertyList (>= 3.0.7)
+  aes_key_wrap (~> 1.1)
+  cgi (~> 0.3)
+  csv (~> 3.3)
+  fileutils (~> 1.4)
+  google-protobuf (>= 4.26)
+  keyed_archive (~> 1.0)
+  nokogiri (>= 1.14)
+  openssl (>= 3.2)
+  rake (~> 13.2)
+  rspec
+  sqlite3 (>= 1.4)
+  zlib (~> 1.1)
+
+BUNDLED WITH
+   2.7.2

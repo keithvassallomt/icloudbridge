@@ -6,9 +6,8 @@ Steps:
 1. Ensure Poetry dependencies (main group) are installed.
 2. Build the frontend via Vite.
 3. Build the menubar Swift app via swift build.
-4. Build the backend executable via PyInstaller.
-5. Assemble `build/Release/iCloudBridge.app` with binaries + assets.
-6. Create a compressed DMG for distribution.
+4. Assemble `build/Release/iCloudBridge.app` with binaries + assets (including backend source + deps).
+5. Create a compressed DMG for distribution.
 """
 
 from __future__ import annotations
@@ -31,8 +30,6 @@ INFO_PLIST_TEMPLATE = ROOT / "macos" / "AppBundle" / "Info.plist"
 ENTITLEMENTS_FILE = ROOT / "macos" / "AppBundle" / "Entitlements.plist"
 FRONTEND_DIR = ROOT / "frontend"
 MENUBAR_DIR = ROOT / "macos" / "MenubarApp"
-PYINSTALLER_SPEC = ROOT / "icloudbridge-backend.spec"
-PYINSTALLER_DIST_DIR = ROOT / "dist"
 DMGCANVAS_TEMPLATE = ROOT / "icb_dmg_canvas.dmgcanvas"
 
 # Code signing constants
@@ -102,43 +99,8 @@ def copy_binary(src: Path, dest: Path) -> None:
     dest.chmod(0o755)
 
 
-def build_backend_with_pyinstaller() -> Path:
-    """Build the backend binary using PyInstaller in --onefile mode."""
-    print("→ Building backend with PyInstaller (--onefile)")
-
-    # Clean previous builds
-    if PYINSTALLER_DIST_DIR.exists():
-        shutil.rmtree(PYINSTALLER_DIST_DIR)
-    build_dir = ROOT / "build" / "pyinstaller"
-    if build_dir.exists():
-        shutil.rmtree(build_dir)
-
-    # Run PyInstaller
-    run([
-        "poetry", "run", "pyinstaller",
-        "--clean",
-        "--noconfirm",
-        "--distpath", str(PYINSTALLER_DIST_DIR),
-        "--workpath", str(build_dir),
-        str(PYINSTALLER_SPEC)
-    ])
-
-    # In --onefile mode, PyInstaller creates a single executable directly in dist/
-    backend_binary = PYINSTALLER_DIST_DIR / "icloudbridge-backend"
-    if not backend_binary.exists():
-        raise FileNotFoundError(f"PyInstaller did not produce executable at {backend_binary}")
-
-    return backend_binary
-
-
-def stage_app_bundle(version: str, menubar_binary: Path, backend_binary: Path) -> None:
-    """Stage the app bundle with single-file backend executable.
-
-    Args:
-        version: App version string
-        menubar_binary: Path to compiled menubar binary
-        backend_binary: Path to single-file PyInstaller executable
-    """
+def stage_app_bundle(version: str, menubar_binary: Path) -> None:
+    """Stage the app bundle with resources and menubar binary."""
     contents = APP_ROOT / "Contents"
     macos_dir = contents / "MacOS"
     resources_dir = contents / "Resources"
@@ -157,12 +119,6 @@ def stage_app_bundle(version: str, menubar_binary: Path, backend_binary: Path) -
     if app_icon_source.exists():
         shutil.copy2(app_icon_source, resources_dir / "AppIcon.icns")
 
-    # Copy single-file backend executable to Resources
-    # This is a helper tool, not a main executable, so it goes in Resources
-    print("  Copying backend executable to Resources...")
-    backend_dest = resources_dir / "icloudbridge-backend"
-    copy_binary(backend_binary, backend_dest)
-
     # Copy menubar binary (main executable)
     copy_binary(menubar_binary, macos_dir / "iCloudBridgeMenubar")
 
@@ -178,6 +134,24 @@ def stage_app_bundle(version: str, menubar_binary: Path, backend_binary: Path) -
     if public_dir.exists():
         shutil.rmtree(public_dir)
     shutil.copytree(FRONTEND_DIR / "dist", public_dir)
+
+    # Copy backend source and dependency locks into Resources
+    backend_src_dir = resources_dir / "backend_src"
+    if backend_src_dir.exists():
+        shutil.rmtree(backend_src_dir)
+    backend_src_dir.mkdir(parents=True, exist_ok=True)
+
+    for path in [ROOT / "backend", ROOT / "icloudbridge", ROOT / "pyproject.toml", ROOT / "requirements.lock", ROOT / "README.md"]:
+        dest = backend_src_dir / path.name
+        if path.is_dir():
+            shutil.copytree(path, dest)
+        elif path.is_file():
+            shutil.copy2(path, dest)
+
+    ruby_dir = resources_dir / "ruby_deps"
+    ruby_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "tools" / "notes_cloud_ripper" / "Gemfile", ruby_dir / "Gemfile")
+    shutil.copy2(ROOT / "tools" / "notes_cloud_ripper" / "Gemfile.lock", ruby_dir / "Gemfile.lock")
 
     # Build login helper app bundle into LoginItems so SMAppService can expose a nice name/icon in System Settings
     helper_bin = login_helper_binary_path()
@@ -209,34 +183,11 @@ def stage_app_bundle(version: str, menubar_binary: Path, backend_binary: Path) -
 
 
 def sign_app_bundle(production: bool = False) -> None:
-    """Sign the app bundle with the --onefile backend.
-
-    With --onefile, we only have:
-    - Single backend executable in Resources
-    - Menubar executable in MacOS
-    - Frontend files (no signing needed)
-
-    Much simpler than signing complex directory structures!
-    """
+    """Sign the app bundle (menubar binary; resources are data only)."""
     sign_identity = DEVELOPER_ID if production else "-"
     print(f"→ Signing app bundle ({'production' if production else 'debug'})")
 
-    # 1. Sign backend executable in Resources (with hardened runtime if production)
-    backend_binary = APP_ROOT / "Contents" / "Resources" / "icloudbridge-backend"
-    if backend_binary.exists():
-        print(f"  Signing {backend_binary.name}")
-        args = ["codesign", "--force", "--sign", sign_identity]
-        if production:
-            # Backend needs entitlements for library validation and JIT (PyInstaller runtime)
-            args.extend([
-                "--options", "runtime",
-                "--entitlements", str(ENTITLEMENTS_FILE),
-                "--timestamp"
-            ])
-        args.append(str(backend_binary))
-        run(args)
-
-    # 2. Sign menubar executable in MacOS (with hardened runtime if production)
+    # 1. Sign menubar executable in MacOS (with hardened runtime if production)
     menubar_binary = APP_ROOT / "Contents" / "MacOS" / "iCloudBridgeMenubar"
     if menubar_binary.exists():
         print(f"  Signing {menubar_binary.name}")
@@ -340,12 +291,6 @@ def main() -> None:
     parser.add_argument("--skip-dmg", action="store_true", help="Skip DMG creation")
     parser.add_argument("--production", action="store_true", help="Use production code signing and notarization")
     parser.add_argument("--notarize", action="store_true", help="Notarize the DMG (requires --production)")
-    parser.add_argument(
-        "--backend-binary",
-        type=Path,
-        help="Path to a pre-built PyInstaller backend executable to embed",
-        default=os.environ.get("ICLOUDBRIDGE_BACKEND_BINARY"),
-    )
     args = parser.parse_args()
 
     # Validate arguments
@@ -359,15 +304,7 @@ def main() -> None:
     install_poetry_dependencies()
     build_frontend()
     menubar_binary = build_menubar_binary()
-    backend_binary: Path
-    if args.backend_binary:
-        backend_path = Path(args.backend_binary).expanduser()
-        if not backend_path.exists():
-            raise FileNotFoundError(f"Backend binary not found at {backend_path}")
-        backend_binary = backend_path.resolve()
-    else:
-        backend_binary = build_backend_with_pyinstaller()
-    stage_app_bundle(version, menubar_binary, backend_binary)
+    stage_app_bundle(version, menubar_binary)
     sign_app_bundle(production=args.production)
 
     dmg_path = None

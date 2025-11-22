@@ -7,14 +7,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var menuController: MenuController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        menuController = MenuController(
-            backendManager: backendManager,
-            launchAgentManager: launchAgentManager
-        )
-
         let coordinator = PreflightCoordinator(backendManager: backendManager)
         preflightCoordinator = coordinator
+        menuController = MenuController(
+            backendManager: backendManager,
+            launchAgentManager: launchAgentManager,
+            preflightCoordinator: coordinator
+        )
         coordinator.start()
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        // Menubar app should keep running even when its preflight window closes.
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {

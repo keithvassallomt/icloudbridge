@@ -1,8 +1,8 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """Copy NoteStore.sqlite into the repo for further processing.
 
-This script intentionally runs with the system Python interpreter so you can
-grant it Full Disk Access once and reuse it regardless of Poetry/venv paths.
+This script can run under any interpreter; callers should pass the managed
+iCloudBridge venv python to ensure dependencies and permissions match.
 """
 
 from __future__ import annotations

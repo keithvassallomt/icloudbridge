@@ -51,6 +51,13 @@
     "swift-dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/PreflightWindow.swiftdeps",
     "diagnostics": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/PreflightWindow.dia"
   },
+  "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/RuntimeInstaller.swift": {
+    "dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/RuntimeInstaller.d",
+    "object": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/RuntimeInstaller.swift.o",
+    "swiftmodule": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/RuntimeInstaller~partial.swiftmodule",
+    "swift-dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/RuntimeInstaller.swiftdeps",
+    "diagnostics": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/RuntimeInstaller.dia"
+  },
   "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/Sources/iCloudBridgeMenubar/StatusIconProvider.swift": {
     "dependencies": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/StatusIconProvider.d",
     "object": "/Users/keithv/LocalCode/keithvassallomt/iCloudBridge/macos/MenubarApp/.build/index-build/arm64-apple-macosx/debug/iCloudBridgeMenubar.build/StatusIconProvider.swift.o",

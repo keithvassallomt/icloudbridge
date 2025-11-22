@@ -127,6 +127,22 @@ export default function FirstRunWizard() {
   );
   const currentStepId = STEPS[currentStep].id;
 
+  // When the wizard is re-opened (e.g., after a full reset), start from the beginning
+  useEffect(() => {
+    if (isFirstRun) {
+      setCurrentStep(0);
+      setError(null);
+      setTestResult(null);
+      setVerification(null);
+      setInitialScanStarted(false);
+      setInitialScanComplete(false);
+      setInitialScanProgress(0);
+      setInitialScanMessage('Waiting to start...');
+      setInitialScanStats(null);
+      setInitialScanError(null);
+    }
+  }, [isFirstRun]);
+
   const buildConfigPayload = useCallback((): Partial<AppConfig> => {
     const configUpdate: Partial<AppConfig> = {
       notes_enabled: formData.notes_enabled ?? false,

@@ -3,6 +3,12 @@
 import logging
 
 import keyring
+import subprocess
+
+# macOS can reject updates to existing keychain items that were created by a
+# different signed binary (errSecInvalidOwner = -25244). To keep the wizard
+# from failing when users upgrade to the signed menubar app, we proactively
+# recreate the entry if we hit that error.
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +28,52 @@ class CredentialStore:
         """
         self.service_name = service_name
 
+    def _set_password_with_recreate(self, key: str, password: str) -> None:
+        """Store password, recreating the keychain item on ownership errors."""
+
+        def _should_recreate(err: Exception) -> bool:
+            message = str(err)
+            return "-25244" in message or "Invalid attempt to change the owner" in message
+
+        try:
+            keyring.set_password(self.service_name, key, password)
+            return
+        except Exception as err:
+            if not _should_recreate(err):
+                raise
+
+            logger.warning(
+                "Keychain item has incompatible ACL; deleting and recreating. "
+                "Users who previously stored credentials via the CLI may need to re-authorize iCloudBridge."
+            )
+
+        # Attempt to delete the old entry and retry once
+        try:
+            keyring.delete_password(self.service_name, key)
+        except Exception as delete_err:
+            logger.warning(f"Failed to delete stale keychain entry for {key}: {delete_err}")
+
+            # Fallback to the `security` CLI which can remove items created by a different binary
+            cmd = [
+                "security",
+                "delete-generic-password",
+                "-s",
+                self.service_name,
+                "-a",
+                key,
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(
+                    "Unable to delete the stale keychain item; please remove the "
+                    "iCloudBridge entry manually via Keychain Access. "
+                    f"security stderr: {result.stderr.strip()}"
+                )
+                raise
+
+        # Final attempt to set the password with a fresh item
+        keyring.set_password(self.service_name, key, password)
+
     def set_caldav_password(self, username: str, password: str) -> None:
         """
         Store CalDAV password in system keyring.
@@ -34,7 +86,7 @@ class CredentialStore:
             keyring.errors.PasswordSetError: If password cannot be stored
         """
         try:
-            keyring.set_password(self.service_name, f"caldav:{username}", password)
+            self._set_password_with_recreate(f"caldav:{username}", password)
             logger.info(f"Stored CalDAV password for user: {username}")
         except Exception as e:
             logger.error(f"Failed to store CalDAV password: {e}")
@@ -129,11 +181,11 @@ class CredentialStore:
             keyring.errors.PasswordSetError: If credentials cannot be stored
         """
         try:
-            keyring.set_password(self.service_name, f"vaultwarden:password:{email}", password)
+            self._set_password_with_recreate(f"vaultwarden:password:{email}", password)
             if client_id:
-                keyring.set_password(self.service_name, f"vaultwarden:client_id:{email}", client_id)
+                self._set_password_with_recreate(f"vaultwarden:client_id:{email}", client_id)
             if client_secret:
-                keyring.set_password(self.service_name, f"vaultwarden:client_secret:{email}", client_secret)
+                self._set_password_with_recreate(f"vaultwarden:client_secret:{email}", client_secret)
             logger.info(f"Stored VaultWarden credentials for: {email}")
         except Exception as e:
             logger.error(f"Failed to store VaultWarden credentials: {e}")
@@ -235,7 +287,7 @@ class CredentialStore:
             keyring.errors.PasswordSetError: If credentials cannot be stored
         """
         try:
-            keyring.set_password(self.service_name, f"nextcloud:app_password:{username}", app_password)
+            self._set_password_with_recreate(f"nextcloud:app_password:{username}", app_password)
             logger.info(f"Stored Nextcloud credentials for: {username}")
         except Exception as e:
             logger.error(f"Failed to store Nextcloud credentials: {e}")
