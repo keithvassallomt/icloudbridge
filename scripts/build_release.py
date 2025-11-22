@@ -141,7 +141,16 @@ def stage_app_bundle(version: str, menubar_binary: Path) -> None:
         shutil.rmtree(backend_src_dir)
     backend_src_dir.mkdir(parents=True, exist_ok=True)
 
-    for path in [ROOT / "backend", ROOT / "icloudbridge", ROOT / "pyproject.toml", ROOT / "requirements.lock", ROOT / "README.md"]:
+    backend_payloads = [
+        ROOT / "backend",
+        ROOT / "icloudbridge",
+        ROOT / "pyproject.toml",
+        ROOT / "requirements.lock",
+        ROOT / "README.md",
+        ROOT / "tools",  # includes note_db_copy and notes_cloud_ripper
+    ]
+
+    for path in backend_payloads:
         dest = backend_src_dir / path.name
         if path.is_dir():
             shutil.copytree(path, dest)
