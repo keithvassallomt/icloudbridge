@@ -64,6 +64,7 @@ config.toml
 *.dmg
 *.pkg
 *.app
+macos/MenubarApp/.build/
 
 # Development files
 /debug/
