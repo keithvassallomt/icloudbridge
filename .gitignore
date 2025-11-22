@@ -65,6 +65,7 @@ config.toml
 *.pkg
 *.app
 macos/MenubarApp/.build/
+logs/
 
 # Development files
 /debug/
