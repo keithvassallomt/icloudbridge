@@ -22,13 +22,13 @@ Unlike Notes, Reminders and Photos, Passwords does not support automatic synchro
 ### Syncing Passwords (Bidirectional)
 To start a sync, you'll need to export your passwords from Apple Passwords. From Apple Passwords, click File > Export All Passwords to File...
 
-![Exporting Apple Passords](images/docs_passwords_1.png)
+![Exporting Apple Passwords](images/docs_passwords_1.png)
 
 This creates a CSV file in the folder you choose. 
 
 Next, from iCloudBridge, click "Upload Apple CSV" and choose the CSV file you just exported from Apple Passwords. 
 
-![Password Upoading CSV](images/docs_passwords_2.png)
+![Password Uploading CSV](images/docs_passwords_2.png)
 
 At this point, you should probably run a simulation (especially if this is your first sync) as a sanity check. Click "Simulate", and observe the results:
 

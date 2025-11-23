@@ -10,7 +10,7 @@ The Notes page in the iCloudBridge WebUI allows you to manage the synchronisatio
 ### Sync Configuration
 iCloudBridge can sync your notes in two ways: Auto or Manual. 
 
-In **Auto** mode, folders in Apple Notes are automatically mapped to folders in your destination location. For example, if your have a folder called "Work" in Apple Notes, it will be synced to a folder called "Work" in your destination location. If the folder does not exist in the destination, it will be created. This is bidirectional - folders in the destination which don't exist in Apple Notes will also be created.
+In **Auto** mode, folders in Apple Notes are automatically mapped to folders in your destination location. For example, if you have a folder called "Work" in Apple Notes, it will be synced to a folder called "Work" in your destination location. If the folder does not exist in the destination, it will be created. This is bidirectional - folders in the destination which don't exist in Apple Notes will also be created.
 
 In **Manual** mode, you can specify exactly which folders in Apple Notes map to which folders in your destination location. This gives you more control over where your notes are stored. You can also leave folders unmapped, and these will not be synced. 
 
@@ -22,9 +22,9 @@ In **Auto** mode, you can see a list of which folders from Apple Notes will be m
 
 ![Notes Auto Mappings](images/docs_notes_2.png)
 
-In the above screenshot, you can see that folders in Apple Notes which have the same name in the destination location will be mapped together. Folders which don't exist in the destination will be created during synchronisation. So, for example, during the first sync a "Secure" folder will bve created in the destination location, whilst an "Ongoing Projects" will be created under "Work" in Apple Notes.
+In the above screenshot, you can see that folders in Apple Notes which have the same name in the destination location will be mapped together. Folders which don't exist in the destination will be created during synchronisation. So, for example, during the first sync a "Secure" folder will be created in the destination location, whilst an "Ongoing Projects" will be created under "Work" in Apple Notes.
 
-If your desintation location is empty, all folders will be created, as shown below:
+If your destination location is empty, all folders will be created, as shown below:
 
 ![Notes Auto Mappings Empty](images/docs_notes_3.png)
 

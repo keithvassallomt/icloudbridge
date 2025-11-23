@@ -10,7 +10,7 @@ The Reminders page in the iCloudBridge WebUI allows you to manage the synchronis
 ### Sync Configuration
 iCloudBridge can sync your reminders in two ways: Auto or Manual.
 
-In **Auto** mode, lists in Apple Reminders are automatically mapped to calendars in your destination location. For example, if your have a list called "Groceries" in Apple Reminders, it will be synced to a calendar called "Groceries" in your destination location. If the calendar does not exist in the destination, it will be created. This is bidirectional - calendars in the destination which don't exist as lists in Apple Reminders will also be created.
+In **Auto** mode, lists in Apple Reminders are automatically mapped to calendars in your destination location. For example, if you have a list called "Groceries" in Apple Reminders, it will be synced to a calendar called "Groceries" in your destination location. If the calendar does not exist in the destination, it will be created. This is bidirectional - calendars in the destination which don't exist as lists in Apple Reminders will also be created.
 
 In **Manual** mode, you can specify exactly which lists in Apple Reminders map to which calendars in your destination location. This gives you more control over where your reminders are stored. You can also leave lists unmapped, and these will not be synced.
 
@@ -19,7 +19,7 @@ In **Auto** mode, you can see a list of which lists from Apple Reminders will be
 
 ![Reminders Auto Mappings](images/docs_reminders_2.png)
 
-In the above screenshot, you can see that lists in Apple Reminders which have the same name in the destination location will be mapped together. Lists which don't exist in the destination will be created during synchronisation. So, for example, during the first sync a "Private Reminders" calendar will bve created in the destination location, whilst a "Confidential" list will be created in Apple Notes.
+In the above screenshot, you can see that lists in Apple Reminders which have the same name in the destination location will be mapped together. Lists which don't exist in the destination will be created during synchronisation. So, for example, during the first sync a "Private Reminders" calendar will be created in the destination location, whilst a "Confidential" list will be created in Apple Notes.
 
 > [!NOTE]
 > If the reminder count displayed does not match Apple Reminders, remember that completed reminders are also counted!

@@ -18,7 +18,10 @@ When you start iCloudBridge for the first time, a setup window will appear. This
 
 If any of the requirements fail to install, a "Logs" button will appear. You can use these when asking for help in our [GitHub Issues](https://github.com/keithvassallomt/icloudbridge/issues) page. 
 
-You will also see buttons allowing you to grant iCloudBridge the necessary permissions. At a bare minimum, you must grant iCloudBridge Full Disk Access and Acccessibility permissions. During your initial syncs, iCloudBridge may ask for additional permissions depending on what you choose to sync. 
+You will also see buttons allowing you to grant iCloudBridge the necessary permissions. At a bare minimum, you must grant iCloudBridge Full Disk Access and Accessibility permissions. Additional permissions are required depending on which features you intend to use. 
+
+> [!TIP]
+> Even if you don't intend to use certain features yet, it is safe to give iCloudBridge all permissions. This is an open-source application, with no telemetry collected and with no information sent to any external servers.
 
 Once you have all requirements, the sync engine will start!
 

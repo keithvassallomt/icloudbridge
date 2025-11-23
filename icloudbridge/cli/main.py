@@ -191,6 +191,11 @@ def config(
 def photos(
     ctx: typer.Context,
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview new imports without sending anything to Photos"),
+    initial_scan: bool = typer.Option(
+        False,
+        "--initial-scan",
+        help="Build the photo cache without importing into Photos (used after changing sources)",
+    ),
     source: list[str] = typer.Option(None, "--source", "-s", help="Limit sync to specific source keys"),
 ):
     """Synchronize configured photo watch folders into Apple Photos."""
@@ -201,7 +206,7 @@ def photos(
         raise typer.Exit(1)
 
     engine = PhotoSyncEngine(cfg.photos, cfg.general.data_dir)
-    stats = asyncio.run(engine.sync(sources=source or None, dry_run=dry_run))
+    stats = asyncio.run(engine.sync(sources=source or None, dry_run=dry_run, initial_scan=initial_scan))
 
     table = Table(title="Photo Sync Results")
     table.add_column("Metric", style="cyan")
@@ -211,6 +216,7 @@ def photos(
     table.add_row("New assets", str(stats.get("new_assets", 0)))
     table.add_row("Imported", str(stats.get("imported", 0)))
     table.add_row("Dry run", "Yes" if stats.get("dry_run") else "No")
+    table.add_row("Initial scan", "Yes" if stats.get("initial_scan") else "No")
 
     albums = stats.get("albums")
     if albums:

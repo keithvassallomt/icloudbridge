@@ -60,10 +60,12 @@ Import media from configured watch folders into Apple Photos.
 | Option | Description |
 |--------|-------------|
 | `--dry-run` | Scan and print statistics without importing anything. |
+| `--initial-scan` | Build the cache without importing to Photos (use after adding/changing sources). |
 | `--source KEY`, `-s KEY` | Limit the run to specific `photos.sources` keys. Repeat to select multiple sources. |
 
 ```
 icloudbridge photos --dry-run
+icloudbridge photos --initial-scan
 icloudbridge photos --source nextcloud --source screenshots
 ```
 
