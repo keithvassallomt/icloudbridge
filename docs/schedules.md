@@ -21,6 +21,13 @@ Your schedule will now be saved and show the next scheduled time:
 
 ![Schedule saved](images/docs_schedules_3.png)
 
+### Initial Permissions
+
+It's a good idea to test your schedules from the schedules page once they have been created - this is especially true if these are your first schedules, as macOS may prompt you for permissions related to running shortcuts. 
+
+> [!TIP]
+> Make a few changes to the items which are part of the schedule (such as deleting a note, marking a reminder as complete, or adding a photo). Then, trigger the schedule manually or wait for the auto-trigger whilst monitoring the machine iCloudBridge is running on. This allows you to approve permissions the first time the schedule runs.
+
 ### Monitoring Status
 
 Returning to the dashboard at a later date will show you the status of the last schedule which ran.
