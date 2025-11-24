@@ -799,6 +799,9 @@ class RemindersSyncEngine:
         Returns:
             List of CalDAVAlarm objects
         """
+        if not eventkit_alarms:
+            return []
+
         caldav_alarms = []
         for alarm in eventkit_alarms:
             # EventKit alarm relative_offset is in seconds, negative = before due date
@@ -818,6 +821,9 @@ class RemindersSyncEngine:
         Returns:
             List of EventKit ReminderAlarm objects
         """
+        if not caldav_alarms:
+            return []
+
         eventkit_alarms = []
         for alarm in caldav_alarms:
             # CalDAV alarm trigger_minutes is positive = before due date
@@ -838,6 +844,9 @@ class RemindersSyncEngine:
         Returns:
             List of CalDAVRecurrence objects
         """
+        if not eventkit_recurrence:
+            return []
+
         caldav_rules = []
         for rule in eventkit_recurrence:
             # Map EventKit frequency to CalDAV frequency
@@ -884,6 +893,9 @@ class RemindersSyncEngine:
         Returns:
             List of EventKit ReminderRecurrence objects
         """
+        if not caldav_recurrence:
+            return []
+
         eventkit_rules = []
         for rule in caldav_recurrence:
             # Map CalDAV frequency to EventKit frequency

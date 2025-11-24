@@ -314,6 +314,9 @@ class CalDAVAdapter:
                                 trigger_minutes = minutes if is_before else -minutes
                                 alarms.append(CalDAVAlarm(trigger_minutes=trigger_minutes))
 
+            # Normalize to an empty list when none were present (defensive against None downstream)
+            alarms = alarms or []
+
             # Parse recurrence rules (RRULE)
             recurrence_rules = []
             rrule = vtodo.get("RRULE")
@@ -353,6 +356,9 @@ class CalDAVAdapter:
                             by_month_day=by_month_day,
                         )
                     )
+
+            # Normalize to an empty list when no RRULE exists
+            recurrence_rules = recurrence_rules or []
 
             return CalDAVReminder(
                 uid=uid,
