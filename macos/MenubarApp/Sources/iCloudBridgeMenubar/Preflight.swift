@@ -528,22 +528,48 @@ final class PreflightManager {
 
     // User-initiated permission requests
     func requestAccessibilityPrompt() {
-        let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        update(.accessibility, state: checkAccessibilityStatus())
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let options = [kAXTrustedCheckOptionPrompt.takeRetainedValue() as String: true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+            // Poll for a short window to allow TCC to record the new trust decision without forcing a relaunch.
+            self.pollAccessibilityStatus(start: Date(), openSettingsOnFailure: true)
+        }
+    }
+
+    private func pollAccessibilityStatus(start: Date, attempt: Int = 0, openSettingsOnFailure: Bool = false) {
+        let state = checkAccessibilityStatus()
+        if state.isSatisfied {
+            update(.accessibility, state: state)
+            return
+        }
+
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed > 15 {
+            update(.accessibility, state: state)
+            if openSettingsOnFailure {
+                DispatchQueue.main.async { [weak self] in
+                    self?.openAccessibilityPreferences()
+                }
+            }
+            return
+        }
+
+        let delay = min(2.0, 0.5 + Double(attempt) * 0.25)
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.pollAccessibilityStatus(start: start, attempt: attempt + 1, openSettingsOnFailure: openSettingsOnFailure)
+        }
     }
 
     func requestNotesAutomation() {
-        queue.async { [weak self] in
+        DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             let state = self.checkAutomationPermission(appName: "Notes", requestIfNeeded: true)
             self.update(.notesAutomation, state: state)
 
             // If the user denies or the prompt does not appear, surface the System Settings panel.
             if !state.isSatisfied {
-                DispatchQueue.main.async {
-                    self.openAutomationPreferences()
-                }
+                self.openAutomationPreferences()
             }
         }
     }
