@@ -5,6 +5,7 @@ import Photos
 
 enum Requirement: CaseIterable {
     case homebrew
+    case xcodeCommandLineTools
     case python
     case ruby
     case fullDiskAccess
@@ -16,6 +17,7 @@ enum Requirement: CaseIterable {
     var title: String {
         switch self {
         case .homebrew: return "Homebrew"
+        case .xcodeCommandLineTools: return "Xcode Command Line Tools"
         case .python: return "Python 3.12 (Homebrew)"
         case .ruby: return "Ruby >= 3.4 (Homebrew)"
         case .fullDiskAccess: return "Full Disk Access"
@@ -138,6 +140,7 @@ final class PreflightManager {
 
     func runFullCheck() {
         update(.homebrew, state: .checking)
+        update(.xcodeCommandLineTools, state: .checking)
         update(.python, state: .checking)
         update(.ruby, state: .checking)
         update(.fullDiskAccess, state: .checking)
@@ -151,14 +154,22 @@ final class PreflightManager {
             let brewState = self.checkHomebrew()
             self.update(.homebrew, state: brewState)
 
+            let cltState = self.checkXcodeCommandLineTools()
+            self.update(.xcodeCommandLineTools, state: cltState)
+            if !cltState.isSatisfied { self.installIfNeeded(.xcodeCommandLineTools) }
+
             if brewState.isSatisfied {
                 let pythonState = self.checkPython()
                 self.update(.python, state: pythonState)
                 if !pythonState.isSatisfied { self.installIfNeeded(.python) }
 
-                let rubyState = self.checkRuby()
-                self.update(.ruby, state: rubyState)
-                if !rubyState.isSatisfied { self.installIfNeeded(.ruby) }
+                if cltState.isSatisfied {
+                    let rubyState = self.checkRuby()
+                    self.update(.ruby, state: rubyState)
+                    if !rubyState.isSatisfied { self.installIfNeeded(.ruby) }
+                } else {
+                    self.update(.ruby, state: .actionRequired("Install Xcode Command Line Tools before setting up Ruby"))
+                }
             } else {
                 self.update(.python, state: .actionRequired("Requires Homebrew to install python@3.12"))
                 self.update(.ruby, state: .actionRequired("Requires Homebrew to install Ruby"))
@@ -197,6 +208,26 @@ final class PreflightManager {
         }
     }
 
+    func installXcodeCommandLineTools() {
+        update(.xcodeCommandLineTools, state: .installing("Requesting Command Line Tools install…"))
+        queue.async { [weak self] in
+            guard let self else { return }
+            let result = Shell.run("/usr/bin/xcode-select", ["--install"])
+            let output = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            // The installer returns a non-zero exit code even when it successfully prompts the user.
+            if output.localizedCaseInsensitiveContains("already installed") {
+                self.runFullCheck()
+                return
+            }
+
+            if result.status == 0 || output.localizedCaseInsensitiveContains("install requested") {
+                self.pollForXcodeCommandLineTools(start: Date())
+            } else {
+                self.update(.xcodeCommandLineTools, state: .failed("Command Line Tools install failed: \(output)"))
+            }
+        }
+    }
+
     func installPython() {
         guard let brew = ensureBrew() else {
             update(.python, state: .actionRequired("Homebrew is required to install python@3.12"))
@@ -219,6 +250,10 @@ final class PreflightManager {
             update(.ruby, state: .actionRequired("Homebrew is required to install Ruby"))
             return
         }
+        guard checkXcodeCommandLineTools().isSatisfied else {
+            update(.ruby, state: .actionRequired("Install Xcode Command Line Tools first"))
+            return
+        }
         update(.ruby, state: .installing("Installing Ruby…"))
         queue.async { [weak self] in
             guard let self else { return }
@@ -228,6 +263,26 @@ final class PreflightManager {
             } else {
                 self.update(.ruby, state: .failed("Ruby install failed: \(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"))
             }
+        }
+    }
+
+    private func pollForXcodeCommandLineTools(start: Date, attempt: Int = 0) {
+        let state = checkXcodeCommandLineTools()
+        if state.isSatisfied {
+            update(.xcodeCommandLineTools, state: state)
+            return
+        }
+
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed > 900 {
+            update(.xcodeCommandLineTools, state: .actionRequired("Command Line Tools install did not complete. Retry from Software Update."))
+            return
+        }
+
+        let delay = min(15.0, 3.0 + Double(attempt))
+        update(.xcodeCommandLineTools, state: .installing("Waiting for Command Line Tools to finish…"))
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.pollForXcodeCommandLineTools(start: start, attempt: attempt + 1)
         }
     }
 
@@ -308,6 +363,8 @@ final class PreflightManager {
         switch requirement {
         case .homebrew:
             installHomebrew()
+        case .xcodeCommandLineTools:
+            installXcodeCommandLineTools()
         case .python:
             installPython()
         case .ruby:
@@ -324,6 +381,23 @@ final class PreflightManager {
             return .satisfied("Found Homebrew at \(path)")
         }
         return .actionRequired("Homebrew not found; required to install dependencies")
+    }
+
+    @discardableResult
+    private func checkXcodeCommandLineTools() -> RequirementState {
+        let result = Shell.run("/usr/bin/xcode-select", ["-p"])
+        let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        if result.status == 0, !path.isEmpty {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+                let clang = (path as NSString).appendingPathComponent("usr/bin/clang")
+                if FileManager.default.isExecutableFile(atPath: clang) {
+                    return .satisfied("Command Line Tools installed")
+                }
+                return .satisfied("Command Line Tools path found at \(path)")
+            }
+        }
+        return .actionRequired("Install Xcode Command Line Tools (xcode-select --install)")
     }
 
     @discardableResult
@@ -460,8 +534,18 @@ final class PreflightManager {
     }
 
     func requestNotesAutomation() {
-        let state = checkAutomationPermission(appName: "Notes", requestIfNeeded: true)
-        update(.notesAutomation, state: state)
+        queue.async { [weak self] in
+            guard let self else { return }
+            let state = self.checkAutomationPermission(appName: "Notes", requestIfNeeded: true)
+            self.update(.notesAutomation, state: state)
+
+            // If the user denies or the prompt does not appear, surface the System Settings panel.
+            if !state.isSatisfied {
+                DispatchQueue.main.async {
+                    self.openAutomationPreferences()
+                }
+            }
+        }
     }
 
     func requestPhotosAutomation() {

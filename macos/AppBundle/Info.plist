@@ -26,13 +26,15 @@
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>iCloudBridge needs access to Apple Notes to sync your notes and checklists.</string>
 	<!-- Usage descriptions required for system prompts -->
 	<key>NSRemindersUsageDescription</key>
 	<string>iCloudBridge needs access to Reminders to sync your reminder lists.</string>
 	<key>NSCalendarsUsageDescription</key>
 	<string>iCloudBridge needs calendar access if you choose to sync reminders with calendar-backed lists.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>iCloudBridge needs Photos access to import and sync your photos.</string>
+	<string>iCloudBridge needs Photos access to import and sync your photos and videos.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>iCloudBridge adds photos to your library when syncing; allow access to proceed.</string>
 

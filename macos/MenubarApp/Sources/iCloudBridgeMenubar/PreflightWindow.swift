@@ -24,6 +24,9 @@ final class PreflightWindowController: NSWindowController {
     var onInstallHomebrew: (() -> Void)? {
         didSet { setCallbacks() }
     }
+    var onInstallXcodeCLT: (() -> Void)? {
+        didSet { setCallbacks() }
+    }
     var onInstallPython: (() -> Void)? {
         didSet { setCallbacks() }
     }
@@ -80,6 +83,7 @@ final class PreflightWindowController: NSWindowController {
 
     private func setCallbacks() {
         hostingController.rootView.onInstallHomebrew = onInstallHomebrew
+        hostingController.rootView.onInstallXcodeCLT = onInstallXcodeCLT
         hostingController.rootView.onInstallPython = onInstallPython
         hostingController.rootView.onInstallRuby = onInstallRuby
         hostingController.rootView.onOpenFullDiskAccess = onOpenFullDiskAccess
@@ -97,6 +101,7 @@ struct PreflightView: View {
     @ObservedObject var model: PreflightModel
 
     var onInstallHomebrew: (() -> Void)?
+    var onInstallXcodeCLT: (() -> Void)?
     var onInstallPython: (() -> Void)?
     var onInstallRuby: (() -> Void)?
     var onOpenFullDiskAccess: (() -> Void)?
@@ -128,6 +133,17 @@ struct PreflightView: View {
                         logURL: logURL(for: .homebrew),
                         onShowLogs: { openLogs(for: .homebrew) },
                         action: { onInstallHomebrew?() }
+                    )
+                    RequirementRow(
+                        title: "Xcode Command Line Tools",
+                        status: status(for: .xcodeCommandLineTools),
+                        actionTitle: buttonTitle(for: .xcodeCommandLineTools, defaultTitle: "Install Command Line Tools"),
+                        actionEnabled: isActionEnabled(for: .xcodeCommandLineTools),
+                        showsProgress: isInProgress(for: .xcodeCommandLineTools),
+                        progress: progress(for: .xcodeCommandLineTools),
+                        logURL: logURL(for: .xcodeCommandLineTools),
+                        onShowLogs: { openLogs(for: .xcodeCommandLineTools) },
+                        action: { onInstallXcodeCLT?() }
                     )
                     RequirementRow(
                         title: "Python 3.12",
@@ -386,12 +402,15 @@ struct PreflightView_Previews: PreviewProvider {
         let snapshot = PreflightSnapshot(
             statuses: [
                 RequirementStatus(requirement: .homebrew, state: .satisfied("Found Homebrew")),
+                RequirementStatus(requirement: .xcodeCommandLineTools, state: .installing("Installing…")),
                 RequirementStatus(requirement: .python, state: .installing("Installing…")),
                 RequirementStatus(requirement: .ruby, state: .actionRequired("Ruby not installed")),
                 RequirementStatus(requirement: .fullDiskAccess, state: .failed("Needs Full Disk Access"))
             ],
             suppressNext: true,
-            allSatisfied: false
+            allSatisfied: false,
+            progress: [.python: 0.3, .xcodeCommandLineTools: 0.1],
+            logs: [:]
         )
         return PreflightView(model: PreflightModel(snapshot: snapshot))
             .frame(width: 560, height: 420)

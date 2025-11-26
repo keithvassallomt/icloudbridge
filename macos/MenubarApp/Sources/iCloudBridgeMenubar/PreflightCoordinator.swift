@@ -159,6 +159,7 @@ final class PreflightCoordinator {
             if self.windowController == nil {
                 let controller = PreflightWindowController()
                 controller.onInstallHomebrew = { [weak self] in self?.preflightManager.installHomebrew() }
+                controller.onInstallXcodeCLT = { [weak self] in self?.preflightManager.installXcodeCommandLineTools() }
                 controller.onInstallPython = { [weak self] in self?.preflightManager.installPython() }
                 controller.onInstallRuby = { [weak self] in self?.preflightManager.installRuby() }
                 controller.onOpenFullDiskAccess = { [weak self] in self?.preflightManager.openFullDiskAccessPreferences() }
