@@ -91,11 +91,25 @@ Fill in the required fields, as follows:
 - **Bitwarden/Vaultwarden URL**: If you're using Bitwarden or Vaultwarden, enter the server address here. If you're using Bitwarden, this is typically either `https://vault.bitwarden.com` or `https://vault.bitwarden.eu`. If you're using Vaultwarden self-hosted, enter your server's address.
 - **Bitwarden/Vaultwarden Email**: Your Bitwarden/Vaultwarden email username.
 - **Bitwarden/Vaultwarden Password**: Your Bitwarden/Vaultwarden master password.
+- **Client ID**: Your Bitwarden/Vaultwarden Client ID (see below). 
+- **Client Secret**: Your Bitwarden/Vaultwarden Client Secret (see below).
 
 **If using Nextcloud Passwords app:**
 - **Nextcloud URL**: If you're using Nextcloud, add the address you normally use to access Nextcloud on the web here.
 - **Nextcloud Username**: Your Nextcloud username.
 - **Nextcloud App Password**: **NOT** your normal Nextcloud password. You must create an App Password in Nextcloud for iCloudBridge to use. See [Creating an App Password in Nextcloud](https://docs.nextcloud.com/server/latest/user_manual/en/session_management.html#device-specific-passwords-and-password-changes) for instructions.
+
+#### Getting Client ID/Client Secret
+
+If you're using Bitwarden's official servers (bitwarden.com or bitwarden.eu) or you're running a self-hosted Bitwarden server, you **must** enter the Client ID and Client Secret for synchronisation to work. These are not required for Vaultwarden - **yet**. You should probably provide these anyway for future-proofing. 
+
+1. Open your web vault. If you're using Bitwarden, this is either [vault.bitwarden.com](vault.bitwarden.com) or [https://vault.bitwarden.eu](https://vault.bitwarden.eu).
+2. Go to **Settings** > **Security** > **Keys**. 
+3. Click **View API Key**. 
+
+![First-Run Wizard - Passwords](images/docs_frw_passwords2.png)
+
+4. Copy the Client ID and Client Secret.
 
 ### First-Run Wizard: Apple Photos
 If you want to synchronise Apple Photos, enable the toggle.
