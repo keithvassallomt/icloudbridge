@@ -132,6 +132,16 @@ export default function FirstRunWizard() {
   const isClientCredsRequired = effectiveProvider === 'bitwarden';
 
   const passwordProvider: PasswordProvider = (formData.passwords_provider as PasswordProvider) ?? 'vaultwarden';
+  const detectedVaultProvider = useMemo<'bitwarden' | 'vaultwarden' | null>(() => {
+    const lower = (formData.passwords_vaultwarden_url || '').toLowerCase();
+    if (lower.includes('bitwarden.com') || lower.includes('bitwarden.eu')) {
+      return 'bitwarden';
+    }
+    if (lower) {
+      return 'vaultwarden';
+    }
+    return null;
+  }, [formData.passwords_vaultwarden_url]);
   const needsConnectionTest = useMemo(
     () => Boolean(formData.reminders_enabled || formData.passwords_enabled),
     [formData.reminders_enabled, formData.passwords_enabled]
@@ -1294,15 +1304,21 @@ export default function FirstRunWizard() {
         // Determine what services need testing
         const needsTest = needsConnectionTest;
         let testService = '';
+        const passwordServiceLabel =
+          passwordProvider === 'nextcloud'
+            ? 'Nextcloud Passwords'
+            : detectedVaultProvider === 'bitwarden'
+              ? 'Bitwarden (Passwords)'
+              : 'VaultWarden (Passwords)';
+
         if (formData.reminders_enabled && formData.passwords_enabled) {
           testService = `CalDAV (Reminders) and ${
-            passwordProvider === 'nextcloud' ? 'Nextcloud Passwords' : 'VaultWarden (Passwords)'
+            passwordServiceLabel
           }`;
         } else if (formData.reminders_enabled) {
           testService = 'CalDAV (Reminders)';
         } else if (formData.passwords_enabled) {
-          testService =
-            passwordProvider === 'nextcloud' ? 'Nextcloud Passwords' : 'VaultWarden (Passwords)';
+          testService = passwordServiceLabel;
         }
 
         const noTestServices = [];

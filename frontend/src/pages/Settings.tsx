@@ -155,15 +155,19 @@ export default function Settings() {
     }
   }, [config]);
 
-  // Auto-detect provider based on URL
+  // Auto-detect provider based on URL (Bitwarden cloud vs Vaultwarden/self-hosted)
   useEffect(() => {
-    const url = config?.passwords_vaultwarden_url?.toLowerCase() || '';
+    const url = (formData.passwords_vaultwarden_url || '').toLowerCase();
+    if (!url) {
+      setDetectedProvider(null);
+      return;
+    }
     if (url.includes('bitwarden.com') || url.includes('bitwarden.eu')) {
       setDetectedProvider('bitwarden');
-    } else if (url) {
-      setDetectedProvider(null);
+    } else {
+      setDetectedProvider('vaultwarden');
     }
-  }, [config?.passwords_vaultwarden_url]);
+  }, [formData.passwords_vaultwarden_url]);
 
   useEffect(() => {
     if (blockerState === 'blocked') {

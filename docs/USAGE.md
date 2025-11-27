@@ -228,6 +228,11 @@ Show or set the active downstream service.
 - `SERVICE` accepts `bitwarden`/`vaultwarden` or `nextcloud`. When omitted we simply display the
   current choice.
 
+> Bitwarden/Vaultwarden authentication now supports (and for Bitwarden Cloud may require) an OAuth
+> `client_id`/`client_secret`. Supply those when prompted during credential setup. If your Bitwarden
+> tenant mandates specific public client IDs, use that value; for Vaultwarden/self-hosted you can leave
+> them blank.
+
 ### `passwords import-apple CSV`
 Seed the database using Apple’s “Export Passwords…” CSV (argument is required).
 
@@ -256,6 +261,11 @@ Inspect database totals and timestamps for the last Apple/Bitwarden push-pull op
 ### `passwords set-bitwarden-credentials`
 Interactive helper that saves Vaultwarden URL/email/password (and optional OAuth client ID/secret)
 into the macOS keychain.
+
+- **Bitwarden Cloud:** Enter your vault URL (e.g., `https://vault.bitwarden.com` or EU), email, master
+  password, and the `client_id`/`client_secret` your tenant allows for user-password OAuth. If your admin
+  requires a specific public client ID, enter it here (secret often blank for public clients).
+- **Vaultwarden/self-hosted:** You can leave client fields blank; only URL/email/password are needed.
 
 ### `passwords delete-bitwarden-credentials`
 Remove stored Vaultwarden credentials.
