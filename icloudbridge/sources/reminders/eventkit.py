@@ -508,7 +508,7 @@ class RemindersAdapter:
                         EKRecurrenceDayOfWeek.dayOfWeek_(day) for day in rec_data.days_of_week
                     ]
 
-                rule = EKRecurrenceRule.alloc().initWithRecurrenceWithFrequency_interval_daysOfTheWeek_daysOfTheMonth_monthsOfTheYear_weeksOfTheYear_daysOfTheYear_setPositions_end_(
+                rule = EKRecurrenceRule.alloc().initRecurrenceWithFrequency_interval_daysOfTheWeek_daysOfTheMonth_monthsOfTheYear_weeksOfTheYear_daysOfTheYear_setPositions_end_(
                     frequency,
                     rec_data.interval,
                     days_of_week,
