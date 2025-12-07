@@ -607,6 +607,25 @@ class PasswordsDB:
                 """
             )
 
+            # Password mapping table for deletion tracking
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS password_mapping (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    url TEXT,
+                    username TEXT NOT NULL,
+                    provider_id TEXT,
+                    provider_type TEXT NOT NULL,
+                    last_sync_timestamp REAL NOT NULL,
+                    last_apple_hash TEXT,
+                    last_provider_hash TEXT,
+                    created_at REAL NOT NULL,
+                    UNIQUE(title, url, username, provider_type)
+                )
+                """
+            )
+
             # Create indexes for faster lookups
             await db.execute(
                 """
@@ -626,6 +645,13 @@ class PasswordsDB:
                 """
                 CREATE INDEX IF NOT EXISTS idx_password_source
                 ON password_entry(source)
+                """
+            )
+
+            await db.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_password_mapping_key
+                ON password_mapping(title, url, username)
                 """
             )
 
@@ -863,6 +889,147 @@ class PasswordsDB:
             await db.execute("DELETE FROM password_entry")
             await db.commit()
             logger.info("All password entries cleared from database")
+
+    async def upsert_password_mapping(
+        self,
+        title: str,
+        username: str,
+        provider_id: str | None,
+        provider_type: str,
+        last_apple_hash: str,
+        last_provider_hash: str,
+        url: str | None = None,
+    ) -> int:
+        """
+        Insert or update a password mapping for deletion tracking.
+
+        Args:
+            title: Password title
+            username: Username
+            provider_id: Provider-specific ID (e.g., VaultWarden cipher ID)
+            provider_type: Provider type (e.g., 'vaultwarden')
+            last_apple_hash: Password hash from Apple at last sync
+            last_provider_hash: Password hash from provider at last sync
+            url: Optional URL
+
+        Returns:
+            Mapping ID
+        """
+        now = datetime.now().timestamp()
+
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO password_mapping
+                (title, url, username, provider_id, provider_type,
+                 last_sync_timestamp, last_apple_hash, last_provider_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(title, url, username, provider_type)
+                DO UPDATE SET
+                    provider_id = excluded.provider_id,
+                    last_sync_timestamp = excluded.last_sync_timestamp,
+                    last_apple_hash = excluded.last_apple_hash,
+                    last_provider_hash = excluded.last_provider_hash
+                """,
+                (
+                    title,
+                    url,
+                    username,
+                    provider_id,
+                    provider_type,
+                    now,
+                    last_apple_hash,
+                    last_provider_hash,
+                    now,
+                ),
+            )
+            await db.commit()
+            cursor = await db.execute("SELECT last_insert_rowid()")
+            row_id = (await cursor.fetchone())[0]
+            return row_id
+
+    async def get_all_password_mappings(
+        self, provider_type: str | None = None
+    ) -> list[dict]:
+        """
+        Get all password mappings, optionally filtered by provider type.
+
+        Args:
+            provider_type: Optional provider type filter (e.g., 'vaultwarden')
+
+        Returns:
+            List of mapping dictionaries
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if provider_type:
+                async with db.execute(
+                    """
+                    SELECT * FROM password_mapping
+                    WHERE provider_type = ?
+                    """,
+                    (provider_type,),
+                ) as cursor:
+                    rows = await cursor.fetchall()
+            else:
+                async with db.execute(
+                    "SELECT * FROM password_mapping"
+                ) as cursor:
+                    rows = await cursor.fetchall()
+
+            return [dict(row) for row in rows]
+
+    async def get_password_mapping(
+        self, title: str, username: str, provider_type: str, url: str | None = None
+    ) -> dict | None:
+        """
+        Get a single password mapping by key.
+
+        Args:
+            title: Password title
+            username: Username
+            provider_type: Provider type
+            url: Optional URL
+
+        Returns:
+            Mapping dictionary or None if not found
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                """
+                SELECT * FROM password_mapping
+                WHERE title = ? AND url IS ? AND username = ? AND provider_type = ?
+                """,
+                (title, url, username, provider_type),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def delete_password_mapping(
+        self, title: str, username: str, provider_type: str, url: str | None = None
+    ) -> None:
+        """
+        Delete a password mapping.
+
+        Args:
+            title: Password title
+            username: Username
+            provider_type: Provider type
+            url: Optional URL
+        """
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                DELETE FROM password_mapping
+                WHERE title = ? AND url IS ? AND username = ? AND provider_type = ?
+                """,
+                (title, url, username, provider_type),
+            )
+            await db.commit()
+            logger.debug(
+                f"Deleted password mapping: {title} ({username}) for {provider_type}"
+            )
 
     async def close(self) -> None:
         """Close database connection if open."""

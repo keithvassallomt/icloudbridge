@@ -18,6 +18,7 @@ class PasswordEntry:
         otp_auth: OTP/TOTP secret (otpauth:// URL)
         folder: Folder or collection name
         extra_urls: Additional URLs that point to the same login
+        provider_id: Provider-specific ID (e.g., VaultWarden cipher ID)
     """
 
     title: str
@@ -28,6 +29,7 @@ class PasswordEntry:
     otp_auth: str | None = None
     folder: str | None = None
     extra_urls: list[str] = field(default_factory=list)
+    provider_id: str | None = None
 
     def get_password_hash(self) -> str:
         """

@@ -138,6 +138,7 @@ export interface PasswordPushStats {
   created: number;
   skipped: number;
   failed: number;
+  deleted: number;
   errors: string[];
   folders_created: number;
   simulate: boolean;
@@ -147,6 +148,7 @@ export interface PasswordPushStats {
 
 export interface PasswordPullStats {
   new_entries: number;
+  deleted: number;
   simulate: boolean;
   download_token?: string;
   download_filename?: string;

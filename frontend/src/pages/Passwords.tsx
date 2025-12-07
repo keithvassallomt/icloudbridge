@@ -71,8 +71,8 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
   }
 
   const { stats } = result;
-  const hasPushStats = stats.push && (stats.push.created > 0 || stats.push.skipped > 0 || stats.push.failed > 0);
-  const hasPullStats = stats.pull && stats.pull.new_entries > 0;
+  const hasPushStats = stats.push && (stats.push.created > 0 || stats.push.skipped > 0 || stats.push.failed > 0 || stats.push.deleted > 0);
+  const hasPullStats = stats.pull && (stats.pull.new_entries > 0 || stats.pull.deleted > 0);
 
   if (!hasPushStats && !hasPullStats) {
     return (
@@ -106,12 +106,12 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 <span className="font-semibold text-sm">Apple Passwords Import</span>
               </div>
               <div className="text-sm text-muted-foreground">
-                New: {stats.pull?.new_entries ?? 0}
+                New: {stats.pull?.new_entries ?? 0} {(stats.pull?.deleted ?? 0) > 0 && `• Deleted: ${stats.pull?.deleted ?? 0}`}
               </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="px-3 pb-3 pt-1 space-y-3">
-                <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="grid grid-cols-3 gap-3 text-sm">
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">New</p>
                     <p className="font-semibold text-lg">{stats.pull?.new_entries ?? 0}</p>
@@ -119,6 +119,10 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">Updated</p>
                     <p className="font-semibold text-lg">0</p>
+                  </div>
+                  <div className="rounded-md bg-destructive/10 p-2">
+                    <p className="text-muted-foreground text-xs">Deleted</p>
+                    <p className="font-semibold text-lg text-destructive">{stats.pull?.deleted ?? 0}</p>
                   </div>
                 </div>
                 {stats.pull?.entries && stats.pull.entries.length > 0 && (
@@ -172,12 +176,12 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 <span className="font-semibold text-sm">{providerLabel} Import</span>
               </div>
               <div className="text-sm text-muted-foreground">
-                New: {stats.push?.created ?? 0}
+                New: {stats.push?.created ?? 0} {(stats.push?.deleted ?? 0) > 0 && `• Deleted: ${stats.push?.deleted ?? 0}`}
               </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
               <div className="px-3 pb-3 pt-1 space-y-3">
-                <div className="grid grid-cols-2 gap-3 text-sm">
+                <div className="grid grid-cols-3 gap-3 text-sm">
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">New</p>
                     <p className="font-semibold text-lg">{stats.push?.created ?? 0}</p>
@@ -185,6 +189,10 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">Updated</p>
                     <p className="font-semibold text-lg">0</p>
+                  </div>
+                  <div className="rounded-md bg-destructive/10 p-2">
+                    <p className="text-muted-foreground text-xs">Deleted</p>
+                    <p className="font-semibold text-lg text-destructive">{stats.push?.deleted ?? 0}</p>
                   </div>
                 </div>
                 {stats.push?.entries && stats.push.entries.length > 0 && (

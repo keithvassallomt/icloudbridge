@@ -316,6 +316,7 @@ class VaultwardenAPIClient:
                             urls.append(uri)
 
                 # Extract fields
+                cipher_id = cipher.get("id")
                 title = self._maybe_decrypt(cipher.get("name"), user_key) or "Untitled"
                 notes = self._maybe_decrypt(cipher.get("notes"), user_key)
                 username = self._maybe_decrypt(login_data.get("username"), user_key) or ""
@@ -330,6 +331,7 @@ class VaultwardenAPIClient:
                     notes=notes,
                     otp_auth=totp,
                     folder=folder_name,
+                    provider_id=cipher_id,
                 )
 
                 for uri in urls:
@@ -463,6 +465,52 @@ class VaultwardenAPIClient:
         )
 
         return stats
+
+    async def delete_password(self, cipher_id: str, soft_delete: bool = True) -> bool:
+        """
+        Delete or soft-delete a cipher (password entry).
+
+        Args:
+            cipher_id: The cipher ID to delete
+            soft_delete: If True, move to trash. If False, permanently delete.
+
+        Returns:
+            True if successful, False otherwise
+
+        Raises:
+            RuntimeError: If not authenticated
+        """
+        self._ensure_authenticated()
+
+        try:
+            if soft_delete:
+                # Soft delete: PUT /api/ciphers/{id}/delete (move to trash)
+                delete_url = f"{self.api_base}/api/ciphers/{cipher_id}/delete"
+                response = await self._client.put(
+                    delete_url, headers=self._get_headers()
+                )
+            else:
+                # Permanent delete: DELETE /api/ciphers/{id}
+                delete_url = f"{self.api_base}/api/ciphers/{cipher_id}"
+                response = await self._client.delete(
+                    delete_url, headers=self._get_headers()
+                )
+
+            response.raise_for_status()
+            logger.info(
+                f"{'Soft-' if soft_delete else 'Permanently '}deleted cipher: {cipher_id}"
+            )
+            return True
+
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                f"Failed to delete cipher {cipher_id}: HTTP {e.response.status_code}"
+            )
+            logger.error(f"Response: {e.response.text}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to delete cipher {cipher_id}: {e}")
+            return False
 
     async def list_folders(self) -> list[dict[str, str]]:
         """

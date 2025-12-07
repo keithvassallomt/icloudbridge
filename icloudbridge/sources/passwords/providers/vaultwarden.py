@@ -69,9 +69,10 @@ class VaultwardenProvider(PasswordProviderBase):
         entries = await self.client.pull_passwords()
         return [
             {
-                "id": None,  # VaultwardenAPIClient doesn't expose cipher IDs in pull
+                "id": entry.provider_id,
                 "title": entry.title,
                 "username": entry.username,
+                "password": entry.password,
                 "url": entry.url,
                 "folder": entry.folder,
                 "notes": entry.notes,
@@ -130,16 +131,17 @@ class VaultwardenProvider(PasswordProviderBase):
         """
         logger.warning("update_password() not implemented for Vaultwarden provider")
 
-    async def delete_password(self, password_id: str) -> None:
+    async def delete_password(self, password_id: str) -> bool:
         """
-        Delete a password entry.
-
-        Note: VaultwardenAPIClient doesn't implement deletion.
+        Delete a password entry (move to trash).
 
         Args:
             password_id: Cipher ID
+
+        Returns:
+            True if successful, False otherwise
         """
-        logger.warning("delete_password() not implemented for Vaultwarden provider")
+        return await self.client.delete_password(password_id, soft_delete=True)
 
     async def list_folders(self) -> list[dict[str, Any]]:
         """

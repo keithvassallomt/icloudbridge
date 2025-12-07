@@ -410,6 +410,165 @@ class PasswordsSyncEngine:
             "conflicts": conflicts,
         }
 
+    def _build_password_sync_plan(
+        self,
+        apple_map: dict,
+        provider_map: dict,
+        mappings: dict,
+    ) -> dict:
+        """
+        Build a sync plan by comparing current Apple/Provider state with last synced state.
+
+        Args:
+            apple_map: dict[dedup_key] -> PasswordEntry from current Apple CSV
+            provider_map: dict[dedup_key] -> PasswordEntry from current Provider
+            mappings: dict[dedup_key] -> mapping record from database
+
+        Returns:
+            Dictionary with keys: create_apple, create_provider, update_apple,
+            update_provider, delete_apple, delete_provider, unchanged, conflicts
+        """
+        plan = {
+            "create_apple": [],
+            "create_provider": [],
+            "update_apple": [],
+            "update_provider": [],
+            "delete_apple": [],
+            "delete_provider": [],
+            "unchanged": [],
+            "conflicts": [],
+        }
+
+        all_keys = set(apple_map.keys()) | set(provider_map.keys()) | set(mappings.keys())
+
+        for key in all_keys:
+            apple = apple_map.get(key)
+            provider = provider_map.get(key)
+            mapping = mappings.get(key)
+
+            # Case 1: Entry exists in mapping (previously synced)
+            if mapping:
+                apple_exists = apple is not None
+                provider_exists = provider is not None
+
+                # Sub-case 1a: Both still exist
+                if apple_exists and provider_exists:
+                    apple_changed = (
+                        apple.get_password_hash() != mapping.get("last_apple_hash")
+                    )
+                    provider_changed = (
+                        provider.get_password_hash()
+                        != mapping.get("last_provider_hash")
+                    )
+
+                    if apple_changed and provider_changed:
+                        # CONFLICT: Both modified
+                        plan["conflicts"].append((key, apple, provider, mapping))
+                    elif apple_changed:
+                        # Apple modified → update provider
+                        plan["update_provider"].append((key, apple, provider, mapping))
+                    elif provider_changed:
+                        # Provider modified → update Apple
+                        plan["update_apple"].append((key, provider, apple, mapping))
+                    else:
+                        # No changes
+                        plan["unchanged"].append(key)
+
+                # Sub-case 1b: Only Apple exists (provider deleted)
+                elif apple_exists and not provider_exists:
+                    # Check if Apple was modified since last sync
+                    # If modified → conflict (re-create in provider)
+                    # If unchanged → delete from Apple
+                    logger.debug(
+                        f"Deletion conflict detected: '{key[0]}' exists in Apple but not in provider. "
+                        f"Mapping provider_id: {mapping.get('provider_id')}"
+                    )
+                    plan["conflicts"].append((key, apple, None, mapping))
+
+                # Sub-case 1c: Only Provider exists (Apple deleted)
+                elif not apple_exists and provider_exists:
+                    # Check if Provider was modified since last sync
+                    # If modified → conflict (re-create in Apple)
+                    # If unchanged → delete from provider
+                    logger.debug(
+                        f"Deletion conflict detected: '{key[0]}' exists in provider but not in Apple"
+                    )
+                    plan["conflicts"].append((key, None, provider, mapping))
+
+                # Sub-case 1d: Both deleted - will be handled by cleanup
+
+            # Case 2: No mapping (new entry on one or both sides)
+            else:
+                if apple and provider:
+                    # New on both sides
+                    if apple.get_password_hash() == provider.get_password_hash():
+                        plan["unchanged"].append(key)
+                    else:
+                        # Different passwords - conflict
+                        plan["conflicts"].append((key, apple, provider, None))
+                elif apple:
+                    # New in Apple → create in provider
+                    plan["create_provider"].append(apple)
+                elif provider:
+                    # New in provider → create in Apple
+                    plan["create_apple"].append(provider)
+
+        return plan
+
+    async def _resolve_conflict(
+        self, apple: PasswordEntry | None, provider: PasswordEntry | None, mapping: dict
+    ) -> str:
+        """
+        Resolve conflicts based on last modified timestamps.
+
+        Args:
+            apple: Apple password entry (None if deleted)
+            provider: Provider password entry (None if deleted)
+            mapping: Mapping record from database
+
+        Returns:
+            Action to take: 'update_apple', 'update_provider', 'delete_apple',
+            'delete_provider', 'create_apple', 'create_provider', 'unchanged'
+        """
+        last_sync = mapping["last_sync_timestamp"]
+
+        # Get timestamps from database entries
+        apple_db = None
+        provider_db = None
+
+        if apple:
+            apple_db = await self.db.get_entry_by_key(
+                title=apple.title, url=apple.url, username=apple.username
+            )
+        if provider:
+            provider_db = await self.db.get_entry_by_key(
+                title=provider.title, url=provider.url, username=provider.username
+            )
+
+        apple_modified = apple_db["updated_at"] if apple_db else 0
+        provider_modified = provider_db["updated_at"] if provider_db else 0
+
+        # Modified vs deleted conflict
+        if apple and not provider:
+            # Modified in Apple, deleted in provider
+            if apple_modified > last_sync:
+                return "create_provider"  # Apple modified after deletion
+            return "delete_apple"  # Respect provider deletion
+
+        if provider and not apple:
+            # Modified in provider, deleted in Apple
+            if provider_modified > last_sync:
+                return "create_apple"  # Provider modified after deletion
+            return "delete_provider"  # Respect Apple deletion
+
+        # Both modified: last-write-wins
+        if apple and provider:
+            if apple_modified > provider_modified:
+                return "update_provider"
+            return "update_apple"
+
+        return "unchanged"
+
     async def sync(
         self,
         *,
@@ -494,6 +653,117 @@ class PasswordsSyncEngine:
         apple_db_entries = await self.db.get_all_entries(source="apple")
         apple_entries = ApplePasswordsCSVParser.parse_file(apple_csv_path)
         apple_map = {entry.get_dedup_key(): entry for entry in apple_entries}
+
+        # Deletion detection: Get mappings and provider entries
+        provider_type = provider.__class__.__name__.replace("Provider", "").lower()
+        mappings = await self.db.get_all_password_mappings(provider_type=provider_type)
+        mapping_dict = {
+            (
+                m["title"].lower().strip(),
+                m["url"].lower().strip() if m["url"] else None,
+                m["username"].lower().strip(),
+            ): m
+            for m in mappings
+        }
+
+        # Get current provider entries for deletion detection
+        provider_map = {}
+        try:
+            provider_passwords_dict = await provider.list_passwords()
+            # Convert to PasswordEntry objects
+            for pwd_dict in provider_passwords_dict:
+                entry = PasswordEntry(
+                    title=pwd_dict.get("label") or pwd_dict.get("title", ""),
+                    username=pwd_dict.get("username", ""),
+                    password=pwd_dict.get("password", ""),
+                    url=pwd_dict.get("url"),
+                    notes=pwd_dict.get("notes"),
+                    otp_auth=pwd_dict.get("otp_auth"),
+                    folder=pwd_dict.get("folder_label") or pwd_dict.get("folder"),
+                    provider_id=pwd_dict.get("id"),
+                )
+                provider_map[entry.get_dedup_key()] = entry
+        except Exception as exc:
+            logger.warning("Failed to fetch provider entries for deletion detection: %s", exc)
+
+        # Build sync plan to detect deletions
+        sync_plan = self._build_password_sync_plan(
+            apple_map=apple_map, provider_map=provider_map, mappings=mapping_dict
+        )
+
+        # Execute deletions (Apple deleted → delete from provider)
+        deleted_count = 0
+        for key, provider_entry, mapping in sync_plan["delete_provider"]:
+            if not simulate:
+                provider_id = mapping.get("provider_id") if mapping else (provider_entry.provider_id if provider_entry else None)
+                if provider_id:
+                    try:
+                        success = await provider.delete_password(provider_id)
+                        if success:
+                            await self.db.delete_password_mapping(
+                                title=key[0], url=key[1], username=key[2], provider_type=provider_type
+                            )
+                            deleted_count += 1
+                            logger.info(f"Deleted from provider: {key[0]}")
+                        else:
+                            logger.warning(f"Failed to delete from provider: {key[0]}")
+                    except Exception as e:
+                        logger.error(f"Error deleting {key[0]} from provider: {e}")
+                else:
+                    logger.warning(f"No provider_id for {key[0]}, cannot delete")
+            else:
+                deleted_count += 1
+
+        # Resolve conflicts
+        for key, apple, provider_entry, mapping in sync_plan["conflicts"]:
+            action = await self._resolve_conflict(apple, provider_entry, mapping)
+            logger.info(f"Conflict for {key[0]}: resolved as {action}")
+
+            if action == "delete_provider":
+                if not simulate:
+                    try:
+                        provider_id = mapping.get("provider_id") if mapping else (provider_entry.provider_id if provider_entry else None)
+                        logger.debug(f"Delete provider: mapping provider_id={mapping.get('provider_id') if mapping else None}, entry provider_id={provider_entry.provider_id if provider_entry else None}, final={provider_id}")
+                        if provider_id:
+                            success = await provider.delete_password(provider_id)
+                            if success:
+                                await self.db.delete_password_mapping(
+                                    title=key[0], url=key[1], username=key[2], provider_type=provider_type
+                                )
+                                logger.info(f"Conflict resolved: deleted {key[0]} from provider")
+                        else:
+                            logger.warning(f"Cannot delete {key[0]} from provider: no provider_id in mapping")
+                    except Exception as e:
+                        logger.error(f"Error deleting {key[0]} from provider: {e}")
+                # Count deletion in both simulation and non-simulation modes
+                provider_id = mapping.get("provider_id") if mapping else (provider_entry.provider_id if provider_entry else None)
+                if provider_id:
+                    deleted_count += 1
+                else:
+                    logger.warning(f"[Simulation] Cannot delete {key[0]}: no provider_id")
+
+            elif action == "create_provider" and not simulate:
+                try:
+                    if apple:
+                        await provider.create_password(apple)
+                        logger.info(f"Conflict resolved: re-created {key[0]} in provider")
+                except Exception as e:
+                    logger.error(f"Error creating {key[0]} in provider: {e}")
+
+            elif action == "delete_apple" and not simulate:
+                try:
+                    # Can't delete from Apple automatically - just remove mapping
+                    await self.db.delete_password_mapping(
+                        title=key[0], url=key[1], username=key[2], provider_type=provider_type
+                    )
+                    logger.warning(f"Conflict resolved: {key[0]} should be deleted from Apple manually")
+                except Exception as e:
+                    logger.error(f"Error removing mapping for {key[0]}: {e}")
+
+            elif action == "create_apple" and not simulate:
+                logger.info(f"Conflict resolved: {key[0]} will be pulled to Apple in pull phase")
+
+        logger.info(f"Push phase deletions: {deleted_count} entries deleted from provider")
 
         entries_by_key: dict[tuple[str, str], PasswordEntry] = {}
         for db_entry in apple_db_entries:
@@ -688,6 +958,54 @@ class PasswordsSyncEngine:
             {"title": entry.title, "username": entry.username} for entry in entries_that_will_be_created
         ]
 
+        # Update mappings for successfully created entries
+        # We need to fetch back from provider to get cipher IDs
+        if not simulate and entries_that_will_be_created:
+            logger.info("Fetching passwords from provider to update mappings with cipher IDs")
+            try:
+                provider_passwords_dict = await provider.list_passwords()
+                provider_entries_by_key = {}
+                for pwd_dict in provider_passwords_dict:
+                    entry = PasswordEntry(
+                        title=pwd_dict.get("label") or pwd_dict.get("title", ""),
+                        username=pwd_dict.get("username", ""),
+                        password=pwd_dict.get("password", ""),
+                        url=pwd_dict.get("url"),
+                        provider_id=pwd_dict.get("id"),
+                    )
+                    provider_entries_by_key[entry.get_dedup_key()] = entry
+
+                for entry in entries_that_will_be_created:
+                    # Look up the provider entry to get the cipher ID
+                    provider_entry = provider_entries_by_key.get(entry.get_dedup_key())
+                    provider_id = provider_entry.provider_id if provider_entry else None
+
+                    if not provider_id:
+                        logger.warning(
+                            f"Could not find provider entry for '{entry.title}' after creation. "
+                            f"Key: {entry.get_dedup_key()}. "
+                            f"Available keys: {list(provider_entries_by_key.keys())[:5]}..."
+                        )
+
+                    try:
+                        await self.db.upsert_password_mapping(
+                            title=entry.title,
+                            username=entry.username,
+                            provider_id=provider_id,
+                            provider_type=provider_type,
+                            last_apple_hash=entry.get_password_hash(),
+                            last_provider_hash=entry.get_password_hash(),
+                            url=entry.url,
+                        )
+                        if provider_id:
+                            logger.debug(f"Updated mapping for {entry.title} with cipher ID {provider_id}")
+                        else:
+                            logger.warning(f"Created mapping for {entry.title} without provider_id")
+                    except Exception as e:
+                        logger.warning(f"Failed to update mapping for {entry.title}: {e}")
+            except Exception as e:
+                logger.error(f"Failed to fetch provider passwords for mapping update: {e}")
+
         return {
             "import": import_stats,
             "queued": len(entries_to_push),
@@ -698,6 +1016,7 @@ class PasswordsSyncEngine:
             "folders_created": folders_created,
             "simulate": simulate,
             "entries": entry_titles,
+            "deleted": deleted_count,
         }
 
     @staticmethod
@@ -741,6 +1060,7 @@ class PasswordsSyncEngine:
                 notes=pwd_dict.get("notes"),
                 otp_auth=pwd_dict.get("otp_auth"),
                 folder=pwd_dict.get("folder_label") or pwd_dict.get("folder"),
+                provider_id=pwd_dict.get("id"),
             )
             provider_entries.append(entry)
 
@@ -762,6 +1082,7 @@ class PasswordsSyncEngine:
 
         apple_db_entries = await self.db.get_all_entries(source="apple")
         apple_keys = set()
+        apple_map = {}
         for db_entry in apple_db_entries:
             key = (
                 db_entry["title"].lower().strip(),
@@ -769,6 +1090,76 @@ class PasswordsSyncEngine:
                 db_entry["username"].lower().strip(),
             )
             apple_keys.add(key)
+            # Convert db_entry to PasswordEntry for sync plan
+            apple_entry = PasswordEntry(
+                title=db_entry["title"],
+                username=db_entry["username"],
+                password="",  # Don't have plaintext, use empty
+                url=db_entry.get("url"),
+                notes=db_entry.get("notes"),
+                otp_auth=db_entry.get("otp_auth"),
+                folder=db_entry.get("folder"),
+            )
+            apple_map[key] = apple_entry
+
+        # Deletion detection: Get mappings and build sync plan
+        provider_type = provider.__class__.__name__.replace("Provider", "").lower()
+        mappings = await self.db.get_all_password_mappings(provider_type=provider_type)
+        mapping_dict = {
+            (
+                m["title"].lower().strip(),
+                m["url"].lower().strip() if m["url"] else None,
+                m["username"].lower().strip(),
+            ): m
+            for m in mappings
+        }
+
+        provider_map = {entry.get_dedup_key(): entry for entry in provider_entries}
+
+        # Build sync plan to detect deletions
+        sync_plan = self._build_password_sync_plan(
+            apple_map=apple_map, provider_map=provider_map, mappings=mapping_dict
+        )
+
+        # Handle deletions (Provider deleted → delete from Apple)
+        # Note: We can't automatically delete from Apple Passwords (CSV-only interface)
+        # So we just log warnings for user to manually delete
+        deleted_count = 0
+        for key, apple_entry, mapping in sync_plan["delete_apple"]:
+            if not simulate:
+                # Delete the mapping since password was deleted from provider
+                try:
+                    await self.db.delete_password_mapping(
+                        title=key[0], url=key[1], username=key[2], provider_type=provider_type
+                    )
+                    deleted_count += 1
+                    logger.warning(
+                        f"Password '{key[0]}' deleted from provider. "
+                        f"Please manually delete from Apple Passwords: {key[0]} ({key[2]})"
+                    )
+                except Exception as e:
+                    logger.error(f"Error deleting mapping for {key[0]}: {e}")
+            else:
+                deleted_count += 1
+                logger.info(f"[Simulation] Would mark for deletion in Apple: {key[0]}")
+
+        # Handle conflicts in pull phase (mostly just logging)
+        for key, apple, provider_entry, mapping in sync_plan["conflicts"]:
+            action = await self._resolve_conflict(apple, provider_entry, mapping)
+            logger.info(f"Pull phase conflict for {key[0]}: {action}")
+
+            if action == "delete_apple":
+                if not simulate:
+                    # Log warning for manual deletion
+                    await self.db.delete_password_mapping(
+                        title=key[0], url=key[1], username=key[2], provider_type=provider_type
+                    )
+                    logger.warning(
+                        f"Conflict: '{key[0]}' should be manually deleted from Apple Passwords"
+                    )
+                deleted_count += 1
+
+        logger.info(f"Pull phase deletions: {deleted_count} entries need manual deletion from Apple")
 
         new_entries = [entry for entry in provider_entries if entry.get_dedup_key() not in apple_keys]
 
@@ -790,11 +1181,29 @@ class PasswordsSyncEngine:
         # Collect entry titles for UI display
         entry_titles = [{"title": entry.title, "username": entry.username} for entry in new_entries]
 
+        # Update mappings for new entries
+        if not simulate and new_entries:
+            for entry in new_entries:
+                provider_id = entry.provider_id if hasattr(entry, "provider_id") and entry.provider_id else None
+                try:
+                    await self.db.upsert_password_mapping(
+                        title=entry.title,
+                        username=entry.username,
+                        provider_id=provider_id,
+                        provider_type=provider_type,
+                        last_apple_hash=entry.get_password_hash(),
+                        last_provider_hash=entry.get_password_hash(),
+                        url=entry.url,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update mapping for {entry.title}: {e}")
+
         return {
             "new_entries": len(new_entries),
             "download_path": str(output_path) if output_path else None,
             "simulate": simulate,
             "entries": entry_titles,
+            "deleted": deleted_count,
         }
 
     async def _ensure_provider_folders(
