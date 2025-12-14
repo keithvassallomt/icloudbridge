@@ -183,7 +183,7 @@ async def sync_notes(
             # Single folder sync
             result = await engine.sync_folder(
                 folder_name=request.folder,
-                markdown_subfolder=None,
+                markdown_subfolder=request.folder,
                 dry_run=request.dry_run,
                 skip_deletions=request.skip_deletions,
                 deletion_threshold=request.deletion_threshold,
@@ -270,7 +270,7 @@ async def sync_notes(
                     try:
                         folder_result = await engine.sync_folder(
                             folder_name=folder_name,
-                            markdown_subfolder=None,
+                            markdown_subfolder=folder_name,
                             dry_run=request.dry_run,
                             skip_deletions=request.skip_deletions,
                             deletion_threshold=request.deletion_threshold,

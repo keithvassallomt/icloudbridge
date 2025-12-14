@@ -130,7 +130,7 @@ class RichNotesCapture:
 
         app_support = Path.home() / "Library" / "Application Support" / "iCloudBridge" / "venv" / "bin" / "python3"
         if app_support.is_file():
-            logger.info("Using App Support Python: ", app_support)
+            logger.info("Using App Support Python: %s", app_support)
             return str(app_support)
 
         logger.error(

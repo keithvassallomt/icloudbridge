@@ -325,7 +325,7 @@ class SchedulerManager:
         if folder_name:
             stats = await engine.sync_folder(
                 folder_name=folder_name,
-                markdown_subfolder=None,
+                markdown_subfolder=folder_name,
                 dry_run=dry_run,
                 skip_deletions=skip_deletions,
                 deletion_threshold=deletion_threshold,
@@ -389,7 +389,7 @@ class SchedulerManager:
             try:
                 stats = await engine.sync_folder(
                     folder_name=folder,
-                    markdown_subfolder=None,
+                    markdown_subfolder=folder,
                     dry_run=dry_run,
                     skip_deletions=skip_deletions,
                     deletion_threshold=deletion_threshold,

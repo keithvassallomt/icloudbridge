@@ -72,3 +72,4 @@ logs/
 
 # Dependencies / Libraries
 **/node_modules
+tools/notes_cloud_ripper/tools/
