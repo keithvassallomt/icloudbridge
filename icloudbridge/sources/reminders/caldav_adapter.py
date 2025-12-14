@@ -51,6 +51,7 @@ class CalDAVReminder:
     icalendar_data: str  # Raw iCalendar data
     alarms: list[CalDAVAlarm]  # List of alarms
     recurrence_rules: list[CalDAVRecurrence]  # List of recurrence rules
+    is_all_day: bool = False  # True if due date is a DATE (not DATE-TIME)
 
 
 class CalDAVAdapter:
@@ -251,12 +252,36 @@ class CalDAVAdapter:
             # Priority (CalDAV uses 0=undefined, 1=highest, 9=lowest)
             priority = int(vtodo.get("PRIORITY", 0))
 
-            # Due date
-            due_date = vtodo.get("DUE")
-            if due_date and hasattr(due_date, "dt"):
-                due_date = due_date.dt
-            else:
-                due_date = None
+            # Due date - detect if it's all-day (DATE) vs specific time (DATE-TIME)
+            # In iCalendar, DATE is stored as date object, DATE-TIME as datetime object
+            due_date_raw = vtodo.get("DUE")
+            due_date = None
+            is_all_day = False
+            if due_date_raw and hasattr(due_date_raw, "dt"):
+                due_date_value = due_date_raw.dt
+                # Check if it's a date (all-day) vs datetime (specific time)
+                # date objects don't have hour/minute/second attributes
+                from datetime import date as date_type
+                if isinstance(due_date_value, date_type) and not isinstance(due_date_value, datetime):
+                    # All-day: convert date to datetime at midnight UTC
+                    is_all_day = True
+                    due_date = datetime(
+                        year=due_date_value.year,
+                        month=due_date_value.month,
+                        day=due_date_value.day,
+                        hour=0,
+                        minute=0,
+                        second=0,
+                        tzinfo=timezone.utc,
+                    )
+                    logger.debug(f"Parsed all-day due date: {due_date.date()}")
+                else:
+                    # Specific time
+                    is_all_day = False
+                    due_date = due_date_value
+                    # Ensure timezone is set
+                    if due_date and not due_date.tzinfo:
+                        due_date = due_date.replace(tzinfo=timezone.utc)
 
             # Timestamps - strip microseconds as iCalendar doesn't support them
             created = vtodo.get("CREATED")
@@ -375,6 +400,7 @@ class CalDAVAdapter:
                 icalendar_data=ical_data,
                 alarms=alarms,
                 recurrence_rules=recurrence_rules,
+                is_all_day=is_all_day,
             )
 
         except Exception as e:
@@ -390,6 +416,7 @@ class CalDAVAdapter:
         completed: bool = False,
         priority: int = 0,
         due_date: datetime | None = None,
+        is_all_day: bool = False,
         url: str | None = None,
         alarms: list[CalDAVAlarm] | None = None,
         recurrence_rules: list[CalDAVRecurrence] | None = None,
@@ -460,8 +487,17 @@ class CalDAVAdapter:
             todo.add("percent-complete", 100)
         todo.add("priority", priority)
         if due_date:
-            # Strip microseconds as iCalendar doesn't support them
-            todo.add("due", due_date.replace(microsecond=0))
+            if is_all_day:
+                # All-day: use date object to produce DATE (not DATE-TIME) in iCalendar
+                # This preserves the all-day semantics in CalDAV
+                from datetime import date as date_type
+                due_date_value = date_type(due_date.year, due_date.month, due_date.day)
+                todo.add("due", due_date_value)
+                logger.debug(f"Writing all-day due date: {due_date_value}")
+            else:
+                # Specific time: use datetime to produce DATE-TIME
+                # Strip microseconds as iCalendar doesn't support them
+                todo.add("due", due_date.replace(microsecond=0))
         if url:
             todo.add("url", url)
 
@@ -535,6 +571,7 @@ class CalDAVAdapter:
         completed: bool | None = None,
         priority: int | None = None,
         due_date: datetime | None = None,
+        is_all_day: bool | None = None,
         url: str | None = None,
         alarms: list[CalDAVAlarm] | None = None,
         recurrence_rules: list[CalDAVRecurrence] | None = None,
@@ -648,11 +685,20 @@ class CalDAVAdapter:
             if priority is not None:
                 vtodo["PRIORITY"] = priority
             if due_date is not None:
-                # Strip microseconds as iCalendar doesn't support them
-                clean_due = due_date.replace(microsecond=0) if due_date else None
                 if "DUE" in vtodo:
                     del vtodo["DUE"]
-                vtodo.add("due", clean_due)
+                # Determine if all-day: use provided value, or default to False
+                use_all_day = is_all_day if is_all_day is not None else False
+                if use_all_day:
+                    # All-day: use date object to produce DATE (not DATE-TIME)
+                    from datetime import date as date_type
+                    due_date_value = date_type(due_date.year, due_date.month, due_date.day)
+                    vtodo.add("due", due_date_value)
+                    logger.debug(f"Updating with all-day due date: {due_date_value}")
+                else:
+                    # Specific time: strip microseconds as iCalendar doesn't support them
+                    clean_due = due_date.replace(microsecond=0)
+                    vtodo.add("due", clean_due)
             if url is not None:
                 vtodo["URL"] = url
 

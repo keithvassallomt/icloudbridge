@@ -133,6 +133,7 @@ class EventKitReminder:
     alarms: list[ReminderAlarm] = field(default_factory=list)
     recurrence_rules: list[ReminderRecurrence] = field(default_factory=list)
     url: str | None = None
+    is_all_day: bool = False  # True if due date has no time component (floating date)
 
 
 @dataclass
@@ -337,12 +338,18 @@ class RemindersAdapter:
 
     def _convert_from_eventkit(self, ek_reminder: EKReminder) -> EventKitReminder:
         """Convert an EKReminder to our EventKitReminder dataclass."""
+        # NSDateComponentUndefined is a large value indicating component not set
+        # On 64-bit systems it's typically Int.max (9223372036854775807)
+        # On 32-bit systems it's 2147483647
+        # We use a threshold to detect undefined values safely
+        NS_DATE_COMPONENT_UNDEFINED_THRESHOLD = 2147483640
+
         # Extract due date from NSDateComponents
         due_date = None
+        is_all_day = False
         if ek_reminder.dueDateComponents():
             dc = ek_reminder.dueDateComponents()
             # Convert NSDateComponents to datetime
-            # This is a simplification - may need better handling
             try:
                 year = dc.year() if dc.year() else 1
                 # Clamp year to valid range to avoid overflow
@@ -350,18 +357,69 @@ class RemindersAdapter:
                     logger.warning(f"Invalid year in due date: {year}")
                     due_date = None
                 else:
-                    due_date = datetime(
-                        year=year,
-                        month=dc.month() if dc.month() else 1,
-                        day=dc.day() if dc.day() else 1,
-                        hour=dc.hour() if dc.hour() else 0,
-                        minute=dc.minute() if dc.minute() else 0,
-                        second=dc.second() if dc.second() else 0,
-                        tzinfo=timezone.utc,
-                    )
+                    # Check if time components are set (not NSDateComponentUndefined)
+                    # When undefined, hour()/minute()/second() return very large values
+                    raw_hour = dc.hour()
+                    raw_minute = dc.minute()
+                    raw_second = dc.second()
+
+                    # Detect all-day: time components are undefined or timezone is nil
+                    # Per Apple docs: "A nil time zone represents a floating date"
+                    # and "Setting a date component without hour, minute and second
+                    # component will set the reminder to be an all-day reminder"
+                    hour_undefined = raw_hour is None or raw_hour >= NS_DATE_COMPONENT_UNDEFINED_THRESHOLD
+                    minute_undefined = raw_minute is None or raw_minute >= NS_DATE_COMPONENT_UNDEFINED_THRESHOLD
+                    second_undefined = raw_second is None or raw_second >= NS_DATE_COMPONENT_UNDEFINED_THRESHOLD
+
+                    is_all_day = hour_undefined and minute_undefined and second_undefined
+
+                    if is_all_day:
+                        # All-day reminder: use midnight in local timezone interpretation
+                        # Store as midnight UTC - the is_all_day flag indicates no specific time
+                        due_date = datetime(
+                            year=year,
+                            month=dc.month() if dc.month() else 1,
+                            day=dc.day() if dc.day() else 1,
+                            hour=0,
+                            minute=0,
+                            second=0,
+                            tzinfo=timezone.utc,
+                        )
+                        logger.debug(f"Detected all-day reminder with due date: {due_date.date()}")
+                    else:
+                        # Specific time reminder: use the actual time components
+                        hour = raw_hour if raw_hour and raw_hour < NS_DATE_COMPONENT_UNDEFINED_THRESHOLD else 0
+                        minute = raw_minute if raw_minute and raw_minute < NS_DATE_COMPONENT_UNDEFINED_THRESHOLD else 0
+                        second = raw_second if raw_second and raw_second < NS_DATE_COMPONENT_UNDEFINED_THRESHOLD else 0
+
+                        # Try to get timezone from components, default to UTC
+                        tz_info = timezone.utc
+                        try:
+                            dc_timezone = dc.timeZone()
+                            if dc_timezone:
+                                # Get offset in seconds from GMT
+                                offset_seconds = dc_timezone.secondsFromGMT()
+                                from datetime import timedelta
+                                tz_info = timezone(timedelta(seconds=offset_seconds))
+                        except Exception as tz_err:
+                            logger.debug(f"Could not get timezone from components: {tz_err}")
+
+                        due_date = datetime(
+                            year=year,
+                            month=dc.month() if dc.month() else 1,
+                            day=dc.day() if dc.day() else 1,
+                            hour=hour,
+                            minute=minute,
+                            second=second,
+                            tzinfo=tz_info,
+                        )
+                        # Convert to UTC for consistent storage
+                        due_date = due_date.astimezone(timezone.utc)
+
             except (ValueError, AttributeError, OverflowError) as e:
                 logger.warning(f"Could not parse due date: {e}")
                 due_date = None
+                is_all_day = False
 
         # Extract alarms
         alarms = []
@@ -420,6 +478,7 @@ class RemindersAdapter:
             alarms=alarms,
             recurrence_rules=recurrence_rules,
             url=str(ek_reminder.URL()) if ek_reminder.URL() else None,
+            is_all_day=is_all_day,
         )
 
     async def create_reminder(
@@ -430,6 +489,7 @@ class RemindersAdapter:
         completed: bool = False,
         priority: int = 0,
         due_date: datetime | None = None,
+        is_all_day: bool = False,
         alarms: list[ReminderAlarm] | None = None,
         recurrence_rules: list[ReminderRecurrence] | None = None,
         url: str | None = None,
@@ -467,16 +527,47 @@ class RemindersAdapter:
 
         # Set due date
         if due_date:
-            from Foundation import NSCalendar, NSDateComponents
+            from Foundation import NSCalendar, NSDateComponents, NSTimeZone
 
             components = NSDateComponents.alloc().init()
             components.setYear_(due_date.year)
             components.setMonth_(due_date.month)
             components.setDay_(due_date.day)
-            components.setHour_(due_date.hour)
-            components.setMinute_(due_date.minute)
-            components.setSecond_(due_date.second)
-            components.setCalendar_(NSCalendar.currentCalendar())
+
+            # Per Apple docs: dueDateComponents must use Gregorian calendar
+            # "If this property is set, the calendar must be set to NSGregorianCalendar"
+            try:
+                gregorian = NSCalendar.alloc().initWithCalendarIdentifier_("gregorian")
+                if gregorian:
+                    components.setCalendar_(gregorian)
+                else:
+                    # Fallback to current calendar if gregorian init fails
+                    components.setCalendar_(NSCalendar.currentCalendar())
+            except Exception as cal_err:
+                logger.debug(f"Could not create Gregorian calendar, using current: {cal_err}")
+                components.setCalendar_(NSCalendar.currentCalendar())
+
+            if is_all_day:
+                # All-day reminder: do NOT set hour/minute/second components
+                # Per Apple docs: "Setting a date component without an hour, minute
+                # and second component will set the reminder to be an all-day reminder"
+                # Also: "A nil time zone represents a floating date"
+                # Don't set timezone for all-day (floating date)
+                logger.debug(f"Creating all-day reminder for date: {due_date.date()}")
+            else:
+                # Specific time: set all time components
+                components.setHour_(due_date.hour)
+                components.setMinute_(due_date.minute)
+                components.setSecond_(due_date.second)
+                # Set timezone for specific-time reminders
+                try:
+                    # Use the system's local timezone for the reminder
+                    local_tz = NSTimeZone.localTimeZone()
+                    if local_tz:
+                        components.setTimeZone_(local_tz)
+                except Exception as tz_err:
+                    logger.debug(f"Could not set timezone: {tz_err}")
+
             reminder.setDueDateComponents_(components)
 
         # Add alarms
@@ -551,6 +642,7 @@ class RemindersAdapter:
         completed: bool | None = None,
         priority: int | None = None,
         due_date: datetime | None = None,
+        is_all_day: bool | None = None,
         alarms: list[ReminderAlarm] | None = None,
         recurrence_rules: list[ReminderRecurrence] | None = None,
         url: str | None = None,
@@ -581,16 +673,44 @@ class RemindersAdapter:
 
         # Update due date
         if due_date is not None:
-            from Foundation import NSCalendar, NSDateComponents
+            from Foundation import NSCalendar, NSDateComponents, NSTimeZone
 
             components = NSDateComponents.alloc().init()
             components.setYear_(due_date.year)
             components.setMonth_(due_date.month)
             components.setDay_(due_date.day)
-            components.setHour_(due_date.hour)
-            components.setMinute_(due_date.minute)
-            components.setSecond_(due_date.second)
-            components.setCalendar_(NSCalendar.currentCalendar())
+
+            # Per Apple docs: dueDateComponents must use Gregorian calendar
+            try:
+                gregorian = NSCalendar.alloc().initWithCalendarIdentifier_("gregorian")
+                if gregorian:
+                    components.setCalendar_(gregorian)
+                else:
+                    components.setCalendar_(NSCalendar.currentCalendar())
+            except Exception as cal_err:
+                logger.debug(f"Could not create Gregorian calendar, using current: {cal_err}")
+                components.setCalendar_(NSCalendar.currentCalendar())
+
+            # Determine if all-day: use provided value, or default to False if not specified
+            use_all_day = is_all_day if is_all_day is not None else False
+
+            if use_all_day:
+                # All-day reminder: do NOT set hour/minute/second components
+                # Don't set timezone for all-day (floating date)
+                logger.debug(f"Updating to all-day reminder for date: {due_date.date()}")
+            else:
+                # Specific time: set all time components
+                components.setHour_(due_date.hour)
+                components.setMinute_(due_date.minute)
+                components.setSecond_(due_date.second)
+                # Set timezone for specific-time reminders
+                try:
+                    local_tz = NSTimeZone.localTimeZone()
+                    if local_tz:
+                        components.setTimeZone_(local_tz)
+                except Exception as tz_err:
+                    logger.debug(f"Could not set timezone: {tz_err}")
+
             reminder.setDueDateComponents_(components)
 
         # Update alarms (replace all)
