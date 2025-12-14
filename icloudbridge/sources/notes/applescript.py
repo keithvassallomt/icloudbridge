@@ -18,6 +18,25 @@ from icloudbridge.core.rich_notes_capture import (
 logger = logging.getLogger(__name__)
 
 
+# Map a handful of common non-English month names to English so strptime works.
+# This keeps parsing locale-independent without pulling in extra dependencies.
+_MONTH_LOCALIZATION = {
+    # Danish
+    "januar": "January",
+    "februar": "February",
+    "marts": "March",
+    "april": "April",
+    "maj": "May",
+    "juni": "June",
+    "juli": "July",
+    "august": "August",
+    "september": "September",
+    "oktober": "October",
+    "november": "November",
+    "december": "December",
+}
+
+
 # AppleScript to list all note folders with hierarchy
 LIST_FOLDERS_SCRIPT = """
 tell application "Notes"
@@ -412,11 +431,42 @@ class NotesAdapter:
             Parsed datetime object
         """
         try:
-            # Remove "date " prefix if present
-            date_str = re.sub(r"^date\s+", "", date_str, flags=re.IGNORECASE)
+            original = date_str.replace("\u00a0", " ").strip()
 
-            # Remove day of week prefix (e.g., "Monday, ")
-            date_str = re.sub(r"^[A-Za-z]+,\s+", "", date_str)
+            # Normalize common locale variations before running strptime fallbacks.
+            date_str = re.sub(r"^date\s+", "", original, flags=re.IGNORECASE)
+            # Drop a leading weekday token with comma (e.g., "Monday, ").
+            date_str = re.sub(r"^[A-Za-z\u00c0-\u017f]+,\s+", "", date_str)
+            # Drop a leading weekday token when languages use "den" before the day (e.g., "mandag den").
+            if re.search(r"(?i)\bden\b", date_str):
+                date_str = re.sub(r"^[A-Za-z\u00c0-\u017f]+\s+", "", date_str)
+
+            # Drop language-specific glue words (e.g., Danish "den" and "kl.").
+            date_str = re.sub(r"(?i)\bden\b", "", date_str)
+            date_str = re.sub(r"(?i)\bkl\.?\b", "", date_str)
+
+            # Drop trailing dots after day numbers (e.g., "5.").
+            date_str = re.sub(r"(\d{1,2})\.\s+", r"\1 ", date_str)
+
+            # Swap dot-separated times (HH.MM.SS) for colon-separated.
+            date_str = re.sub(r"(\d{1,2})\.(\d{2})\.(\d{2})(?!\d)", r"\1:\2:\3", date_str)
+
+            # Replace localized month names with English equivalents so %B parsing succeeds when possible.
+            if _MONTH_LOCALIZATION:
+                month_pattern = re.compile(
+                    r"\b(" + "|".join(re.escape(m) for m in _MONTH_LOCALIZATION) + r")\b",
+                    flags=re.IGNORECASE,
+                )
+                date_str = month_pattern.sub(
+                    lambda m: _MONTH_LOCALIZATION.get(m.group(0).lower(), m.group(0)),
+                    date_str,
+                )
+
+            # Collapse whitespace introduced by replacements.
+            date_str = re.sub(r"\s+", " ", date_str).strip()
+
+            # Cache a copy for later fallbacks that benefit from the normalized tokens.
+            normalized = date_str
 
             # Try UK/EU format first: "18 February 2023 at 14:24:28"
             # (day month year, 24-hour time)
@@ -441,6 +491,48 @@ class NotesAdapter:
             try:
                 return datetime.strptime(date_str, "%d %B %Y %H:%M:%S")
             except ValueError:
+                pass
+
+            # Try month-first 24-hour format without comma
+            try:
+                return datetime.strptime(date_str, "%B %d %Y %H:%M:%S")
+            except ValueError:
+                pass
+
+            # Locale-aware attempt using the user's LC_TIME settings (helps for many non-English month names).
+            import locale
+
+            current_locale = locale.setlocale(locale.LC_TIME)
+            try:
+                locale.setlocale(locale.LC_TIME, "")
+                for fmt in (
+                    "%d %B %Y %H:%M:%S",
+                    "%d %B %Y at %H:%M:%S",
+                    "%B %d, %Y %H:%M:%S",
+                ):
+                    try:
+                        return datetime.strptime(normalized, fmt)
+                    except ValueError:
+                        continue
+            except Exception:
+                pass
+            finally:
+                try:
+                    locale.setlocale(locale.LC_TIME, current_locale)
+                except Exception:
+                    pass
+
+            # Broad fallback: try dateparser if available (handles many locales automatically).
+            try:
+                import dateparser  # type: ignore
+
+                parsed = dateparser.parse(
+                    normalized,
+                    settings={"RETURN_AS_TIMEZONE_AWARE": False, "PREFER_DAY_OF_MONTH": "first"},
+                )
+                if parsed:
+                    return parsed
+            except Exception:
                 pass
 
             logger.warning(f"Could not parse date: {date_str}, using current time")

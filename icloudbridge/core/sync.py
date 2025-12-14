@@ -265,7 +265,91 @@ class NotesSyncEngine:
             # Note: We need folder UUID, but AppleScript doesn't return it in notes
             # For now, we'll query all mappings and filter by note UUIDs
             all_mappings = await self.db.get_all_mappings()
+            is_bootstrap = len(all_mappings) == 0
             mappings_by_uuid = {m["local_uuid"]: m for m in all_mappings}
+            mappings_by_remote_path = {m["remote_path"]: m for m in all_mappings}
+
+            # Track which notes/files we've processed (used by bootstrap reconciliation + main loops)
+            processed_local_uuids: set[str] = set()
+            processed_remote_paths: set[str] = set()
+
+            # --- Bootstrap reconciliation ---
+            # When the DB is empty but both Apple Notes and Markdown already contain matching notes,
+            # pair them by normalized folder/title instead of treating them as brand-new on both sides.
+            def _normalize_title(name: str) -> str:
+                return sanitize_filename(name).casefold()
+
+            apple_candidates: dict[str, AppleScriptNote] = {}
+            markdown_candidates: dict[str, MarkdownNote] = {}
+            apple_dupe_keys: set[str] = set()
+            markdown_dupe_keys: set[str] = set()
+
+            for note in apple_notes:
+                if note.uuid in mappings_by_uuid:
+                    continue
+                key = _normalize_title(note.name)
+                if key in apple_candidates:
+                    apple_dupe_keys.add(key)
+                else:
+                    apple_candidates[key] = note
+
+            for md_note in remote_notes_by_path.values():
+                if md_note.file_path and str(md_note.file_path) in mappings_by_remote_path:
+                    continue
+                key = _normalize_title(md_note.name)
+                if key in markdown_candidates:
+                    markdown_dupe_keys.add(key)
+                else:
+                    markdown_candidates[key] = md_note
+
+            # Drop ambiguous keys to avoid pairing wrong notes
+            for key in apple_dupe_keys:
+                apple_candidates.pop(key, None)
+            for key in markdown_dupe_keys:
+                markdown_candidates.pop(key, None)
+
+            paired_keys = set(apple_candidates).intersection(markdown_candidates)
+            mtime_skew_seconds = 2  # small tolerance for FS/Notes clock skew
+
+            for key in paired_keys:
+                apple_note = apple_candidates[key]
+                md_note = markdown_candidates[key]
+                apple_mtime = apple_note.modified_date
+                md_mtime = md_note.modified_date
+                if abs((apple_mtime - md_mtime).total_seconds()) <= mtime_skew_seconds:
+                    last_sync_dt = max(apple_mtime, md_mtime)
+                else:
+                    last_sync_dt = max(apple_mtime, md_mtime)
+
+                await self.db.upsert_mapping(
+                    local_uuid=apple_note.uuid,
+                    local_name=apple_note.name,
+                    local_folder_uuid="",
+                    remote_path=md_note.file_path,
+                    timestamp=last_sync_dt.timestamp(),
+                    attachment_slug=md_note.metadata.get("attachment_slug"),
+                )
+
+                mapping_row = {
+                    "local_uuid": apple_note.uuid,
+                    "local_name": apple_note.name,
+                    "local_folder_uuid": "",
+                    "remote_path": str(md_note.file_path),
+                    "last_sync_timestamp": last_sync_dt.timestamp(),
+                    "attachment_slug": md_note.metadata.get("attachment_slug"),
+                }
+                mappings_by_uuid[apple_note.uuid] = mapping_row
+                mappings_by_remote_path[str(md_note.file_path)] = mapping_row
+                processed_local_uuids.add(apple_note.uuid)
+                processed_remote_paths.add(str(md_note.file_path))
+                stats["unchanged"] += 1
+                record_detail("apple", "unchanged", apple_note.name)
+                record_detail("markdown", "unchanged", md_note.name)
+                logger.info(
+                    "Paired existing Apple↔Markdown note by title: %s (folder: %s)",
+                    apple_note.name,
+                    folder_name,
+                )
 
             # Step 4: Check deletion threshold (if not disabled and not skipping deletions)
             if deletion_threshold > 0 and not skip_deletions and not dry_run:
@@ -299,12 +383,11 @@ class NotesSyncEngine:
                     )
 
             # Step 5: Determine what needs to be synced
-            # Track which notes/files we've processed
-            processed_local_uuids = set()
-            processed_remote_paths = set()
 
             # 5a. Process notes that exist in Apple Notes
             for uuid, apple_note in local_notes_by_uuid.items():
+                if uuid in processed_local_uuids:
+                    continue
                 mapping = mappings_by_uuid.get(uuid)
 
                 if mapping:
@@ -328,6 +411,7 @@ class NotesSyncEngine:
                         if dry_run:
                             logger.info(f"[DRY RUN] Would delete note: {apple_note.name}")
                             stats["would_delete_local"] += 1
+                            record_detail("apple", "deleted", apple_note.name)
                         else:
                             logger.info(f"Remote file deleted, deleting note: {apple_note.name}")
                             await self.notes_adapter.delete_note(folder_name, apple_note.name)
@@ -506,19 +590,32 @@ class NotesSyncEngine:
                     present_in_recently_deleted = await note_in_recently_deleted(note_uuid)
 
                     if not present_in_recently_deleted:
-                        stats["pending_local_notes"].append(
-                            {
-                                "uuid": note_uuid,
-                                "title": note_title,
-                                "folder": folder_name,
-                                "remote_path": remote_path_str,
-                                "reason": "apple_note_missing",
-                            }
-                        )
+                        if sync_mode == "import":
+                            logger.debug(
+                                "Local note missing but in import mode - keeping markdown: %s",
+                                md_note.name,
+                            )
+                            continue
+                        if skip_deletions:
+                            logger.info(
+                                "Local note missing, skipping deletion (--skip-deletions): %s",
+                                md_note.name,
+                            )
+                            continue
+                        if dry_run:
+                            logger.info(f"[DRY RUN] Would delete markdown: {md_note.name}")
+                            stats["would_delete_remote"] += 1
+                            record_detail("markdown", "deleted", md_note.name)
+                            continue
+
                         logger.info(
-                            "Note %s missing from Apple Notes but not in Recently Deleted; deferring remote deletion",
-                            note_title,
+                            "Local note missing (not in Recently Deleted); deleting markdown: %s",
+                            md_note.name,
                         )
+                        await self.markdown_adapter.delete_note(Path(remote_path_str))
+                        await self.db.delete_mapping_by_remote_path(remote_path_str)
+                        stats["deleted_remote"] += 1
+                        record_detail("markdown", "deleted", md_note.name)
                         continue
 
                     if sync_mode == "import":
@@ -528,6 +625,7 @@ class NotesSyncEngine:
                     elif dry_run:
                         logger.info(f"[DRY RUN] Would delete markdown: {md_note.name}")
                         stats["would_delete_remote"] += 1
+                        record_detail("markdown", "deleted", md_note.name)
                     else:
                         logger.info(f"Local note deleted, deleting markdown: {md_note.name}")
                         await self.markdown_adapter.delete_note(Path(remote_path_str))
@@ -538,6 +636,34 @@ class NotesSyncEngine:
                     # New remote file - create in Apple Notes (only in import/bidirectional mode)
                     if sync_mode == "export":
                         logger.debug(f"New remote note but in export mode - skipping: {md_note.name}")
+                        continue
+
+                    # Fallback: if no Apple note shares this normalized title, treat as orphan and delete
+                    normalized_md = sanitize_filename(md_note.name).casefold()
+                    apple_title_collision = any(
+                        sanitize_filename(n.name).casefold() == normalized_md for n in apple_notes
+                    )
+
+                    if is_bootstrap or not apple_title_collision:
+                        if skip_deletions:
+                            logger.info(
+                                "Remote-only note (no Apple match), skipping deletion (--skip-deletions): %s",
+                                md_note.name,
+                            )
+                            continue
+                        if dry_run:
+                            logger.info(f"[DRY RUN] Would delete remote-only markdown: {md_note.name}")
+                            stats["would_delete_remote"] += 1
+                            record_detail("markdown", "deleted", md_note.name)
+                            continue
+
+                        logger.info(
+                            "Remote-only note not present in Apple; deleting markdown: %s",
+                            md_note.name,
+                        )
+                        await self.markdown_adapter.delete_note(Path(remote_path_str))
+                        stats["deleted_remote"] += 1
+                        record_detail("markdown", "deleted", md_note.name)
                         continue
 
                     if dry_run:
@@ -893,40 +1019,7 @@ class NotesSyncEngine:
         logger.info(f"Starting selective sync with {len(folder_mappings)} folder mapping(s)")
         results: dict[str, dict[str, int]] = {}
 
-        # Step 1: Clean up database entries for unmapped folders (migration logic)
-        # When switching from auto-sync to mapping mode, remove entries that aren't mapped
-        if folder_mappings:
-            all_mappings = await self.db.get_all_mappings()
-            mapped_note_uuids = set()
-
-            # First, collect all note UUIDs that should be kept (from mapped folders)
-            for apple_folder, mapping_config in folder_mappings.items():
-                if not mapping_config:  # Skip excluded folders
-                    continue
-
-                markdown_folder = mapping_config.get("markdown_folder")
-                if not markdown_folder:
-                    continue
-
-                # Get notes from this Apple folder to find their UUIDs
-                try:
-                    apple_notes = await self.notes_adapter.get_notes(apple_folder)
-                    for note in apple_notes:
-                        mapped_note_uuids.add(note.uuid)
-                except Exception as e:
-                    logger.exception("Failed to get notes from '%s' for cleanup", apple_folder)
-
-            # Delete database entries for notes not in mapped folders
-            deleted_count = 0
-            for db_mapping in all_mappings:
-                if db_mapping["local_uuid"] not in mapped_note_uuids:
-                    await self.db.delete_mapping(db_mapping["local_uuid"])
-                    deleted_count += 1
-
-            if deleted_count > 0:
-                logger.info(f"Cleaned up {deleted_count} database entries for unmapped folders")
-
-        # Step 2: Sync each mapped folder
+        # Step 1: Sync each mapped folder
         for apple_folder, mapping_config in folder_mappings.items():
             if not mapping_config:
                 logger.info(f"Skipping excluded folder: {apple_folder}")
