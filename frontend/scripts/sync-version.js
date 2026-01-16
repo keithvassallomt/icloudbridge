@@ -25,18 +25,29 @@ if (!versionMatch) {
 
 const version = versionMatch[1];
 
-const updateJsonFile = (filePath) => {
+const updateJsonFile = (filePath, isLockFile = false) => {
   const json = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-  if (json.version === version) {
-    return false;
+  let updated = false;
+
+  if (json.version !== version) {
+    json.version = version;
+    updated = true;
   }
-  json.version = version;
-  fs.writeFileSync(filePath, `${JSON.stringify(json, null, 2)}\n`);
-  return true;
+
+  // package-lock.json also has version in packages[""]
+  if (isLockFile && json.packages?.['']?.version !== version) {
+    json.packages[''].version = version;
+    updated = true;
+  }
+
+  if (updated) {
+    fs.writeFileSync(filePath, `${JSON.stringify(json, null, 2)}\n`);
+  }
+  return updated;
 };
 
 const updatedPkg = updateJsonFile(packageJsonPath);
-const updatedLock = updateJsonFile(packageLockPath);
+const updatedLock = updateJsonFile(packageLockPath, true);
 
 if (updatedPkg || updatedLock) {
   console.log(`Synced frontend package version to ${version}`);
