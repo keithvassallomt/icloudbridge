@@ -429,6 +429,7 @@ class SchedulerManager:
             caldav_username=self.config.reminders.caldav_username,
             caldav_password=caldav_password,
             db_path=self.config.reminders_db_path,
+            caldav_ssl_verify_cert=self.config.reminders.caldav_ssl_verify_cert,
         )
         await engine.initialize()
 

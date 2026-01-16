@@ -98,6 +98,7 @@ async def list_caldav_calendars(config: ConfigDep):
             config.reminders.caldav_url,
             config.reminders.caldav_username,
             caldav_password,
+            ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
         )
         await adapter.connect()
         calendars = await adapter.list_calendars()

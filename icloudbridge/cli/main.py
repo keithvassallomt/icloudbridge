@@ -839,6 +839,11 @@ def reminders_sync(
         "--deletion-threshold",
         help="Max deletions before confirmation (use -1 to disable)",
     ),
+    verify_ssl: Optional[bool] = typer.Option(
+        None,
+        "--verify-ssl/--no-verify-ssl",
+        help="Override CalDAV SSL certificate verification (default: use config value)",
+    ),
 ) -> None:
     """
     Synchronize reminders between Apple Reminders and CalDAV.
@@ -872,6 +877,11 @@ def reminders_sync(
         console.print("[dim]Set password with: icloudbridge reminders set-password[/dim]")
         raise typer.Exit(1)
 
+    ssl_verify_cert = cfg.reminders.caldav_ssl_verify_cert if verify_ssl is None else verify_ssl
+    if ssl_verify_cert is False:
+        console.print("[yellow]Certificate verification is disabled for this run.[/yellow]")
+        console.print("[dim]Use only with trusted self-signed certificates.[/dim]")
+
     # Determine sync mode
     use_auto = auto if auto is not None else (cfg.reminders.sync_mode == "auto")
 
@@ -889,6 +899,7 @@ def reminders_sync(
             caldav_username=cfg.reminders.caldav_username,
             caldav_password=caldav_password,
             db_path=cfg.reminders_db_path,
+            caldav_ssl_verify_cert=ssl_verify_cert,
         )
         await sync_engine.initialize()
 
@@ -1103,6 +1114,7 @@ def reminders_reset(
             caldav_username=cfg.reminders.caldav_username or "dummy",
             caldav_password=cfg.reminders.caldav_password or "dummy",
             db_path=cfg.reminders_db_path,
+            caldav_ssl_verify_cert=cfg.reminders.caldav_ssl_verify_cert,
         )
         await sync_engine.db.initialize()
         await sync_engine.reset_database()

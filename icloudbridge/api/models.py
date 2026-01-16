@@ -103,6 +103,7 @@ class ConfigResponse(BaseModel):
     reminders_caldav_username: str | None = None
     reminders_sync_mode: str | None = None
     reminders_calendar_mappings: dict[str, str] = Field(default_factory=dict)
+    reminders_caldav_ssl_verify_cert: bool | str | None = None
     passwords_provider: str | None = None
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
@@ -129,6 +130,10 @@ class ConfigUpdateRequest(BaseModel):
         description="Password will be stored in system keyring",
     )
     reminders_sync_mode: str | None = None
+    reminders_caldav_ssl_verify_cert: bool | str | None = Field(
+        default=None,
+        description="Enable/disable CalDAV SSL verification or provide a CA bundle path",
+    )
     reminders_calendar_mappings: dict[str, str] | None = None
     passwords_provider: str | None = None
     passwords_vaultwarden_url: str | None = None

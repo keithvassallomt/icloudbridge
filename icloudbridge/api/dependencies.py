@@ -83,10 +83,11 @@ async def get_reminders_sync_engine(
         raise ValueError("CalDAV password not found in keyring")
 
     engine = RemindersSyncEngine(
-        config.reminders.caldav_url,
-        config.reminders.caldav_username,
-        caldav_password,
-        db_path,
+        caldav_url=config.reminders.caldav_url,
+        caldav_username=config.reminders.caldav_username,
+        caldav_password=caldav_password,
+        db_path=db_path,
+        caldav_ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
     )
     await engine.initialize()
     return engine

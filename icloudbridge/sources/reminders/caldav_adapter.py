@@ -57,7 +57,15 @@ class CalDAVReminder:
 class CalDAVAdapter:
     """Adapter for syncing reminders with CalDAV servers."""
 
-    def __init__(self, url: str, username: str, password: str):
+    _truststore_injected = False
+
+    def __init__(
+        self,
+        url: str,
+        username: str,
+        password: str,
+        ssl_verify_cert: bool | str = True,
+    ):
         """
         Initialize CalDAV adapter.
 
@@ -65,10 +73,12 @@ class CalDAVAdapter:
             url: CalDAV server URL (e.g., https://nextcloud.example.com/remote.php/dav)
             username: CalDAV username
             password: CalDAV password
+            ssl_verify_cert: SSL verification flag or CA bundle path (bool or str)
         """
         self.url = url
         self.username = username
         self.password = password
+        self.ssl_verify_cert = ssl_verify_cert
         self.client: DAVClient | None = None
         self.principal: Any = None
         self.calendars: list[Any] = []
@@ -77,10 +87,16 @@ class CalDAVAdapter:
         """Connect to CalDAV server and discover calendars."""
         try:
             logger.debug(f"Connecting to CalDAV server: {self.url}")
+            self._inject_truststore_if_available()
             # Run blocking caldav operations in thread pool
             def _connect():
                 logger.debug("Creating DAVClient...")
-                client = DAVClient(url=self.url, username=self.username, password=self.password)
+                client = DAVClient(
+                    url=self.url,
+                    username=self.username,
+                    password=self.password,
+                    ssl_verify_cert=self.ssl_verify_cert,
+                )
                 logger.debug("Getting principal...")
                 principal = client.principal()
                 logger.debug("Getting calendars...")
@@ -95,6 +111,24 @@ class CalDAVAdapter:
         except Exception as e:
             logger.error(f"Failed to connect to CalDAV server: {e}", exc_info=True)
             return False
+
+    def _inject_truststore_if_available(self) -> None:
+        """Try to make requests use the system trust store via truststore."""
+        if self.ssl_verify_cert is False:
+            logger.debug("SSL verification disabled; skipping truststore injection")
+            return
+        if CalDAVAdapter._truststore_injected:
+            return
+        try:
+            import truststore
+
+            truststore.inject_into_ssl()
+            CalDAVAdapter._truststore_injected = True
+            logger.info("Using system trust store for CalDAV SSL verification via truststore")
+        except ImportError:
+            logger.debug("truststore not installed; using default cert bundle")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Failed to inject system trust store: {exc}")
 
     async def list_calendars(self) -> list[dict[str, str]]:
         """

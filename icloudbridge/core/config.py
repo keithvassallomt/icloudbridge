@@ -100,6 +100,7 @@ class RemindersConfig(BaseSettings):
     caldav_url: str | None = None
     caldav_username: str | None = None
     caldav_password: str | None = None
+    caldav_ssl_verify_cert: bool | str = True
     caldav_path: str = "/remote.php/dav/calendars/{username}/"
 
     # Sync mode: "auto" (sync all lists) or "manual" (only specified mappings)

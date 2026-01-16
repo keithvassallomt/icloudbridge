@@ -1118,6 +1118,35 @@ export default function Settings() {
                     : 'Full CalDAV server URL'}
                 </p>
               </div>
+
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <Label>Verify SSL certificates</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Recommended. Disable only for custom/self-signed certificates you trust.
+                  </p>
+                </div>
+                <Switch
+                  checked={formData.reminders_caldav_ssl_verify_cert !== false}
+                  onCheckedChange={(checked) =>
+                    setFormData({
+                      ...formData,
+                      reminders_caldav_ssl_verify_cert: checked,
+                    })
+                  }
+                  disabled={!formData.reminders_enabled}
+                />
+              </div>
+              {formData.reminders_caldav_ssl_verify_cert === false && (
+                <Alert variant="warning" className="border-yellow-500/50 bg-yellow-50">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertTitle>Certificate verification disabled</AlertTitle>
+                  <AlertDescription>
+                    Use this only with servers whose certificates you trust (e.g., your own CA). Connections
+                    will not be validated against a trusted authority.
+                  </AlertDescription>
+                </Alert>
+              )}
             </>
           )}
         </CardContent>

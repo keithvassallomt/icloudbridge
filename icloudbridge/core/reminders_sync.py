@@ -90,6 +90,7 @@ class RemindersSyncEngine:
         caldav_username: str,
         caldav_password: str,
         db_path: Path,
+        caldav_ssl_verify_cert: bool | str = True,
     ):
         """
         Initialize the sync engine.
@@ -98,10 +99,16 @@ class RemindersSyncEngine:
             caldav_url: CalDAV server URL
             caldav_username: CalDAV username
             caldav_password: CalDAV password
+            caldav_ssl_verify_cert: SSL verification flag or CA bundle path
             db_path: Path to SQLite database for state tracking
         """
         self.reminders_adapter = RemindersAdapter()
-        self.caldav_adapter = CalDAVAdapter(caldav_url, caldav_username, caldav_password)
+        self.caldav_adapter = CalDAVAdapter(
+            caldav_url,
+            caldav_username,
+            caldav_password,
+            ssl_verify_cert=caldav_ssl_verify_cert,
+        )
         self.db = RemindersDB(db_path)
 
     async def initialize(self) -> None:

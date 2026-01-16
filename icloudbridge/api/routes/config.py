@@ -56,6 +56,7 @@ async def get_config(config: ConfigDep):
         reminders_caldav_username=config.reminders.caldav_username,
         reminders_sync_mode=config.reminders.sync_mode,
         reminders_calendar_mappings=config.reminders.calendar_mappings or {},
+        reminders_caldav_ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
         passwords_provider=config.passwords.provider,
         passwords_vaultwarden_url=config.passwords.vaultwarden_url,
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
@@ -128,6 +129,9 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
     if update.reminders_sync_mode is not None:
         config.reminders.sync_mode = update.reminders_sync_mode
         logger.info(f"Updated sync mode: {update.reminders_sync_mode}")
+    if update.reminders_caldav_ssl_verify_cert is not None:
+        config.reminders.caldav_ssl_verify_cert = update.reminders_caldav_ssl_verify_cert
+        logger.info(f"Updated CalDAV SSL verify setting: {update.reminders_caldav_ssl_verify_cert}")
     if update.reminders_calendar_mappings is not None:
         caldav_lookup: dict[str, str] = {}
         if config.reminders.caldav_url and config.reminders.caldav_username:
@@ -137,6 +141,7 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
                     config.reminders.caldav_url,
                     config.reminders.caldav_username,
                     password,
+                    ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
                 )
                 if await adapter.connect():
                     calendars = await adapter.list_calendars()
@@ -193,9 +198,11 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
         config.passwords.vaultwarden_email = update.passwords_vaultwarden_email
     # Handle VaultWarden credentials (password, client_id, client_secret)
     # Support partial updates: can update any field without re-entering others
-    if (update.passwords_vaultwarden_password is not None and update.passwords_vaultwarden_password != "") or \
-       update.passwords_vaultwarden_client_id is not None or \
-       update.passwords_vaultwarden_client_secret is not None:
+    if config.passwords.enabled and (
+        (update.passwords_vaultwarden_password is not None and update.passwords_vaultwarden_password != "") or
+        (update.passwords_vaultwarden_client_id is not None and update.passwords_vaultwarden_client_id != "") or
+        (update.passwords_vaultwarden_client_secret is not None and update.passwords_vaultwarden_client_secret != "")
+    ):
         try:
             email = update.passwords_vaultwarden_email or config.passwords.vaultwarden_email
             if not email:
@@ -300,6 +307,7 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
         reminders_caldav_username=config.reminders.caldav_username,
         reminders_sync_mode=config.reminders.sync_mode,
         reminders_calendar_mappings=config.reminders.calendar_mappings or {},
+        reminders_caldav_ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
         passwords_vaultwarden_url=config.passwords.vaultwarden_url,
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
         photos_default_album=config.photos.default_album,
@@ -501,6 +509,7 @@ async def test_connection(service: str, config: ConfigDep):
                 config.reminders.caldav_url,
                 config.reminders.caldav_username,
                 password,
+                ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
             )
 
             # Try to connect and list calendars

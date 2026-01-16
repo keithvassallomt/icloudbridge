@@ -44,7 +44,7 @@ async def get_version():
     """
     return VersionResponse(
         version=__version__,
-        python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.patch}",
+        python_version=f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
     )
 
 
