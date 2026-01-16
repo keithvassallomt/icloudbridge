@@ -154,14 +154,15 @@ final class RuntimeInstaller {
         let env = [
             "BUNDLE_APP_CONFIG": gemHome.appendingPathComponent(".bundle").path,
             "BUNDLE_PATH": gemHome.path,
-            "BUNDLE_WITHOUT": "development test"
+            "BUNDLE_WITHOUT": "development test",
+            "BUNDLE_DEPLOYMENT": "true"
         ]
         let rubyLog = logFile(named: "ruby-install.log")
         resetLog(at: rubyLog)
         updateRuby(progress: 0.4, message: "Installing Ruby gems", running: true, succeeded: false)
         let result = Shell.run(
             brewRuby.path,
-            ["-S", "bundle", "install", "--deployment", "--path", gemHome.path, "--gemfile", gemfile.path],
+            ["-S", "bundle", "install", "--gemfile", gemfile.path],
             environment: env
         )
         appendLog(result.output, to: rubyLog)

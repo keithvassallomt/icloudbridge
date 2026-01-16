@@ -54,15 +54,17 @@ Before you begin, ensure you have:
 
 - **macOS 13.0+** (Ventura or later)
 - **Xcode Command Line Tools**: Install with `xcode-select --install`
-- **Python 3.11 or 3.12**: `brew install python@3.11`
+- **Python >= 3.11**: `brew install python3`
 - **Poetry**: Python dependency management - `pipx install poetry`
 - **Node.js 18+**: `brew install node`
+- **Ruby >= 3.0**: For Notes Ripper - `brew install ruby`
 - **Just**: Command runner - `brew install just`
 
 Quick install (Homebrew):
 ```bash
-brew install python@3.11 node just
+brew install python3 node just ruby
 pipx install poetry
+just install
 ```
 
 ### Getting Started

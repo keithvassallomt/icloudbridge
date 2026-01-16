@@ -1,12 +1,21 @@
 source "https://rubygems.org"
 
-# Gems owned by Ruby directly
-gem 'cgi',"~> 0.3" # Ruby official
-gem 'csv', "~> 3.3" # Ruby Official
-gem 'fileutils', "~> 1.4" # Ruby official
-gem 'openssl', ">= 3.2" # Ruby official
-gem 'rake', "~> 13.2" # Ruby official
-gem 'zlib', "~> 1.1" # Ruby official
+# Gems removed from Ruby stdlib in 3.4/4.0 - must be explicitly included
+gem 'base64'       # Removed in Ruby 3.4
+gem 'bigdecimal'   # Removed in Ruby 3.4
+gem 'cgi', "~> 0.3"
+gem 'csv', "~> 3.3"
+gem 'digest'       # Removed in Ruby 3.4 (used by CFPropertyList)
+gem 'fileutils', "~> 1.4"
+gem 'json'         # Removed in Ruby 3.4
+gem 'logger'       # Removed in Ruby 4.0
+gem 'nkf'          # Removed in Ruby 3.4 (provides kconv, used by CFPropertyList)
+gem 'openssl', ">= 3.2"
+gem 'optparse'     # Removed in Ruby 3.4
+gem 'pathname'     # Removed in Ruby 3.4
+gem 'rake', "~> 13.2"
+gem 'rexml'        # Removed in Ruby 3.4 (used by CFPropertyList)
+gem 'zlib', "~> 1.1"
 
 # Gems owned by Google
 gem 'google-protobuf', ">= 4.26" # Google official

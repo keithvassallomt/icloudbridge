@@ -1,58 +1,42 @@
 GEM
   remote: https://rubygems.org/
   specs:
-    CFPropertyList (3.0.7)
-      base64
-      nkf
-      rexml
+    CFPropertyList (3.0.8)
     aes_key_wrap (1.1.0)
     base64 (0.3.0)
-    bigdecimal (3.3.1)
-    cgi (0.5.0)
+    bigdecimal (4.0.1)
+    cgi (0.5.1)
     csv (3.3.5)
     diff-lcs (1.6.2)
+    digest (3.2.1)
     fileutils (1.8.0)
-    google-protobuf (4.33.0)
+    google-protobuf (4.33.4)
       bigdecimal
       rake (>= 13)
-    google-protobuf (4.33.0-aarch64-linux-gnu)
-      bigdecimal
-      rake (>= 13)
-    google-protobuf (4.33.0-aarch64-linux-musl)
-      bigdecimal
-      rake (>= 13)
-    google-protobuf (4.33.0-arm64-darwin)
-      bigdecimal
-      rake (>= 13)
-    google-protobuf (4.33.0-x86_64-darwin)
-      bigdecimal
-      rake (>= 13)
-    google-protobuf (4.33.0-x86_64-linux-gnu)
-      bigdecimal
-      rake (>= 13)
-    google-protobuf (4.33.0-x86_64-linux-musl)
-      bigdecimal
-      rake (>= 13)
+    json (2.18.0)
     keyed_archive (1.1.0)
       CFPropertyList (~> 3.0)
+    logger (1.7.0)
     nkf (0.2.0)
-    nokogiri (1.18.10-aarch64-linux-gnu)
+    nokogiri (1.19.0-aarch64-linux-gnu)
       racc (~> 1.4)
-    nokogiri (1.18.10-aarch64-linux-musl)
+    nokogiri (1.19.0-aarch64-linux-musl)
       racc (~> 1.4)
-    nokogiri (1.18.10-arm-linux-gnu)
+    nokogiri (1.19.0-arm-linux-gnu)
       racc (~> 1.4)
-    nokogiri (1.18.10-arm-linux-musl)
+    nokogiri (1.19.0-arm-linux-musl)
       racc (~> 1.4)
-    nokogiri (1.18.10-arm64-darwin)
+    nokogiri (1.19.0-arm64-darwin)
       racc (~> 1.4)
-    nokogiri (1.18.10-x86_64-darwin)
+    nokogiri (1.19.0-x86_64-darwin)
       racc (~> 1.4)
-    nokogiri (1.18.10-x86_64-linux-gnu)
+    nokogiri (1.19.0-x86_64-linux-gnu)
       racc (~> 1.4)
-    nokogiri (1.18.10-x86_64-linux-musl)
+    nokogiri (1.19.0-x86_64-linux-musl)
       racc (~> 1.4)
-    openssl (3.3.2)
+    openssl (4.0.0)
+    optparse (0.8.1)
+    pathname (0.4.0)
     racc (1.8.1)
     rake (13.3.1)
     rexml (3.4.4)
@@ -69,14 +53,14 @@ GEM
       diff-lcs (>= 1.2.0, < 2.0)
       rspec-support (~> 3.13.0)
     rspec-support (3.13.6)
-    sqlite3 (2.8.0-aarch64-linux-gnu)
-    sqlite3 (2.8.0-aarch64-linux-musl)
-    sqlite3 (2.8.0-arm-linux-gnu)
-    sqlite3 (2.8.0-arm-linux-musl)
-    sqlite3 (2.8.0-arm64-darwin)
-    sqlite3 (2.8.0-x86_64-darwin)
-    sqlite3 (2.8.0-x86_64-linux-gnu)
-    sqlite3 (2.8.0-x86_64-linux-musl)
+    sqlite3 (2.9.0-aarch64-linux-gnu)
+    sqlite3 (2.9.0-aarch64-linux-musl)
+    sqlite3 (2.9.0-arm-linux-gnu)
+    sqlite3 (2.9.0-arm-linux-musl)
+    sqlite3 (2.9.0-arm64-darwin)
+    sqlite3 (2.9.0-x86_64-darwin)
+    sqlite3 (2.9.0-x86_64-linux-gnu)
+    sqlite3 (2.9.0-x86_64-linux-musl)
     zlib (1.1.0)
 
 PLATFORMS
@@ -92,17 +76,26 @@ PLATFORMS
 DEPENDENCIES
   CFPropertyList (>= 3.0.7)
   aes_key_wrap (~> 1.1)
+  base64
+  bigdecimal
   cgi (~> 0.3)
   csv (~> 3.3)
+  digest
   fileutils (~> 1.4)
   google-protobuf (>= 4.26)
+  json
   keyed_archive (~> 1.0)
+  logger
+  nkf
   nokogiri (>= 1.14)
   openssl (>= 3.2)
+  optparse
+  pathname
   rake (~> 13.2)
+  rexml
   rspec
   sqlite3 (>= 1.4)
   zlib (~> 1.1)
 
 BUNDLED WITH
-   2.7.2
+  4.0.3
