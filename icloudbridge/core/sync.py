@@ -638,34 +638,24 @@ class NotesSyncEngine:
                         logger.debug(f"New remote note but in export mode - skipping: {md_note.name}")
                         continue
 
-                    # Fallback: if no Apple note shares this normalized title, treat as orphan and delete
+                    # Check if an Apple note with a matching title already exists
+                    # If so, this will be handled by bootstrap reconciliation - skip it here
                     normalized_md = sanitize_filename(md_note.name).casefold()
                     apple_title_collision = any(
                         sanitize_filename(n.name).casefold() == normalized_md for n in apple_notes
                     )
 
-                    if is_bootstrap or not apple_title_collision:
-                        if skip_deletions:
-                            logger.info(
-                                "Remote-only note (no Apple match), skipping deletion (--skip-deletions): %s",
-                                md_note.name,
-                            )
-                            continue
-                        if dry_run:
-                            logger.info(f"[DRY RUN] Would delete remote-only markdown: {md_note.name}")
-                            stats["would_delete_remote"] += 1
-                            record_detail("markdown", "deleted", md_note.name)
-                            continue
-
-                        logger.info(
-                            "Remote-only note not present in Apple; deleting markdown: %s",
+                    if apple_title_collision:
+                        # A matching Apple note exists but wasn't paired by bootstrap reconciliation
+                        # (could be due to duplicate titles). Skip to avoid creating duplicates.
+                        logger.debug(
+                            "Remote note has matching Apple title, skipping to avoid duplicate: %s",
                             md_note.name,
                         )
-                        await self.markdown_adapter.delete_note(Path(remote_path_str))
-                        stats["deleted_remote"] += 1
-                        record_detail("markdown", "deleted", md_note.name)
                         continue
 
+                    # No matching Apple note - this is a genuinely new markdown file
+                    # Create it in Apple Notes
                     if dry_run:
                         logger.info(f"[DRY RUN] Would create local: {md_note.name}")
                     else:
