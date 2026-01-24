@@ -101,10 +101,12 @@ class ConfigResponse(BaseModel):
     notes_folder_mappings: dict[str, dict[str, str]] = Field(default_factory=dict)
     reminders_caldav_url: str | None = None
     reminders_caldav_username: str | None = None
+    reminders_nextcloud_url: str | None = None
     reminders_sync_mode: str | None = None
     reminders_calendar_mappings: dict[str, str] = Field(default_factory=dict)
     reminders_caldav_ssl_verify_cert: bool | str | None = None
     passwords_provider: str | None = None
+    passwords_ssl_verify_cert: bool | str | None = None
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
     passwords_nextcloud_url: str | None = None
@@ -155,6 +157,10 @@ class ConfigUpdateRequest(BaseModel):
     passwords_nextcloud_app_password: str | None = Field(
         default=None,
         description="Nextcloud app password will be stored in system keyring",
+    )
+    passwords_ssl_verify_cert: bool | str | None = Field(
+        default=None,
+        description="Enable/disable Passwords provider SSL verification or provide a CA bundle path",
     )
     photos_default_album: str | None = None
     photo_sources: dict[str, dict[str, str | bool]] | None = None

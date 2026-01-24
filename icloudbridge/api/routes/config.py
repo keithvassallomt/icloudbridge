@@ -43,6 +43,11 @@ async def get_config(config: ConfigDep):
 
     Returns the current configuration without sensitive data (passwords).
     """
+    # Derive Nextcloud URL from CalDAV URL if it follows the Nextcloud pattern
+    reminders_nextcloud_url = None
+    if config.reminders.caldav_url and "/remote.php/dav" in config.reminders.caldav_url:
+        reminders_nextcloud_url = config.reminders.caldav_url.replace("/remote.php/dav", "").rstrip("/")
+
     return ConfigResponse(
         data_dir=str(config.general.data_dir),
         config_file=str(config.default_config_path) if config.default_config_path else None,
@@ -54,10 +59,12 @@ async def get_config(config: ConfigDep):
         notes_folder_mappings=_serialize_folder_mappings(config.notes.folder_mappings),
         reminders_caldav_url=config.reminders.caldav_url,
         reminders_caldav_username=config.reminders.caldav_username,
+        reminders_nextcloud_url=reminders_nextcloud_url,
         reminders_sync_mode=config.reminders.sync_mode,
         reminders_calendar_mappings=config.reminders.calendar_mappings or {},
         reminders_caldav_ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
         passwords_provider=config.passwords.provider,
+        passwords_ssl_verify_cert=config.passwords.passwords_ssl_verify_cert,
         passwords_vaultwarden_url=config.passwords.vaultwarden_url,
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
         passwords_nextcloud_url=config.passwords.nextcloud_url,
@@ -132,6 +139,9 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
     if update.reminders_caldav_ssl_verify_cert is not None:
         config.reminders.caldav_ssl_verify_cert = update.reminders_caldav_ssl_verify_cert
         logger.info(f"Updated CalDAV SSL verify setting: {update.reminders_caldav_ssl_verify_cert}")
+    if update.passwords_ssl_verify_cert is not None:
+        config.passwords.passwords_ssl_verify_cert = update.passwords_ssl_verify_cert
+        logger.info(f"Updated Passwords SSL verify setting: {update.passwords_ssl_verify_cert}")
     if update.reminders_calendar_mappings is not None:
         caldav_lookup: dict[str, str] = {}
         if config.reminders.caldav_url and config.reminders.caldav_username:
@@ -294,6 +304,11 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
             detail=f"Failed to save configuration: {str(e)}"
         )
 
+    # Derive Nextcloud URL from CalDAV URL if it follows the Nextcloud pattern
+    reminders_nextcloud_url = None
+    if config.reminders.caldav_url and "/remote.php/dav" in config.reminders.caldav_url:
+        reminders_nextcloud_url = config.reminders.caldav_url.replace("/remote.php/dav", "").rstrip("/")
+
     return ConfigResponse(
         data_dir=str(config.general.data_dir),
         config_file=str(config.default_config_path) if config.default_config_path else None,
@@ -305,9 +320,11 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
         notes_folder_mappings=_serialize_folder_mappings(config.notes.folder_mappings),
         reminders_caldav_url=config.reminders.caldav_url,
         reminders_caldav_username=config.reminders.caldav_username,
+        reminders_nextcloud_url=reminders_nextcloud_url,
         reminders_sync_mode=config.reminders.sync_mode,
         reminders_calendar_mappings=config.reminders.calendar_mappings or {},
         reminders_caldav_ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
+        passwords_ssl_verify_cert=config.passwords.passwords_ssl_verify_cert,
         passwords_vaultwarden_url=config.passwords.vaultwarden_url,
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
         photos_default_album=config.photos.default_album,

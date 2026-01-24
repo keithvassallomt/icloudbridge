@@ -37,6 +37,7 @@ class VaultwardenAPIClient:
         password: str,
         client_id: str | None = None,
         client_secret: str | None = None,
+        ssl_verify_cert: bool | str = True,
     ):
         """
         Initialize VaultWarden API client.
@@ -47,10 +48,12 @@ class VaultwardenAPIClient:
             password: User password (master password)
             client_id: OAuth client ID (optional)
             client_secret: OAuth client secret (optional)
+            ssl_verify_cert: SSL verification flag or CA bundle path
         """
         self.url = url.rstrip("/")
         self.email = email
         self.password = password
+        self.ssl_verify_cert = ssl_verify_cert
         parsed = urlparse(self.url)
         host = parsed.hostname or ""
         scheme = parsed.scheme or "https"
@@ -90,10 +93,35 @@ class VaultwardenAPIClient:
         if host_is_bitwarden:
             default_headers["Bitwarden-Client-Name"] = "web"
             default_headers["Bitwarden-Client-Version"] = self.BITWARDEN_WEB_CLIENT_VERSION
-
-        self._client = httpx.AsyncClient(timeout=30.0, headers=default_headers)
+        self._inject_truststore_if_available()
+        self._client = httpx.AsyncClient(
+            timeout=30.0,
+            headers=default_headers,
+            verify=self.ssl_verify_cert,
+            follow_redirects=True,
+        )
         self._master_key: bytes | None = None
         self._user_key: bytes | None = None
+
+    _truststore_injected = False
+
+    def _inject_truststore_if_available(self) -> None:
+        """Try to make HTTPX use the system trust store via truststore."""
+        if self.ssl_verify_cert is False:
+            logger.debug("Vaultwarden SSL verification disabled; skipping truststore injection")
+            return
+        if VaultwardenAPIClient._truststore_injected:
+            return
+        try:
+            import truststore
+
+            truststore.inject_into_ssl()
+            VaultwardenAPIClient._truststore_injected = True
+            logger.info("Using system trust store for Vaultwarden SSL verification via truststore")
+        except ImportError:
+            logger.debug("truststore not installed; using default cert bundle")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning(f"Failed to inject system trust store for Vaultwarden: {exc}")
 
     async def authenticate(self) -> None:
         """

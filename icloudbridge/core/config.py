@@ -202,6 +202,7 @@ class PasswordsConfig(BaseSettings):
 
     enabled: bool = True
     provider: str = "vaultwarden"  # "vaultwarden" or "nextcloud"
+    passwords_ssl_verify_cert: bool | str = True
 
     # VaultWarden configuration
     vaultwarden_url: str | None = None

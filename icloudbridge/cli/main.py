@@ -962,21 +962,19 @@ def reminders_sync(
             else:
                 # Manual mode: single calendar pair
                 # Use legacy config or CLI args
-                if not apple_calendar:
-                    apple_calendar = cfg.reminders.apple_calendar
-                if not caldav_calendar:
-                    caldav_calendar = cfg.reminders.caldav_calendar
+                effective_apple_cal = apple_calendar or cfg.reminders.apple_calendar
+                effective_caldav_cal = caldav_calendar or cfg.reminders.caldav_calendar
 
-                if not apple_calendar or not caldav_calendar:
+                if not effective_apple_cal or not effective_caldav_cal:
                     console.print("[red]Manual mode requires --apple-calendar and --caldav-calendar[/red]")
                     console.print("[dim]Or use auto mode with --auto (or set sync_mode=auto in config)[/dim]")
                     raise typer.Exit(1)
 
-                console.print(f"[cyan]Manual Mode:[/cyan] Syncing {apple_calendar} → {caldav_calendar}\n")
+                console.print(f"[cyan]Manual Mode:[/cyan] Syncing {effective_apple_cal} → {effective_caldav_cal}\n")
 
                 stats = await sync_engine.sync_calendar(
-                    apple_calendar_name=apple_calendar,
-                    caldav_calendar_name=caldav_calendar,
+                    apple_calendar_name=effective_apple_cal,
+                    caldav_calendar_name=effective_caldav_cal,
                     dry_run=dry_run,
                     skip_deletions=skip_deletions,
                     deletion_threshold=deletion_threshold,
@@ -1896,6 +1894,7 @@ def passwords_sync(
             password=credentials["password"],
             client_id=credentials.get("client_id"),
             client_secret=credentials.get("client_secret"),
+            ssl_verify_cert=cfg.passwords.passwords_ssl_verify_cert,
         )
 
     elif provider_name == "nextcloud":
@@ -1924,6 +1923,7 @@ def passwords_sync(
             url=url,
             username=credentials["username"],
             app_password=credentials["app_password"],
+            ssl_verify_cert=cfg.passwords.passwords_ssl_verify_cert,
         )
 
     else:

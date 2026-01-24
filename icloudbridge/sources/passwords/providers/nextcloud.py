@@ -29,6 +29,7 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
         url: str,
         username: str,
         app_password: str,
+        ssl_verify_cert: bool | str = True,
     ):
         """
         Initialize Nextcloud Passwords provider.
@@ -42,6 +43,8 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
         self.username = username
         self.app_password = app_password
         self.api_base = f"{self.url}/index.php/apps/passwords/api/1.0"
+        self.ssl_verify_cert = ssl_verify_cert
+        self._inject_truststore_if_available()
 
         # HTTP Basic Auth
         self._client = httpx.AsyncClient(
@@ -53,6 +56,7 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
                 "Content-Type": "application/json",
                 "OCS-APIRequest": "true",  # Required for Nextcloud APIs
             },
+            verify=self.ssl_verify_cert,
         )
 
         self._folder_cache: dict[str, str] = {}  # name -> uuid mapping
@@ -570,3 +574,23 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
     async def close(self) -> None:
         """Close HTTP client connections."""
         await self._client.aclose()
+
+    _truststore_injected = False
+
+    def _inject_truststore_if_available(self) -> None:
+        """Try to make HTTPX use the system trust store via truststore."""
+        if self.ssl_verify_cert is False:
+            logger.debug("Nextcloud SSL verification disabled; skipping truststore injection")
+            return
+        if NextcloudPasswordsProvider._truststore_injected:
+            return
+        try:
+            import truststore
+
+            truststore.inject_into_ssl()
+            NextcloudPasswordsProvider._truststore_injected = True
+            logger.info("Using system trust store for Nextcloud Passwords via truststore")
+        except ImportError:
+            logger.debug("truststore not installed; using default cert bundle")
+        except Exception as exc:  # pragma: no cover
+            logger.warning(f"Failed to inject system trust store for Nextcloud Passwords: {exc}")

@@ -89,6 +89,7 @@ async def _build_password_provider(config: ConfigDep):
             password=credentials["password"],
             client_id=credentials.get("client_id"),
             client_secret=credentials.get("client_secret"),
+            ssl_verify_cert=config.passwords.passwords_ssl_verify_cert,
         )
 
     await provider.authenticate()

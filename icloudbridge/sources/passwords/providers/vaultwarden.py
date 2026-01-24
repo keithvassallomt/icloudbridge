@@ -25,6 +25,7 @@ class VaultwardenProvider(PasswordProviderBase):
         password: str,
         client_id: str | None = None,
         client_secret: str | None = None,
+        ssl_verify_cert: bool | str = True,
     ):
         """
         Initialize Vaultwarden provider.
@@ -35,6 +36,7 @@ class VaultwardenProvider(PasswordProviderBase):
             password: Master password
             client_id: OAuth client ID (optional)
             client_secret: OAuth client secret (optional)
+            ssl_verify_cert: SSL verification flag or CA bundle path
         """
         self.client = VaultwardenAPIClient(
             url=url,
@@ -42,6 +44,7 @@ class VaultwardenProvider(PasswordProviderBase):
             password=password,
             client_id=client_id,
             client_secret=client_secret,
+            ssl_verify_cert=ssl_verify_cert,
         )
         self._folder_cache: dict[str, str] = {}  # name -> id mapping
 

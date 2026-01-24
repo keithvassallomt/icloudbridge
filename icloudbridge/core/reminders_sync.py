@@ -125,6 +125,34 @@ class RemindersSyncEngine:
         await self.caldav_adapter.connect()
         logger.info("Reminders sync engine initialized")
 
+    def _make_dedup_key(
+        self, title: str | None, due_date: datetime | None, is_all_day: bool
+    ) -> str:
+        """
+        Create a deduplication key from title + due_date for matching reminders.
+
+        Used during bootstrap reconciliation to match reminders that exist on both
+        Apple and CalDAV but aren't yet tracked in the database.
+
+        Args:
+            title: Reminder title (normalized: lowercase, trimmed)
+            due_date: Due date (normalized by all-day status)
+            is_all_day: Whether this is an all-day reminder
+
+        Returns:
+            String key in format "normalized_title|date_part"
+        """
+        normalized_title = title.strip().casefold() if title else ""
+
+        if due_date is None:
+            date_part = "no-date"
+        elif is_all_day:
+            date_part = due_date.strftime("%Y-%m-%d")
+        else:
+            date_part = due_date.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M")
+
+        return f"{normalized_title}|{date_part}"
+
     async def sync_calendar(
         self,
         apple_calendar_name: str,
@@ -371,6 +399,9 @@ class RemindersSyncEngine:
         processed_local = set()
         processed_remote = set()
 
+        # Detect fresh setup (empty database) for bootstrap reconciliation
+        is_fresh_setup = len(db_mappings) == 0
+
         # Process all database mappings
         for local_uuid, mapping in db_mappings.items():
             remote_uid = mapping["remote_uid"]
@@ -432,15 +463,106 @@ class RemindersSyncEngine:
                 # Will be handled by database cleanup
                 pass
 
+        # --- Bootstrap reconciliation for fresh setup ---
+        # When database is empty but same reminders exist on both Apple and CalDAV,
+        # pair them by title + due_date to avoid creating duplicates.
+        if is_fresh_setup:
+            # Build candidate maps for unprocessed items
+            local_candidates: dict[str, EventKitReminder] = {}
+            remote_candidates: dict[str, CalDAVReminder] = {}
+            local_dupe_keys: set[str] = set()
+            remote_dupe_keys: set[str] = set()
+
+            for local_uuid, local_reminder in local_by_uuid.items():
+                if local_uuid in processed_local:
+                    continue
+                key = self._make_dedup_key(
+                    local_reminder.title, local_reminder.due_date, local_reminder.is_all_day
+                )
+                if key in local_candidates:
+                    local_dupe_keys.add(key)  # Multiple with same key - ambiguous
+                else:
+                    local_candidates[key] = local_reminder
+
+            for remote_uid, remote_todo in remote_by_uid.items():
+                if remote_uid in processed_remote:
+                    continue
+                key = self._make_dedup_key(
+                    remote_todo.summary, remote_todo.due_date, remote_todo.is_all_day
+                )
+                if key in remote_candidates:
+                    remote_dupe_keys.add(key)  # Multiple with same key - ambiguous
+                else:
+                    remote_candidates[key] = remote_todo
+
+            # Remove ambiguous keys (can't safely match when duplicates exist)
+            for key in local_dupe_keys:
+                local_candidates.pop(key, None)
+            for key in remote_dupe_keys:
+                remote_candidates.pop(key, None)
+
+            # Find matching pairs by title + due_date
+            matched_keys = set(local_candidates).intersection(remote_candidates)
+
+            for key in matched_keys:
+                local_reminder = local_candidates[key]
+                remote_todo = remote_candidates[key]
+
+                # Determine source of truth by most recent modification
+                local_mod = local_reminder.modification_date
+                remote_mod = remote_todo.last_modified
+
+                # Use a tolerance of 2 seconds when comparing timestamps
+                # CalDAV doesn't store microseconds, so after a sync the timestamps
+                # may differ by up to 1 second due to precision loss
+                time_diff = abs((local_mod - remote_mod).total_seconds())
+                timestamps_equal = time_diff < 2.0
+
+                if timestamps_equal:
+                    # Timestamps are essentially equal - no update needed
+                    plan["unchanged"].append(local_reminder.uuid)
+                    logger.info(
+                        f"Bootstrap match: '{local_reminder.title}' - unchanged "
+                        f"(diff={time_diff:.3f}s)"
+                    )
+                elif local_mod > remote_mod:
+                    # Local is newer - update remote with local data
+                    plan["update_remote"].append((remote_todo.uid, local_reminder, remote_todo))
+                    logger.info(
+                        f"Bootstrap match: '{local_reminder.title}' - local wins "
+                        f"(local={local_mod}, remote={remote_mod})"
+                    )
+                else:
+                    # Remote is newer - update local with remote data
+                    plan["update_local"].append((local_reminder.uuid, remote_todo, local_reminder))
+                    logger.info(
+                        f"Bootstrap match: '{local_reminder.title}' - remote wins "
+                        f"(local={local_mod}, remote={remote_mod})"
+                    )
+
+                processed_local.add(local_reminder.uuid)
+                processed_remote.add(remote_todo.uid)
+
+            if matched_keys:
+                logger.info(f"Bootstrap reconciliation matched {len(matched_keys)} reminders")
+
         # Process new local reminders (not in database)
+        # Skip completed reminders that aren't already mapped - don't sync historical completed items
         for local_uuid, local_reminder in local_by_uuid.items():
             if local_uuid not in processed_local:
+                if local_reminder.completed:
+                    logger.debug(f"Skipping new completed reminder: {local_reminder.title}")
+                    continue
                 plan["create_remote"].append(local_reminder)
                 processed_local.add(local_uuid)
 
         # Process new remote TODOs (not in database)
+        # Skip completed TODOs that aren't already mapped - don't sync historical completed items
         for remote_uid, remote_todo in remote_by_uid.items():
             if remote_uid not in processed_remote:
+                if remote_todo.completed:
+                    logger.debug(f"Skipping new completed TODO: {remote_todo.summary}")
+                    continue
                 plan["create_local"].append(remote_todo)
                 processed_remote.add(remote_uid)
 

@@ -63,6 +63,7 @@ export interface AppConfig {
   reminders_nextcloud_url?: string;
   passwords_enabled: boolean;
   passwords_provider?: 'vaultwarden' | 'nextcloud';
+  passwords_ssl_verify_cert?: boolean | string;
   passwords_vaultwarden_url?: string;
   passwords_vaultwarden_email?: string;
   passwords_vaultwarden_password?: string;

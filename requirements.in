@@ -1240,3 +1240,4 @@ x-wr-timezone==2.0.1 ; python_version >= "3.11" and python_version < "3.14" \
 zipp==3.23.0 ; python_version >= "3.11" and python_version < "3.12" \
     --hash=sha256:071652d6115ed432f5ce1d34c336c0adfd6a884660d1e9712a256d3d3bd4b14e \
     --hash=sha256:a07157588a12518c9d4034df3fbbee09c814741a33ff63c05fa29d26a2404166
+truststore==0.10.4 ; python_version >= "3.11" and python_version < "3.14"
