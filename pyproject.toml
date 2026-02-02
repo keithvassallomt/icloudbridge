@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "icloudbridge"
-version = "0.1.6"
+version = "0.1.7"
 description = "Simplified API-based synchronization for Apple Notes & Reminders to NextCloud, CalDAV, and local folders"
 authors = ["Keith Vassallo <keith@vassallo.cloud>"]
 readme = "README.md"
