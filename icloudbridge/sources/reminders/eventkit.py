@@ -424,7 +424,7 @@ class RemindersAdapter:
         # Extract alarms
         alarms = []
         if ek_reminder.hasAlarms():
-            for alarm in ek_reminder.alarms():
+            for alarm in ek_reminder.alarms() or []:
                 alarm_obj = ReminderAlarm()
                 if alarm.absoluteDate():
                     alarm_obj.trigger_date = normalize_date(alarm.absoluteDate())
@@ -435,7 +435,7 @@ class RemindersAdapter:
         # Extract recurrence rules
         recurrence_rules = []
         if ek_reminder.hasRecurrenceRules():
-            for rule in ek_reminder.recurrenceRules():
+            for rule in ek_reminder.recurrenceRules() or []:
                 freq_map = {
                     EKRecurrenceFrequencyDaily: "DAILY",
                     EKRecurrenceFrequencyWeekly: "WEEKLY",
@@ -715,8 +715,8 @@ class RemindersAdapter:
 
         # Update alarms (replace all)
         if alarms is not None:
-            # Remove existing alarms
-            for alarm in reminder.alarms():
+            # Remove existing alarms (alarms() can return None)
+            for alarm in reminder.alarms() or []:
                 reminder.removeAlarm_(alarm)
             # Add new alarms
             for alarm_data in alarms:
@@ -729,8 +729,8 @@ class RemindersAdapter:
 
         # Update recurrence rules (replace all)
         if recurrence_rules is not None:
-            # Remove existing rules
-            for rule in reminder.recurrenceRules():
+            # Remove existing rules (recurrenceRules() can return None)
+            for rule in reminder.recurrenceRules() or []:
                 reminder.removeRecurrenceRule_(rule)
             # Add new rules
             for rec_data in recurrence_rules:
