@@ -10,7 +10,7 @@
       ],
       "type" : 0
     },
-    "codeSigningIdentityString" : "2F001C8D6864E389A1C6E5D3B8F3BF8B19332801",
+    "codeSigningIdentityString" : "F7692EAD6C114A4A0B3F99605ED9D9B2FC951E7A",
     "defaultLicenseLanguage" : "English",
     "format" : "APFS",
     "iconPreviewVisible" : false,
@@ -43,7 +43,7 @@
     "windowContentHeight" : 500,
     "windowContents" : [
       {
-        "filePath" : "\/Users\/keithv\/LocalCode\/keithvassallomt\/iCloudBridge\/build\/Release\/iCloudBridge.app",
+        "filePath" : "\/Users\/keith\/LocalCode\/keithvassallomt\/icloudbridge\/build\/Release\/iCloudBridge.app",
         "iconSize" : 100,
         "invisible" : false,
         "isAnAlias" : false,

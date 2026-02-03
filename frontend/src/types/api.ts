@@ -133,6 +133,7 @@ export interface PasswordImportStats {
 export interface PasswordEntryInfo {
   title: string;
   username: string;
+  action?: 'create' | 'update' | 'delete';
 }
 
 export interface PasswordPushStats {

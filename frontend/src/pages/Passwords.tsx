@@ -12,6 +12,25 @@ import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
 
 type PasswordProvider = 'vaultwarden' | 'nextcloud';
 
+function ActionBadge({ action }: { action?: string }) {
+  if (!action) return null;
+
+  const variants: Record<string, { label: string; className: string }> = {
+    create: { label: 'New', className: 'bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30' },
+    update: { label: 'Update', className: 'bg-blue-500/20 text-blue-700 dark:text-blue-400 border-blue-500/30' },
+    delete: { label: 'Delete', className: 'bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/30' },
+  };
+
+  const variant = variants[action];
+  if (!variant) return null;
+
+  return (
+    <Badge variant="outline" className={`text-[9px] px-1.5 py-0 h-4 ${variant.className}`}>
+      {variant.label}
+    </Badge>
+  );
+}
+
 function DownloadLink({ info }: { info: PasswordsDownloadInfo }) {
   const [hasExpired, setHasExpired] = useState(false);
   const [countdown, setCountdown] = useState('');
@@ -139,11 +158,14 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                       <div className="rounded-md border bg-muted/20 max-h-48 overflow-y-auto">
                         <div className="p-2 space-y-1">
                           {stats.pull.entries.map((entry, idx) => (
-                            <div key={idx} className="text-xs p-1.5 rounded hover:bg-muted/50">
-                              <div className="font-medium">{entry.title}</div>
-                              {entry.username && (
-                                <div className="text-muted-foreground text-[10px]">{entry.username}</div>
-                              )}
+                            <div key={idx} className="text-xs p-1.5 rounded hover:bg-muted/50 flex items-start gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium truncate">{entry.title}</div>
+                                {entry.username && (
+                                  <div className="text-muted-foreground text-[10px] truncate">{entry.username}</div>
+                                )}
+                              </div>
+                              <ActionBadge action={entry.action} />
                             </div>
                           ))}
                         </div>
@@ -209,11 +231,14 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                       <div className="rounded-md border bg-muted/20 max-h-48 overflow-y-auto">
                         <div className="p-2 space-y-1">
                           {stats.push.entries.map((entry, idx) => (
-                            <div key={idx} className="text-xs p-1.5 rounded hover:bg-muted/50">
-                              <div className="font-medium">{entry.title}</div>
-                              {entry.username && (
-                                <div className="text-muted-foreground text-[10px]">{entry.username}</div>
-                              )}
+                            <div key={idx} className="text-xs p-1.5 rounded hover:bg-muted/50 flex items-start gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium truncate">{entry.title}</div>
+                                {entry.username && (
+                                  <div className="text-muted-foreground text-[10px] truncate">{entry.username}</div>
+                                )}
+                              </div>
+                              <ActionBadge action={entry.action} />
                             </div>
                           ))}
                         </div>

@@ -84,7 +84,8 @@ final class RuntimeInstaller {
         let venvDir = appSupportBase.appendingPathComponent("venv", isDirectory: true)
         let venvPython = venvDir.appendingPathComponent("bin/python3")
         let pyVersion = Shell.run(python.path, ["--version"]).output.trimmingCharacters(in: .whitespacesAndNewlines)
-        let cacheKey = requirementsFingerprint(requirements, pythonVersion: pyVersion)
+        let pyproject = resources.appendingPathComponent("pyproject.toml")
+        let cacheKey = requirementsFingerprint(requirements, pyproject: pyproject, pythonVersion: pyVersion)
         let marker = venvDir.appendingPathComponent(".fingerprint")
 
         if fm.fileExists(atPath: venvPython.path),
@@ -199,9 +200,10 @@ final class RuntimeInstaller {
         }
     }
 
-    private func requirementsFingerprint(_ url: URL, pythonVersion: String) -> String {
-        let contents = (try? String(contentsOf: url)) ?? ""
-        return pythonVersion + "|" + contents
+    private func requirementsFingerprint(_ url: URL, pyproject: URL, pythonVersion: String) -> String {
+        let reqContents = (try? String(contentsOf: url)) ?? ""
+        let pyprojectContents = (try? String(contentsOf: pyproject)) ?? ""
+        return pythonVersion + "|" + reqContents + "|" + pyprojectContents
     }
 
     private func locateBrewPython() -> URL? {

@@ -576,6 +576,14 @@ class PasswordsSyncEngine:
 
         if provider and not apple:
             # Modified in provider, deleted in Apple
+            # If no local DB entry exists for this password, it was likely created
+            # in the provider and never existed in Apple - don't delete it
+            if provider_db is None:
+                logger.info(
+                    f"Password '{provider.title}' has no local DB entry - "
+                    "assuming it originated from provider, will create in Apple"
+                )
+                return "create_apple"
             if provider_modified > last_sync:
                 return "create_apple"  # Provider modified after deletion
             return "delete_provider"  # Respect Apple deletion
@@ -667,7 +675,11 @@ class PasswordsSyncEngine:
         bulk_push: bool,
     ) -> dict:
         logger.info("Running push phase (simulate=%s)", simulate)
-        import_stats = await self.import_apple_csv(apple_csv_path)
+        # Only import CSV to database during actual sync, not simulation
+        if not simulate:
+            import_stats = await self.import_apple_csv(apple_csv_path)
+        else:
+            import_stats = {"new": 0, "updated": 0, "duplicates": 0, "unchanged": 0, "errors": 0}
 
         apple_db_entries = await self.db.get_all_entries(source="apple")
         apple_entries = ApplePasswordsCSVParser.parse_file(apple_csv_path)
@@ -710,6 +722,9 @@ class PasswordsSyncEngine:
             apple_map=apple_map, provider_map=provider_map, mappings=mapping_dict
         )
 
+        # Track entries with their actions for UI display
+        entries_with_actions: list[dict] = []
+
         # Execute deletions (Apple deleted → delete from provider)
         deleted_count = 0
         updated_count = 0
@@ -724,6 +739,11 @@ class PasswordsSyncEngine:
                                 title=key[0], url=key[1], username=key[2], provider_type=provider_type
                             )
                             deleted_count += 1
+                            entries_with_actions.append({
+                                "title": key[0],
+                                "username": key[2] or "",
+                                "action": "delete",
+                            })
                             logger.info(f"Deleted from provider: {key[0]}")
                         else:
                             logger.warning(f"Failed to delete from provider: {key[0]}")
@@ -733,6 +753,11 @@ class PasswordsSyncEngine:
                     logger.warning(f"No provider_id for {key[0]}, cannot delete")
             else:
                 deleted_count += 1
+                entries_with_actions.append({
+                    "title": key[0],
+                    "username": key[2] or "",
+                    "action": "delete",
+                })
 
         # Resolve conflicts
         for key, apple, provider_entry, mapping in sync_plan["conflicts"]:
@@ -750,6 +775,11 @@ class PasswordsSyncEngine:
                                 await self.db.delete_password_mapping(
                                     title=key[0], url=key[1], username=key[2], provider_type=provider_type
                                 )
+                                entries_with_actions.append({
+                                    "title": key[0],
+                                    "username": key[2] or "",
+                                    "action": "delete",
+                                })
                                 logger.info(f"Conflict resolved: deleted {key[0]} from provider")
                         else:
                             logger.warning(f"Cannot delete {key[0]} from provider: no provider_id in mapping")
@@ -759,6 +789,12 @@ class PasswordsSyncEngine:
                 provider_id = mapping.get("provider_id") if mapping else (provider_entry.provider_id if provider_entry else None)
                 if provider_id:
                     deleted_count += 1
+                    if simulate:
+                        entries_with_actions.append({
+                            "title": key[0],
+                            "username": key[2] or "",
+                            "action": "delete",
+                        })
                 else:
                     logger.warning(f"[Simulation] Cannot delete {key[0]}: no provider_id")
 
@@ -787,6 +823,11 @@ class PasswordsSyncEngine:
                                     url=apple.url,
                                 )
                                 updated_count += 1
+                                entries_with_actions.append({
+                                    "title": apple.title,
+                                    "username": apple.username or "",
+                                    "action": "update",
+                                })
                                 logger.info(f"Conflict resolved: updated {key[0]} in provider")
                             else:
                                 logger.warning(f"Conflict resolution failed: could not update {key[0]} in provider")
@@ -796,6 +837,12 @@ class PasswordsSyncEngine:
                         logger.warning(f"Cannot update {key[0]} in provider: no provider_id or apple entry")
                 else:
                     updated_count += 1
+                    if apple:
+                        entries_with_actions.append({
+                            "title": apple.title,
+                            "username": apple.username or "",
+                            "action": "update",
+                        })
 
             elif action == "delete_apple" and not simulate:
                 try:
@@ -831,6 +878,11 @@ class PasswordsSyncEngine:
                                 url=apple_entry.url,
                             )
                             updated_count += 1
+                            entries_with_actions.append({
+                                "title": apple_entry.title,
+                                "username": apple_entry.username or "",
+                                "action": "update",
+                            })
                             logger.info(f"Updated password in provider: {apple_entry.title}")
                         else:
                             logger.warning(f"Failed to update password in provider: {apple_entry.title}")
@@ -840,6 +892,11 @@ class PasswordsSyncEngine:
                     logger.warning(f"No provider_id for {key[0]}, cannot update")
             else:
                 updated_count += 1
+                entries_with_actions.append({
+                    "title": apple_entry.title,
+                    "username": apple_entry.username or "",
+                    "action": "update",
+                })
 
         logger.info(f"Push phase updates: {updated_count} entries updated in provider")
 
@@ -1032,10 +1089,13 @@ class PasswordsSyncEngine:
                 "errors": errors,
             }
 
-        # Collect entry titles for UI display - only include entries that will be created
-        entry_titles = [
-            {"title": entry.title, "username": entry.username} for entry in entries_that_will_be_created
-        ]
+        # Add created entries to the action list
+        for entry in entries_that_will_be_created:
+            entries_with_actions.append({
+                "title": entry.title,
+                "username": entry.username or "",
+                "action": "create",
+            })
 
         # Update mappings for successfully created entries
         # We need to fetch back from provider to get cipher IDs
@@ -1095,7 +1155,7 @@ class PasswordsSyncEngine:
             "errors": push_stats.get("errors") if isinstance(push_stats, dict) else [],
             "folders_created": folders_created,
             "simulate": simulate,
-            "entries": entry_titles,
+            "entries": entries_with_actions,
             "deleted": deleted_count,
         }
 
@@ -1201,6 +1261,9 @@ class PasswordsSyncEngine:
             apple_map=apple_map, provider_map=provider_map, mappings=mapping_dict
         )
 
+        # Track entries with their actions for UI display
+        entries_with_actions: list[dict] = []
+
         # Handle deletions (Provider deleted → delete from Apple)
         # Note: We can't automatically delete from Apple Passwords (CSV-only interface)
         # So we just log warnings for user to manually delete
@@ -1213,6 +1276,11 @@ class PasswordsSyncEngine:
                         title=key[0], url=key[1], username=key[2], provider_type=provider_type
                     )
                     deleted_count += 1
+                    entries_with_actions.append({
+                        "title": key[0],
+                        "username": key[2] or "",
+                        "action": "delete",
+                    })
                     logger.warning(
                         f"Password '{key[0]}' deleted from provider. "
                         f"Please manually delete from Apple Passwords: {key[0]} ({key[2]})"
@@ -1221,6 +1289,11 @@ class PasswordsSyncEngine:
                     logger.error(f"Error deleting mapping for {key[0]}: {e}")
             else:
                 deleted_count += 1
+                entries_with_actions.append({
+                    "title": key[0],
+                    "username": key[2] or "",
+                    "action": "delete",
+                })
                 logger.info(f"[Simulation] Would mark for deletion in Apple: {key[0]}")
 
         # Handle conflicts in pull phase (mostly just logging)
@@ -1234,9 +1307,20 @@ class PasswordsSyncEngine:
                     await self.db.delete_password_mapping(
                         title=key[0], url=key[1], username=key[2], provider_type=provider_type
                     )
+                    entries_with_actions.append({
+                        "title": key[0],
+                        "username": key[2] or "",
+                        "action": "delete",
+                    })
                     logger.warning(
                         f"Conflict: '{key[0]}' should be manually deleted from Apple Passwords"
                     )
+                else:
+                    entries_with_actions.append({
+                        "title": key[0],
+                        "username": key[2] or "",
+                        "action": "delete",
+                    })
                 deleted_count += 1
 
         logger.info(f"Pull phase deletions: {deleted_count} entries need manual deletion from Apple")
@@ -1258,8 +1342,13 @@ class PasswordsSyncEngine:
         elif not new_entries:
             logger.info("No new entries from provider")
 
-        # Collect entry titles for UI display
-        entry_titles = [{"title": entry.title, "username": entry.username} for entry in new_entries]
+        # Add new entries to the action list
+        for entry in new_entries:
+            entries_with_actions.append({
+                "title": entry.title,
+                "username": entry.username or "",
+                "action": "create",
+            })
 
         # Update mappings for new entries
         if not simulate and new_entries:
@@ -1282,7 +1371,7 @@ class PasswordsSyncEngine:
             "new_entries": len(new_entries),
             "download_path": str(output_path) if output_path else None,
             "simulate": simulate,
-            "entries": entry_titles,
+            "entries": entries_with_actions,
             "deleted": deleted_count,
         }
 
