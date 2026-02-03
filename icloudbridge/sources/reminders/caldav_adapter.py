@@ -318,21 +318,49 @@ class CalDAVAdapter:
                         due_date = due_date.replace(tzinfo=timezone.utc)
 
             # Timestamps - strip microseconds as iCalendar doesn't support them
+            # IMPORTANT: Never default to datetime.now() for timestamps used in sync!
+            # Using current time breaks conflict resolution by making remote always appear "newer".
+            # Fallback chain: LAST-MODIFIED → DTSTAMP → CREATED → epoch (very old date)
+
+            # Parse DTSTAMP first (required field per iCalendar spec, best fallback)
+            dtstamp = vtodo.get("DTSTAMP")
+            dtstamp_dt = None
+            if dtstamp and hasattr(dtstamp, "dt"):
+                dtstamp_dt = dtstamp.dt
+                if dtstamp_dt and not dtstamp_dt.tzinfo:
+                    dtstamp_dt = dtstamp_dt.replace(tzinfo=timezone.utc)
+                if dtstamp_dt and hasattr(dtstamp_dt, 'microsecond'):
+                    dtstamp_dt = dtstamp_dt.replace(microsecond=0)
+
+            # Parse CREATED
             created = vtodo.get("CREATED")
             if created and hasattr(created, "dt"):
                 created = created.dt
-                if hasattr(created, 'microsecond'):
+                if created and not created.tzinfo:
+                    created = created.replace(tzinfo=timezone.utc)
+                if created and hasattr(created, 'microsecond'):
                     created = created.replace(microsecond=0)
             else:
-                created = datetime.now(timezone.utc).replace(microsecond=0)
+                # Fallback: use DTSTAMP, then epoch
+                created = dtstamp_dt or datetime(1970, 1, 1, tzinfo=timezone.utc)
 
+            # Parse LAST-MODIFIED with fallback chain
             last_modified = vtodo.get("LAST-MODIFIED")
             if last_modified and hasattr(last_modified, "dt"):
                 last_modified = last_modified.dt
-                if hasattr(last_modified, 'microsecond'):
+                if last_modified and not last_modified.tzinfo:
+                    last_modified = last_modified.replace(tzinfo=timezone.utc)
+                if last_modified and hasattr(last_modified, 'microsecond'):
                     last_modified = last_modified.replace(microsecond=0)
             else:
-                last_modified = datetime.now(timezone.utc).replace(microsecond=0)
+                # Fallback: DTSTAMP → CREATED → epoch
+                # Using epoch ensures local changes take precedence over items with no timestamp
+                last_modified = dtstamp_dt or created or datetime(1970, 1, 1, tzinfo=timezone.utc)
+                if last_modified != dtstamp_dt:
+                    logger.warning(
+                        f"TODO '{uid}' missing LAST-MODIFIED and DTSTAMP, "
+                        f"using fallback timestamp: {last_modified}"
+                    )
 
             # URL
             url_field = vtodo.get("URL")
