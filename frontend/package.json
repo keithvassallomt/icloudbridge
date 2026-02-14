@@ -1,9 +1,10 @@
 {
   "name": "icloudbridge-web",
-  "version": "0.1.8",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node ./scripts/sync-version.js",
     "dev": "vite",
     "prebuild": "node ./scripts/sync-version.js",
     "build": "tsc && vite build",
@@ -45,6 +46,7 @@
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
+    "baseline-browser-mapping": "^2.9.19",
     "eslint": "^9.39.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.24",

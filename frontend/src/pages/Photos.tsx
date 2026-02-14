@@ -208,7 +208,7 @@ export default function Photos() {
 
   // Export state
   const [exportStatus, setExportStatus] = useState<PhotosExportStatus | null>(null);
-  const [exportHistory, setExportHistory] = useState<SyncLog[]>([]);
+  const [_exportHistory, setExportHistory] = useState<SyncLog[]>([]);
   const [showFullLibraryWarning, setShowFullLibraryWarning] = useState(false);
 
   // Determine sync mode from config
@@ -355,7 +355,7 @@ export default function Photos() {
 
   const handleSetBaseline = async () => {
     try {
-      setExportLoading(true);
+      setSyncLoading(true);
       setError(null);
       const response = await apiClient.setPhotosExportBaseline();
       setSuccess(`Export baseline set to ${new Date(response.baseline_date).toLocaleString()}`);
@@ -363,7 +363,7 @@ export default function Photos() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to set baseline');
     } finally {
-      setExportLoading(false);
+      setSyncLoading(false);
     }
   };
 

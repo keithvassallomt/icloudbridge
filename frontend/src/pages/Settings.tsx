@@ -1568,7 +1568,7 @@ export default function Settings() {
 
                 <RadioGroup
                   value={formData.photos_sync_mode || 'import'}
-                  onValueChange={(v: string) => setFormData({ ...formData, photos_sync_mode: v })}
+                  onValueChange={(v) => setFormData({ ...formData, photos_sync_mode: v as 'import' | 'export' | 'bidirectional' })}
                 >
                   <div className="flex items-start space-x-2 p-3 border rounded-lg">
                     <RadioGroupItem value="import" id="photos-mode-import" className="mt-1" />
@@ -1614,7 +1614,7 @@ export default function Settings() {
                       <Label>Export Mode</Label>
                       <RadioGroup
                         value={formData.photos_export_mode || 'going_forward'}
-                        onValueChange={(v: string) => setFormData({ ...formData, photos_export_mode: v })}
+                        onValueChange={(v) => setFormData({ ...formData, photos_export_mode: v as 'going_forward' | 'full_library' })}
                       >
                         <div className="flex items-center space-x-2">
                           <RadioGroupItem value="going_forward" id="export-mode-forward" />
@@ -1660,7 +1660,7 @@ export default function Settings() {
                       <Label>Folder Organization</Label>
                       <RadioGroup
                         value={formData.photos_export_organize_by || 'date'}
-                        onValueChange={(v: string) => setFormData({ ...formData, photos_export_organize_by: v })}
+                        onValueChange={(v) => setFormData({ ...formData, photos_export_organize_by: v as 'date' | 'flat' })}
                       >
                         <div className="flex items-center space-x-2">
                           <RadioGroupItem value="date" id="organize-by-date" />
