@@ -10,7 +10,7 @@ A small window into Apple's walled garden. Keep your Apple Notes, Reminders, Pas
 
 - 📋 Apple Reminders can be synced with a CalDAV server, such as the one provided by Nextcloud. Supports due dates, notes, folders, recurring reminders & completion status.
 
-- 📸 Apple Photos update. This one is quite specific to Nextcloud. When the Nextcloud app is installed on iOS, it can automatically upload photos to Nextcloud - however - it is a one-way sync. Photos added on Nextcloud are not synced back to your Apple Photos library. iCloudBridge fixes this by downloading new photos from Nextcloud and adding them to Apple Photos.
+- 📸 Apple Photos sync. This one is quite specific to Nextcloud. When the Nextcloud app is installed on iOS, it can automatically upload photos to Nextcloud - however - it is a one-way sync. Photos added on Nextcloud are not synced back to your Apple Photos library. iCloudBridge fixes this by downloading new photos from Nextcloud and adding them to Apple Photos. **Bidirectional sync** is also supported - export photos from Apple Photos (including shared family libraries) back to Nextcloud.
 
 - 🔐 Apple Passwords can be synced with Bitwarden or Vaultwarden, or optionally Nextcloud passwords. Supports all common fields and TOTP codes. This is a manual sync, but iCloudBridge tries to make it as easy as possible.
 
@@ -20,7 +20,7 @@ A small window into Apple's walled garden. Keep your Apple Notes, Reminders, Pas
 
 - Apple Notes: Whilst TODO items are supported, there is a limitation that when a todo item is checked (i.e. marked as completed), iCloudBridge cannot directly update the note to reflect this (this is currently not possible - believe me, I've tried). Instead, iCloudBridge will prepend a ✅ to the start of the line. This is not ideal, but is the best that can be done for now. Sub-folders are also only partially supported at this time, but this may be improved in future.
 
-- Apple Photos: Only new photos added to Nextcloud are synced to Apple Photos. Deletions or modifications are not synced.
+- Apple Photos: Sync is additive only - deletions or modifications are not synced. When importing, photos always go to your personal library (not shared library) - this is an Apple limitation. When exporting, the default "going forward" mode only exports new photos added after enabling export.
 
 - Apple Passwords: At this time, only manual syncs are supported. No automatic or scheduled syncs. Passkeys are also not synced at this time. It is also recommended to use Bitwarden or Vaultwarden, as Nextcloud Passwords does not support TOTP. 
 

@@ -152,6 +152,7 @@ class PhotoSyncEngine:
 
         new_records: list[PhotoImportRecord] = []
         skipped_existing = 0
+        skipped_exported = 0  # Files exported from Apple Photos (bidirectional dedup)
         total_candidates = len(candidates)
 
         skipped_by_mtime = 0
@@ -182,6 +183,17 @@ class PhotoSyncEngine:
                 # Backfill mtime for existing records (migration from older schema)
                 if existing.get("mtime") is None:
                     await self.db.update_mtime(file_hash, candidate.mtime)
+                continue
+
+            # Bidirectional dedup: skip if this was exported FROM Apple Photos
+            # (Wife's photo scenario - we exported it, now seeing it in NextCloud)
+            export_record = await self.db.get_export_by_hash(file_hash)
+            if export_record:
+                logger.debug(
+                    "Skipping %s (exported from Apple Photos)",
+                    candidate.path,
+                )
+                skipped_exported += 1
                 continue
 
             if (
@@ -239,8 +251,9 @@ class PhotoSyncEngine:
             if progress_callback:
                 await progress_callback(100, "No new files to import")
             logger.info(
-                "Photo sync complete: %d discovered, %d skipped by mtime (fast-path), %d skipped existing",
-                len(candidates), skipped_by_mtime, skipped_existing,
+                "Photo sync complete: %d discovered, %d skipped by mtime (fast-path), "
+                "%d skipped existing, %d skipped (exported from Photos)",
+                len(candidates), skipped_by_mtime, skipped_existing, skipped_exported,
             )
             return {
                 "discovered": len(candidates),
@@ -248,6 +261,7 @@ class PhotoSyncEngine:
                 "imported": 0,
                 "dry_run": dry_run,
                 "skipped_existing": skipped_existing,
+                "skipped_exported": skipped_exported,
                 "skipped_by_mtime": skipped_by_mtime,
                 "sources": scanned_sources,
             }
@@ -267,6 +281,7 @@ class PhotoSyncEngine:
                 "initial_scan": initial_scan,
                 "pending": [str(record.candidate.path) for record in new_records[:50]],
                 "skipped_existing": skipped_existing,
+                "skipped_exported": skipped_exported,
                 "skipped_by_mtime": skipped_by_mtime,
                 "sources": scanned_sources,
             }
@@ -320,6 +335,7 @@ class PhotoSyncEngine:
             "imported": total_imported,
             "dry_run": False,
             "skipped_existing": skipped_existing,
+            "skipped_exported": skipped_exported,
             "skipped_by_mtime": skipped_by_mtime,
             "albums": {album: len(records) for album, records in grouped.items()},
             "sources": scanned_sources,

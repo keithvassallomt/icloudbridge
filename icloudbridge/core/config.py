@@ -71,6 +71,42 @@ class PhotoSourceConfig(BaseSettings):
         return data
 
 
+class PhotoExportConfig(BaseSettings):
+    """Configuration for exporting photos from Apple Photos to local folder.
+
+    Export writes to a local folder (same as import source by default).
+    The NextCloud desktop app then syncs this folder to the cloud.
+    Default behavior is "going forward" - only export photos added after
+    first export run.
+    """
+
+    enabled: bool = False
+
+    # Export folder path - defaults to first import source path if None
+    export_folder: Path | None = None
+
+    # Organization within the folder: "date" (2026/02/) or "flat" (no subfolders)
+    organize_by: str = "date"
+
+    @field_validator("export_folder", mode="before")
+    @classmethod
+    def expand_export_folder(cls, v: str | Path | None) -> Path | None:
+        """Expand user home directory in export folder path."""
+        if v is None:
+            return None
+        return Path(v).expanduser().resolve()
+
+    @field_validator("organize_by", mode="before")
+    @classmethod
+    def validate_organize_by(cls, v: str) -> str:
+        """Validate organization mode."""
+        valid_modes = {"date", "flat"}
+        v = v.lower()
+        if v not in valid_modes:
+            raise ValueError(f"organize_by must be one of: {', '.join(valid_modes)}")
+        return v
+
+
 class NotesConfig(BaseSettings):
     """Configuration for Notes synchronization."""
 
@@ -168,12 +204,27 @@ class RemindersConfig(BaseSettings):
 
 
 class PhotosConfig(BaseSettings):
-    """Configuration for Photos synchronization."""
+    """Configuration for Photos synchronization.
+
+    Supports three sync modes:
+    - "import": One-way sync from local folders to Apple Photos (default)
+    - "export": One-way sync from Apple Photos to NextCloud
+    - "bidirectional": Two-way sync between NextCloud and Apple Photos
+    """
 
     enabled: bool = False
     hash_algorithm: str = "sha256"
     default_album: str = "iCloudBridge Imports"
     sources: dict[str, PhotoSourceConfig] = Field(default_factory=dict)
+
+    # Sync mode: "import" (default), "export", or "bidirectional"
+    sync_mode: str = "import"
+
+    # Export mode: "going_forward" (only new photos) or "full_library" (all photos)
+    export_mode: str = "going_forward"
+
+    # Export configuration (for bidirectional or export-only sync)
+    export: PhotoExportConfig = Field(default_factory=PhotoExportConfig)
 
     @field_validator("hash_algorithm", mode="before")
     @classmethod
@@ -184,6 +235,26 @@ class PhotosConfig(BaseSettings):
         if normalized not in supported:
             raise ValueError(f"Unsupported hash algorithm '{v}'. Supported: {', '.join(sorted(supported))}")
         return normalized
+
+    @field_validator("sync_mode", mode="before")
+    @classmethod
+    def validate_sync_mode(cls, v: str) -> str:
+        """Validate sync mode."""
+        valid_modes = {"import", "export", "bidirectional"}
+        v = v.lower()
+        if v not in valid_modes:
+            raise ValueError(f"sync_mode must be one of: {', '.join(valid_modes)}")
+        return v
+
+    @field_validator("export_mode", mode="before")
+    @classmethod
+    def validate_export_mode(cls, v: str) -> str:
+        """Validate export mode."""
+        valid_modes = {"going_forward", "full_library"}
+        v = v.lower().replace("-", "_")
+        if v not in valid_modes:
+            raise ValueError(f"export_mode must be one of: {', '.join(valid_modes)}")
+        return v
 
     def model_dump(self, **kwargs) -> dict:
         """Override to properly serialize nested PhotoSourceConfig objects."""

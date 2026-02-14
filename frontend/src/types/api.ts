@@ -75,6 +75,12 @@ export interface AppConfig {
   photos_enabled: boolean;
   photos_default_album?: string;
   photo_sources?: Record<string, PhotoSource>;
+  // Photo sync mode and export settings
+  photos_sync_mode?: 'import' | 'export' | 'bidirectional';
+  photos_export_mode?: 'going_forward' | 'full_library';
+  // Export folder defaults to first import source path (local folder, not WebDAV)
+  photos_export_folder?: string;
+  photos_export_organize_by?: 'date' | 'flat';
 }
 
 export interface PhotoSource {

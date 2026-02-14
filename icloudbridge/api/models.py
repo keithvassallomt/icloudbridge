@@ -113,6 +113,11 @@ class ConfigResponse(BaseModel):
     passwords_nextcloud_username: str | None = None
     photos_default_album: str | None = None
     photo_sources: dict[str, dict[str, str | bool]] = Field(default_factory=dict)
+    # Photo sync mode and export settings
+    photos_sync_mode: str | None = None
+    photos_export_mode: str | None = None
+    photos_export_folder: str | None = None
+    photos_export_organize_by: str | None = None
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -164,6 +169,11 @@ class ConfigUpdateRequest(BaseModel):
     )
     photos_default_album: str | None = None
     photo_sources: dict[str, dict[str, str | bool]] | None = None
+    # Photo sync mode and export settings
+    photos_sync_mode: str | None = None
+    photos_export_mode: str | None = None
+    photos_export_folder: str | None = None
+    photos_export_organize_by: str | None = None
 
 
 class ErrorResponse(BaseModel):
@@ -251,6 +261,27 @@ class PhotoSyncRequest(BaseModel):
     initial_scan: bool = Field(default=False, description="Initial scan to build database without importing")
     skip_deletions: bool = False
     deletion_threshold: int = 5
+
+
+class PhotoExportRequest(BaseModel):
+    """Request model for photo export (Apple Photos → NextCloud)."""
+
+    full_library: bool = Field(
+        default=False,
+        description="Export entire library, ignoring baseline date",
+    )
+    album_filter: str | None = Field(
+        default=None,
+        description="Only export photos from this album",
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Preview export without uploading to NextCloud",
+    )
+    since_date: str | None = Field(
+        default=None,
+        description="Only export photos created after this date (ISO format)",
+    )
 
 
 class PasswordsSyncRequest(BaseModel):

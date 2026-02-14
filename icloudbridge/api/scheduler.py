@@ -470,39 +470,91 @@ class SchedulerManager:
         }
 
     async def _sync_photos(self, config: dict) -> dict:
-        """Execute photos sync.
+        """Execute photos sync based on configured sync_mode.
+
+        Respects the sync_mode setting:
+        - 'import': Only import from folder to Apple Photos
+        - 'export': Only export from Apple Photos to folder
+        - 'bidirectional': Import then export
 
         Args:
             config: Sync configuration
 
         Returns:
-            Sync statistics
+            Sync statistics (combined for bidirectional mode)
         """
+        from pathlib import Path
+
+        from icloudbridge.core.photos_export_engine import ExportConfig, PhotoExportEngine
+        from icloudbridge.utils.photos_db import PhotosDB
+
         self.config.ensure_data_dir()
 
         if not self.config.photos.enabled:
             raise ValueError("Photo sync is disabled in configuration")
 
-        if not self.config.photos.sources:
-            raise ValueError("No photo sources configured for scheduled sync")
+        sync_mode = self.config.photos.sync_mode or "import"
+        dry_run = config.get("dry_run", False)
+        full_library = config.get("full_library", False)
 
-        requested_sources = config.get("sources")
-        if requested_sources:
-            available = set(self.config.photos.sources.keys())
-            invalid = [name for name in requested_sources if name not in available]
-            if invalid:
-                raise ValueError(f"Unknown photo sources requested: {', '.join(invalid)}")
+        result: dict = {"sync_mode": sync_mode}
 
-        engine = PhotoSyncEngine(
-            config=self.config.photos,
-            data_dir=self.config.general.data_dir,
-        )
-        await engine.initialize()
+        # Import phase (import or bidirectional)
+        if sync_mode in ("import", "bidirectional"):
+            if not self.config.photos.sources:
+                raise ValueError("No photo sources configured for scheduled sync")
 
-        return await engine.sync(
-            sources=requested_sources,
-            dry_run=config.get("dry_run", False),
-        )
+            requested_sources = config.get("sources")
+            if requested_sources:
+                available = set(self.config.photos.sources.keys())
+                invalid = [name for name in requested_sources if name not in available]
+                if invalid:
+                    raise ValueError(f"Unknown photo sources requested: {', '.join(invalid)}")
+
+            engine = PhotoSyncEngine(
+                config=self.config.photos,
+                data_dir=self.config.general.data_dir,
+            )
+            await engine.initialize()
+
+            import_result = await engine.sync(
+                sources=requested_sources,
+                dry_run=dry_run,
+            )
+            result["import"] = import_result
+
+        # Export phase (export or bidirectional)
+        if sync_mode in ("export", "bidirectional"):
+            export_cfg = self.config.photos.export
+
+            # Determine export folder (defaults to first import source path)
+            export_folder = export_cfg.export_folder
+            if not export_folder:
+                if self.config.photos.sources:
+                    first_source = next(iter(self.config.photos.sources.values()))
+                    export_folder = first_source.path
+                else:
+                    raise ValueError("No export folder configured and no import sources available")
+
+            export_config = ExportConfig(
+                export_folder=Path(export_folder),
+                organize_by=export_cfg.organize_by,
+            )
+
+            photos_db = PhotosDB(self.config.general.data_dir / "photos.db")
+            export_engine = PhotoExportEngine(config=export_config, db=photos_db)
+            await export_engine.initialize()
+
+            try:
+                export_result = await export_engine.export(
+                    full_library=full_library,
+                    dry_run=dry_run,
+                )
+                result["export"] = export_result
+            finally:
+                await export_engine.cleanup()
+
+        return result
 
     async def add_schedule(self, schedule_id: int) -> None:
         """Add a schedule to the scheduler.

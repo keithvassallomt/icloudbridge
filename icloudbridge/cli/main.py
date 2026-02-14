@@ -13,11 +13,13 @@ from rich.table import Table
 
 from icloudbridge import __version__
 from icloudbridge.core.config import load_config
+from icloudbridge.core.photos_export_engine import ExportConfig, PhotoExportEngine
 from icloudbridge.core.photos_sync import PhotoSyncEngine
 from icloudbridge.core.reminders_sync import RemindersSyncEngine
 from icloudbridge.core.rich_notes_export import RichNotesExporter
 from icloudbridge.core.sync import NotesSyncEngine
 from icloudbridge.utils.logging import setup_logging
+from icloudbridge.utils.photos_db import PhotosDB
 from icloudbridge.utils.settings_db import get_config_path, set_config_path
 
 # Create Typer app
@@ -228,6 +230,140 @@ def photos(
         table.add_row("Album breakdown", ", ".join(f"{name} ({count})" for name, count in albums.items()))
 
     console.print(table)
+
+
+@app.command("photos-export")
+def photos_export(
+    ctx: typer.Context,
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview export without uploading to NextCloud"),
+    full_library: bool = typer.Option(False, "--full-library", help="Export entire library, ignoring baseline date"),
+    album: str = typer.Option(None, "--album", "-a", help="Only export photos from this album"),
+    since: str = typer.Option(None, "--since", help="Only export photos created after this date (YYYY-MM-DD)"),
+    set_baseline: bool = typer.Option(False, "--set-baseline-only", help="Set baseline to now without exporting"),
+):
+    """Export photos from Apple Photos to NextCloud.
+
+    Default behavior (going forward): Only export photos added after the baseline date.
+    First run sets the baseline; subsequent runs export only new photos.
+
+    Use --full-library to export your entire library (may take a while for large libraries).
+    Use --dry-run to preview what would be exported without uploading.
+    """
+    from datetime import datetime
+
+    cfg = ctx.obj["config"]
+
+    if not cfg.photos.enabled:
+        console.print("[red]Photos sync is disabled in the configuration.[/red]")
+        raise typer.Exit(1)
+
+    if cfg.photos.sync_mode not in ("export", "bidirectional"):
+        console.print(
+            f"[red]Photo export requires sync_mode='export' or 'bidirectional', "
+            f"got '{cfg.photos.sync_mode}'[/red]"
+        )
+        console.print("[dim]Set photos.sync_mode in your config file or via the settings page.[/dim]")
+        raise typer.Exit(1)
+
+    export_cfg = cfg.photos.export
+
+    # Determine export folder (defaults to first import source path)
+    export_folder = export_cfg.export_folder
+    if not export_folder:
+        if cfg.photos.sources:
+            first_source = next(iter(cfg.photos.sources.values()))
+            export_folder = first_source.path
+        else:
+            console.print("[red]No export folder configured and no import sources available.[/red]")
+            console.print("[dim]Configure a photos source folder or set photos.export.export_folder in your config.[/dim]")
+            raise typer.Exit(1)
+
+    # Create export engine for local file copy
+    export_config = ExportConfig(
+        export_folder=Path(export_folder),
+        organize_by=export_cfg.organize_by,
+    )
+
+    db = PhotosDB(cfg.general.data_dir / "photos.db")
+
+    async def run_export():
+        await db.initialize()
+        engine = PhotoExportEngine(config=export_config, db=db)
+        await engine.initialize()
+
+        try:
+            # Handle --set-baseline-only
+            if set_baseline:
+                await engine.set_baseline()
+                export_state = await db.get_export_state()
+                baseline_date = None
+                if export_state and export_state.get("baseline_date"):
+                    baseline_date = datetime.fromtimestamp(export_state["baseline_date"]).isoformat()
+                console.print(f"[green]Baseline set to: {baseline_date}[/green]")
+                console.print("[dim]Future exports will only include photos added after this time.[/dim]")
+                return None
+
+            # Parse since date
+            since_date = None
+            if since:
+                try:
+                    since_date = datetime.fromisoformat(since)
+                except ValueError:
+                    console.print(f"[red]Invalid date format: {since}[/red]")
+                    console.print("[dim]Use ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS[/dim]")
+                    raise typer.Exit(1)
+
+            return await engine.export(
+                full_library=full_library,
+                since_date=since_date,
+                album_filter=album,
+                dry_run=dry_run,
+            )
+        finally:
+            await engine.cleanup()
+
+    stats = asyncio.run(run_export())
+
+    if stats is None:
+        # set-baseline-only mode
+        return
+
+    table = Table(title="Photo Export Results")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+
+    if stats.get("baseline_set"):
+        table.add_row("Baseline", "Set to current time")
+        table.add_row("Message", stats.get("message", "Run export again to export new photos"))
+    else:
+        if dry_run:
+            table.add_row("Mode", "Dry run (no changes)")
+            table.add_row("Would export", str(stats.get("would_export", 0)))
+        else:
+            table.add_row("Exported", str(stats.get("exported", 0)))
+
+        table.add_row("Skipped (before baseline)", str(stats.get("skipped_before_baseline", 0)))
+        table.add_row("Skipped (already exported)", str(stats.get("skipped_already_exported", 0)))
+        table.add_row("Skipped (from NextCloud)", str(stats.get("skipped_imported_from_nextcloud", 0)))
+        table.add_row("Errors", str(stats.get("errors", 0)))
+
+    console.print(table)
+
+    # Show preview for dry run
+    if dry_run and stats.get("preview"):
+        preview_table = Table(title="Files to Export (first 50)")
+        preview_table.add_column("Filename", style="cyan")
+        preview_table.add_column("Remote Path", style="green")
+        preview_table.add_column("Created", style="yellow")
+
+        for item in stats["preview"]:
+            preview_table.add_row(
+                item.get("filename", "?"),
+                item.get("remote_path", "?"),
+                item.get("created", "?")[:10],  # Just the date part
+            )
+
+        console.print(preview_table)
 
 
 @app.command("db-paths")

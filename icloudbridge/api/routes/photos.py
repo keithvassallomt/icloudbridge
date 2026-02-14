@@ -6,8 +6,13 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 
-from icloudbridge.api.dependencies import ConfigDep, PhotosDBDep, PhotosSyncEngineDep
-from icloudbridge.api.models import PhotoSyncRequest
+from icloudbridge.api.dependencies import (
+    ConfigDep,
+    PhotosDBDep,
+    PhotosExportEngineDep,
+    PhotosSyncEngineDep,
+)
+from icloudbridge.api.models import PhotoExportRequest, PhotoSyncRequest
 from icloudbridge.api.websocket import send_sync_progress
 from icloudbridge.utils.db import SyncLogsDB
 
@@ -224,3 +229,293 @@ async def reset_database(photos_db: PhotosDBDep, config: ConfigDep):
         "status": "success",
         "message": "Photos sync state has been reset",
     }
+
+
+# =============================================================================
+# Export endpoints (Apple Photos → NextCloud)
+# =============================================================================
+
+
+@router.post("/export")
+async def export_photos(
+    request: PhotoExportRequest,
+    config: ConfigDep,
+    photos_db: PhotosDBDep,
+):
+    """Export photos from Apple Photos to local folder.
+
+    Requires sync_mode='export' or 'bidirectional' in config.
+    Default behavior: only export photos added after baseline.
+    Use full_library=True to export entire library.
+    Use dry_run=True to preview without copying files.
+    """
+    from pathlib import Path
+
+    from icloudbridge.core.photos_export_engine import ExportConfig, PhotoExportEngine
+
+    # Validate config
+    if not config.photos.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Photo sync is disabled",
+        )
+
+    if config.photos.sync_mode not in ("export", "bidirectional"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Photo export requires sync_mode='export' or 'bidirectional', got '{config.photos.sync_mode}'",
+        )
+
+    export_cfg = config.photos.export
+
+    # Determine export folder (defaults to first import source path)
+    export_folder = export_cfg.export_folder
+    if not export_folder:
+        if config.photos.sources:
+            first_source = next(iter(config.photos.sources.values()))
+            export_folder = first_source.path
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No export folder configured and no import sources available",
+            )
+
+    # Create export engine for local file copy
+    export_config = ExportConfig(
+        export_folder=Path(export_folder),
+        organize_by=export_cfg.organize_by,
+    )
+
+    engine = PhotoExportEngine(config=export_config, db=photos_db)
+    await engine.initialize()
+
+    # Parse since_date if provided
+    since_date = None
+    if request.since_date:
+        try:
+            since_date = datetime.fromisoformat(request.since_date)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid since_date format: {request.since_date}. Use ISO format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS)",
+            )
+
+    # Create sync log only for real runs
+    sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
+    await sync_logs_db.initialize()
+
+    log_id = None
+    if not request.dry_run:
+        log_id = await sync_logs_db.create_log(
+            service="photos_export",
+            sync_type="manual",
+            status="running",
+        )
+
+    # Send initial progress update
+    await send_sync_progress(
+        service="photos_export",
+        status="running",
+        progress=0,
+        message="Starting photo export...",
+    )
+
+    start_time = datetime.now().timestamp()
+
+    async def progress_callback(progress: int, message: str) -> None:
+        await send_sync_progress(
+            service="photos_export",
+            status="running",
+            progress=progress,
+            message=message,
+        )
+
+    try:
+        stats = await engine.export(
+            full_library=request.full_library,
+            since_date=since_date,
+            album_filter=request.album_filter,
+            dry_run=request.dry_run,
+            progress_callback=progress_callback,
+        )
+
+        duration = datetime.now().timestamp() - start_time
+
+        if log_id is not None:
+            await sync_logs_db.update_log(
+                log_id=log_id,
+                status="success",
+                duration_seconds=duration,
+                stats_json=json.dumps(stats),
+            )
+
+        await send_sync_progress(
+            service="photos_export",
+            status="success",
+            progress=100,
+            message="Photo export completed successfully",
+            stats=stats,
+        )
+
+        return {"message": "photo export complete", "stats": stats}
+
+    except Exception as exc:
+        duration = datetime.now().timestamp() - start_time
+        logger.exception("Photo export failed: %s", exc)
+
+        if log_id is not None:
+            await sync_logs_db.update_log(
+                log_id=log_id,
+                status="error",
+                duration_seconds=duration,
+                error_message=str(exc),
+            )
+
+        await send_sync_progress(
+            service="photos_export",
+            status="error",
+            progress=0,
+            message=f"Photo export failed: {str(exc)}",
+        )
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Photo export failed: {exc}",
+        ) from exc
+
+    finally:
+        await engine.cleanup()
+
+
+@router.get("/export/status")
+async def get_export_status(photos_db: PhotosDBDep, config: ConfigDep):
+    """Get photo export status and statistics."""
+    if not config.photos.enabled:
+        return {
+            "enabled": False,
+            "message": "Photo sync is disabled",
+        }
+
+    if config.photos.sync_mode not in ("export", "bidirectional"):
+        return {
+            "enabled": False,
+            "message": f"Export requires sync_mode='export' or 'bidirectional', got '{config.photos.sync_mode}'",
+        }
+
+    # Determine export folder for display
+    export_cfg = config.photos.export
+    export_folder = export_cfg.export_folder
+    if not export_folder and config.photos.sources:
+        first_source = next(iter(config.photos.sources.values()))
+        export_folder = first_source.path
+
+    # Get export stats
+    export_stats = await photos_db.get_export_stats()
+    export_state = await photos_db.get_export_state()
+
+    baseline_date = None
+    last_export = None
+    if export_state:
+        if export_state.get("baseline_date"):
+            baseline_date = datetime.fromtimestamp(export_state["baseline_date"]).isoformat()
+        if export_state.get("last_export"):
+            last_export = datetime.fromtimestamp(export_state["last_export"]).isoformat()
+
+    return {
+        "enabled": True,
+        "sync_mode": config.photos.sync_mode,
+        "export_mode": config.photos.export_mode,
+        "export_folder": str(export_folder) if export_folder else None,
+        "organize_by": export_cfg.organize_by,
+        "total_exported": export_stats.get("total_exported", 0),
+        "baseline_date": baseline_date,
+        "last_export": last_export,
+    }
+
+
+@router.get("/library/albums")
+async def list_library_albums(config: ConfigDep, photos_db: PhotosDBDep):
+    """List albums in Apple Photos library."""
+    from icloudbridge.sources.photos import PhotosLibraryReader
+
+    if not config.photos.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Photo sync is disabled",
+        )
+
+    reader = PhotosLibraryReader()
+    try:
+        albums = await reader.list_albums()
+        return {
+            "albums": [
+                {"uuid": a.uuid, "name": a.name, "count": a.asset_count}
+                for a in albums
+            ]
+        }
+    finally:
+        reader.cleanup()
+
+
+@router.get("/library/stats")
+async def get_library_stats(config: ConfigDep, photos_db: PhotosDBDep):
+    """Get statistics about the Apple Photos library."""
+    from icloudbridge.sources.photos import PhotosLibraryReader
+
+    if not config.photos.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Photo sync is disabled",
+        )
+
+    reader = PhotosLibraryReader()
+    try:
+        stats = await reader.get_library_stats()
+        export_state = await photos_db.get_export_state()
+
+        baseline_date = None
+        if export_state and export_state.get("baseline_date"):
+            baseline_date = datetime.fromtimestamp(export_state["baseline_date"]).isoformat()
+
+        return {
+            **stats,
+            "baseline_date": baseline_date,
+        }
+    finally:
+        reader.cleanup()
+
+
+@router.post("/export/set-baseline")
+async def set_export_baseline(config: ConfigDep, photos_db: PhotosDBDep):
+    """Set the export baseline to now.
+
+    Photos before this date won't be exported (unless full_library=True).
+    """
+    if not config.photos.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Photo sync is disabled",
+        )
+
+    await photos_db.set_export_baseline()
+
+    export_state = await photos_db.get_export_state()
+    baseline_date = None
+    if export_state and export_state.get("baseline_date"):
+        baseline_date = datetime.fromtimestamp(export_state["baseline_date"]).isoformat()
+
+    return {
+        "status": "success",
+        "message": "Export baseline set to current time",
+        "baseline_date": baseline_date,
+    }
+
+
+@router.get("/export/history")
+async def get_export_history(config: ConfigDep, limit: int = 10):
+    """Get photo export history."""
+    sync_logs_db = SyncLogsDB(config.general.data_dir / "sync_logs.db")
+    await sync_logs_db.initialize()
+
+    logs = await sync_logs_db.get_logs(service="photos_export", limit=limit)
+    return {"logs": logs}

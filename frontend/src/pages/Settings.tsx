@@ -1556,6 +1556,129 @@ export default function Settings() {
                   Name of the album in Apple Photos where imported photos will be stored
                 </p>
               </div>
+
+              {/* Photo Sync Mode */}
+              <div className="pt-4 border-t space-y-4">
+                <div>
+                  <Label className="text-base">Photo Sync Mode</Label>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Choose how photos are synchronized between your folders and Apple Photos
+                  </p>
+                </div>
+
+                <RadioGroup
+                  value={formData.photos_sync_mode || 'import'}
+                  onValueChange={(v: string) => setFormData({ ...formData, photos_sync_mode: v })}
+                >
+                  <div className="flex items-start space-x-2 p-3 border rounded-lg">
+                    <RadioGroupItem value="import" id="photos-mode-import" className="mt-1" />
+                    <div className="flex-1">
+                      <Label htmlFor="photos-mode-import" className="cursor-pointer font-medium">
+                        One-way Import (default)
+                      </Label>
+                      <p className="text-sm text-muted-foreground">
+                        Import photos from your folder to Apple Photos. Existing behavior.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start space-x-2 p-3 border rounded-lg">
+                    <RadioGroupItem value="bidirectional" id="photos-mode-bidirectional" className="mt-1" />
+                    <div className="flex-1">
+                      <Label htmlFor="photos-mode-bidirectional" className="cursor-pointer font-medium">
+                        Bidirectional Sync
+                      </Label>
+                      <p className="text-sm text-muted-foreground">
+                        Import photos from folder AND export photos from Apple Photos to NextCloud
+                      </p>
+                    </div>
+                  </div>
+                </RadioGroup>
+
+                {/* Bidirectional / Export settings */}
+                {formData.photos_sync_mode === 'bidirectional' && (
+                  <div className="space-y-4 pl-4 border-l-2 border-primary/20">
+                    {/* Warning about disabling NextCloud auto-upload */}
+                    <Alert variant="warning" className="border-orange-500 bg-orange-50">
+                      <AlertTriangle className="h-4 w-4" />
+                      <AlertTitle>Disable NextCloud Auto-Upload</AlertTitle>
+                      <AlertDescription>
+                        When using bidirectional sync, please <strong>disable auto-upload</strong> of media
+                        from the NextCloud mobile app. Failing to do so will result in duplicate photos!
+                        iCloudBridge will handle exporting your Apple Photos to NextCloud - the mobile
+                        app's auto-upload is no longer needed.
+                      </AlertDescription>
+                    </Alert>
+
+                    {/* Export Mode Selection */}
+                    <div className="space-y-2">
+                      <Label>Export Mode</Label>
+                      <RadioGroup
+                        value={formData.photos_export_mode || 'going_forward'}
+                        onValueChange={(v: string) => setFormData({ ...formData, photos_export_mode: v })}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="going_forward" id="export-mode-forward" />
+                          <Label htmlFor="export-mode-forward" className="cursor-pointer font-normal">
+                            Going forward (recommended) - Only new photos after enabling
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="full_library" id="export-mode-full" />
+                          <Label htmlFor="export-mode-full" className="cursor-pointer font-normal">
+                            Full library - Export all existing photos
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </div>
+
+                    {formData.photos_export_mode === 'full_library' && (
+                      <Alert variant="warning" className="border-yellow-500/50 bg-yellow-50">
+                        <AlertTriangle className="h-4 w-4" />
+                        <AlertDescription>
+                          Full library export may take a long time for large photo libraries.
+                          Consider using "Going forward" mode unless you need to sync your entire library.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {/* Export Folder (read-only, defaults to import source) */}
+                    <div className="space-y-2">
+                      <Label>Export Folder</Label>
+                      <Input
+                        value={formData.photo_sources?.default?.path || 'Same as import source'}
+                        disabled
+                        className="bg-muted"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Photos will be exported to the same folder as your import source.
+                        NextCloud desktop app will sync this folder to the cloud.
+                      </p>
+                    </div>
+
+                    {/* Folder Organization */}
+                    <div className="space-y-2">
+                      <Label>Folder Organization</Label>
+                      <RadioGroup
+                        value={formData.photos_export_organize_by || 'date'}
+                        onValueChange={(v: string) => setFormData({ ...formData, photos_export_organize_by: v })}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="date" id="organize-by-date" />
+                          <Label htmlFor="organize-by-date" className="cursor-pointer font-normal">
+                            Date subfolders (recommended) - e.g., 2026/02/photo.jpg
+                          </Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="flat" id="organize-by-flat" />
+                          <Label htmlFor="organize-by-flat" className="cursor-pointer font-normal">
+                            No subfolders - All files in export folder root
+                          </Label>
+                        </div>
+                      </RadioGroup>
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           )}
 

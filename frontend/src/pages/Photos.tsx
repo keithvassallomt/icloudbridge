@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Image, RefreshCw, PlayCircle, Activity, Info } from 'lucide-react';
+import { Image, RefreshCw, PlayCircle, Activity, Info, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +9,14 @@ import { useSyncStore } from '@/store/sync-store';
 import type { AppConfig, SyncLog } from '@/types/api';
 import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 interface PhotosStatus {
   enabled: boolean;
@@ -35,61 +43,152 @@ interface PhotosSyncResult {
   };
 }
 
-function SyncStatsView({ result }: { result: PhotosSyncResult | null }) {
-  if (!result) {
+interface PhotosExportStatus {
+  enabled: boolean;
+  sync_mode?: string;
+  export_mode?: string;
+  export_folder?: string;
+  organize_by?: string;
+  total_exported?: number;
+  baseline_date?: string;
+  last_export?: string;
+  message?: string;
+}
+
+// Combined result for mode-aware sync
+interface CombinedSyncResult {
+  importResult: PhotosSyncResult | null;
+  exportResult: PhotosExportResult | null;
+}
+
+interface PhotosExportResult {
+  message: string;
+  stats: {
+    total_found?: number;
+    exported: number;
+    would_export?: number;  // Count for dry runs
+    skipped_existing?: number;
+    skipped_already_exported?: number;  // API uses this name
+    skipped_before_baseline?: number;
+    skipped_imported?: number;
+    skipped_imported_from_nextcloud?: number;  // API uses this name
+    errors: number;
+    dry_run: boolean;
+    preview?: Array<{ filename: string; dest_path: string; size: number; created: string }>;
+    baseline_set?: boolean;
+    message?: string;
+  };
+}
+
+function SyncStatsView({ result }: { result: CombinedSyncResult | null }) {
+  if (!result || (!result.importResult && !result.exportResult)) {
     return null;
   }
 
-  const { stats } = result;
+  const importStats = result.importResult?.stats;
+  const exportStats = result.exportResult?.stats;
+  const isDryRun = importStats?.dry_run || exportStats?.dry_run;
+
   return (
     <div className="space-y-4 rounded-md border bg-card/40 p-4">
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>{stats.dry_run ? 'Simulation results' : 'Sync results'}</span>
+        <span>{isDryRun ? 'Simulation results' : 'Sync results'}</span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-        <div>
-          <p className="text-muted-foreground">Discovered</p>
-          <p className="font-medium">{stats.discovered ?? 0}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">New Assets</p>
-          <p className="font-medium">{stats.new_assets ?? 0}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">Imported</p>
-          <p className="font-medium">{stats.imported ?? 0}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">Skipped</p>
-          <p className="font-medium">{stats.skipped_existing ?? 0}</p>
-        </div>
-      </div>
-
-      {stats.albums && Object.keys(stats.albums).length > 0 && (
-        <div className="space-y-2 border-t pt-3">
-          <div className="text-sm font-semibold">Albums</div>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            {Object.entries(stats.albums).map(([album, count]) => (
-              <div key={album} className="flex justify-between">
-                <span className="text-muted-foreground">{album}</span>
-                <span className="font-medium">{count}</span>
-              </div>
-            ))}
+      {/* Import Stats */}
+      {importStats && (
+        <div className="space-y-2">
+          <div className="text-sm font-semibold text-primary">Import</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div>
+              <p className="text-muted-foreground">Discovered</p>
+              <p className="font-medium">{importStats.discovered ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">New Assets</p>
+              <p className="font-medium">{importStats.new_assets ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Imported</p>
+              <p className="font-medium">{importStats.imported ?? 0}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">Skipped</p>
+              <p className="font-medium">{importStats.skipped_existing ?? 0}</p>
+            </div>
           </div>
+
+          {importStats.albums && Object.keys(importStats.albums).length > 0 && (
+            <div className="space-y-2 border-t pt-3">
+              <div className="text-sm font-semibold">Albums</div>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                {Object.entries(importStats.albums).map(([album, count]) => (
+                  <div key={album} className="flex justify-between">
+                    <span className="text-muted-foreground">{album}</span>
+                    <span className="font-medium">{count}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {importStats.pending && importStats.pending.length > 0 && (
+            <div className="space-y-2 border-t pt-3">
+              <div className="text-sm font-semibold">
+                Pending imports (showing first {Math.min(importStats.pending.length, 10)})
+              </div>
+              <ul className="text-xs text-muted-foreground list-disc list-inside max-h-40 overflow-y-auto">
+                {importStats.pending.slice(0, 10).map((path, idx) => (
+                  <li key={idx} className="truncate">{path}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
 
-      {stats.pending && stats.pending.length > 0 && (
-        <div className="space-y-2 border-t pt-3">
-          <div className="text-sm font-semibold">
-            Pending imports (showing first {Math.min(stats.pending.length, 10)})
-          </div>
-          <ul className="text-xs text-muted-foreground list-disc list-inside max-h-40 overflow-y-auto">
-            {stats.pending.slice(0, 10).map((path, idx) => (
-              <li key={idx} className="truncate">{path}</li>
-            ))}
-          </ul>
+      {/* Export Stats */}
+      {exportStats && (
+        <div className="space-y-2">
+          {importStats && <div className="border-t pt-3" />}
+          <div className="text-sm font-semibold text-primary">Export</div>
+
+          {/* Show baseline message if just set */}
+          {exportStats.baseline_set && exportStats.message && (
+            <div className="flex items-start gap-2 p-3 rounded-md bg-blue-50 border border-blue-200 text-sm">
+              <Info className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+              <span className="text-blue-800">{exportStats.message}</span>
+            </div>
+          )}
+
+          {!exportStats.baseline_set && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+              <div>
+                <p className="text-muted-foreground">
+                  {exportStats.dry_run ? 'Would Export' : 'Exported'}
+                </p>
+                <p className="font-medium">
+                  {exportStats.dry_run
+                    ? (exportStats.would_export ?? exportStats.exported ?? 0)
+                    : (exportStats.exported ?? 0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Skipped (Existing)</p>
+                <p className="font-medium">{exportStats.skipped_existing ?? exportStats.skipped_already_exported ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground">Skipped (Baseline)</p>
+                <p className="font-medium">{exportStats.skipped_before_baseline ?? 0}</p>
+              </div>
+              {(exportStats.errors ?? 0) > 0 && (
+                <div>
+                  <p className="text-destructive">Errors</p>
+                  <p className="font-medium text-destructive">{exportStats.errors}</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -104,11 +203,20 @@ export default function Photos() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const [syncResult, setSyncResult] = useState<PhotosSyncResult | null>(null);
+  const [syncResult, setSyncResult] = useState<CombinedSyncResult | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
+
+  // Export state
+  const [exportStatus, setExportStatus] = useState<PhotosExportStatus | null>(null);
+  const [exportHistory, setExportHistory] = useState<SyncLog[]>([]);
+  const [showFullLibraryWarning, setShowFullLibraryWarning] = useState(false);
+
+  // Determine sync mode from config
+  const syncMode = config?.photos_sync_mode || 'import';
 
   const { activeSyncs } = useSyncStore();
   const activeSync = activeSyncs.get('photos');
+  const activeExport = activeSyncs.get('photos_export');
 
   const loadConfig = useCallback(async () => {
     try {
@@ -140,13 +248,34 @@ export default function Photos() {
     }
   }, []);
 
+  const loadExportStatus = useCallback(async () => {
+    try {
+      const exportStatusData = await apiClient.getPhotosExportStatus();
+      setExportStatus(exportStatusData);
+    } catch (err) {
+      console.error('Failed to load export status:', err);
+    }
+  }, []);
+
+  const loadExportHistory = useCallback(async () => {
+    try {
+      const exportHistoryData = await apiClient.getPhotosExportHistory(10);
+      setExportHistory(exportHistoryData.logs);
+    } catch (err) {
+      console.error('Failed to load export history:', err);
+    }
+  }, []);
+
   useEffect(() => {
     loadHistory();
     loadConfig();
     loadStatus();
-  }, [loadHistory, loadConfig, loadStatus]);
+    loadExportStatus();
+    loadExportHistory();
+  }, [loadHistory, loadConfig, loadStatus, loadExportStatus, loadExportHistory]);
 
   const wasSyncingRef = useRef(false);
+  const wasExportingRef = useRef(false);
   useEffect(() => {
     const isSyncing = Boolean(activeSync);
     if (!isSyncing && wasSyncingRef.current) {
@@ -156,24 +285,85 @@ export default function Photos() {
     wasSyncingRef.current = isSyncing;
   }, [activeSync, loadHistory, loadStatus]);
 
-  const handleSyncAction = async (dryRun: boolean) => {
+  useEffect(() => {
+    const isExporting = Boolean(activeExport);
+    if (!isExporting && wasExportingRef.current) {
+      loadExportHistory();
+      loadExportStatus();
+    }
+    wasExportingRef.current = isExporting;
+  }, [activeExport, loadExportHistory, loadExportStatus]);
+
+  const handleSyncAction = async (dryRun: boolean, fullLibrary: boolean = false) => {
     try {
       setSyncLoading(true);
       setError(null);
       setSuccess(null);
-      const response = await apiClient.syncPhotos(undefined, dryRun);
-      setSyncResult(response);
+
+      let importResult: PhotosSyncResult | null = null;
+      let exportResult: PhotosExportResult | null = null;
+
+      // Import phase (import or bidirectional mode)
+      if (syncMode === 'import' || syncMode === 'bidirectional') {
+        importResult = await apiClient.syncPhotos(undefined, dryRun);
+      }
+
+      // Export phase (export or bidirectional mode)
+      if (syncMode === 'export' || syncMode === 'bidirectional') {
+        exportResult = await apiClient.exportPhotos({ dryRun, fullLibrary });
+      }
+
+      setSyncResult({ importResult, exportResult });
+
+      // Check if baseline was just set (first export run in "going forward" mode)
+      const baselineJustSet = exportResult?.stats?.baseline_set === true;
+
       if (dryRun) {
-        setSuccess('Simulation complete. No changes were applied.');
+        if (baselineJustSet) {
+          setSuccess('Export baseline set. Run sync again to export new photos going forward.');
+        } else if (syncMode === 'bidirectional') {
+          setSuccess('Simulation complete (import + export). No changes were applied.');
+        } else if (syncMode === 'export') {
+          setSuccess('Export simulation complete. No photos were copied.');
+        } else {
+          setSuccess('Import simulation complete. No changes were applied.');
+        }
       } else {
-        setSuccess('Photo sync complete.');
+        if (baselineJustSet) {
+          setSuccess('Export baseline set. Run sync again to export new photos going forward.');
+        } else if (syncMode === 'bidirectional') {
+          setSuccess('Photo sync complete (import + export).');
+        } else if (syncMode === 'export') {
+          setSuccess('Photo export complete.');
+        } else {
+          setSuccess('Photo import complete.');
+        }
         await loadHistory();
         await loadStatus();
+        if (syncMode === 'export' || syncMode === 'bidirectional') {
+          await loadExportHistory();
+          await loadExportStatus();
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Photo sync failed');
     } finally {
       setSyncLoading(false);
+      setShowFullLibraryWarning(false);
+    }
+  };
+
+  const handleSetBaseline = async () => {
+    try {
+      setExportLoading(true);
+      setError(null);
+      const response = await apiClient.setPhotosExportBaseline();
+      setSuccess(`Export baseline set to ${new Date(response.baseline_date).toLocaleString()}`);
+      await loadExportStatus();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to set baseline');
+    } finally {
+      setExportLoading(false);
     }
   };
 
@@ -241,9 +431,17 @@ export default function Photos() {
 
       {status && status.enabled && (
         <div className="rounded-lg border p-4 space-y-3">
-          <h3 className="text-lg font-semibold">Status</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold">Status</h3>
+            {syncMode === 'bidirectional' && (
+              <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">
+                Bidirectional
+              </Badge>
+            )}
+          </div>
           <TooltipProvider>
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-sm">
+            {/* First row - common stats */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
               <div>
                 <p className="text-muted-foreground flex items-center gap-1">
                   Library Items
@@ -260,31 +458,19 @@ export default function Photos() {
               </div>
               <div>
                 <p className="text-muted-foreground flex items-center gap-1">
-                  Last Imported
+                  Pending
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Info className="w-3.5 h-3.5 text-muted-foreground" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      Photos imported in the most recent sync.
+                      {syncMode === 'bidirectional'
+                        ? 'Photos waiting to be imported or exported.'
+                        : 'Photos waiting to be imported.'}
                     </TooltipContent>
                   </Tooltip>
                 </p>
-                <p className="font-medium">{status.last_imported ?? 0}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Pending</p>
                 <p className="font-medium">{status.pending ?? 0}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Last Sync</p>
-                <p className="font-medium text-xs">
-                  {status.last_sync ? new Date(status.last_sync).toLocaleString() : 'Never'}
-                </p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">Sources</p>
-                <p className="font-medium">{status.sources?.length ?? 0}</p>
               </div>
               <div>
                 <p className="text-muted-foreground flex items-center gap-1">
@@ -294,48 +480,220 @@ export default function Photos() {
                       <Info className="w-3.5 h-3.5 text-muted-foreground" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      Photos skipped because they already exist in Apple Photos.
+                      Photos skipped because they already exist.
                     </TooltipContent>
                   </Tooltip>
                 </p>
                 <p className="font-medium">{status.skipped_existing ?? 0}</p>
               </div>
+              <div>
+                <p className="text-muted-foreground">Last Sync</p>
+                <p className="font-medium text-xs">
+                  {status.last_sync ? new Date(status.last_sync).toLocaleString() : 'Never'}
+                </p>
+              </div>
             </div>
+
+            {/* Second row - bidirectional mode: import + export stats */}
+            {syncMode === 'bidirectional' && exportStatus && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t pt-3 mt-3">
+                <div>
+                  <p className="text-muted-foreground flex items-center gap-1">
+                    Last Imported
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Photos imported in the most recent sync.
+                      </TooltipContent>
+                    </Tooltip>
+                  </p>
+                  <p className="font-medium">{status.last_imported ?? 0}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground flex items-center gap-1">
+                    Total Exported
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Total photos exported to the folder.
+                      </TooltipContent>
+                    </Tooltip>
+                  </p>
+                  <p className="font-medium">{exportStatus.total_exported ?? 0}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground flex items-center gap-1">
+                    Export Mode
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {exportStatus.export_mode === 'going_forward'
+                          ? 'Only exports photos added after the baseline date.'
+                          : 'Exports your entire photo library.'}
+                      </TooltipContent>
+                    </Tooltip>
+                  </p>
+                  <p className="font-medium capitalize">
+                    {exportStatus.export_mode?.replace('_', ' ') || 'going forward'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground flex items-center gap-1">
+                    Export Baseline
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Only photos added after this date will be exported.
+                      </TooltipContent>
+                    </Tooltip>
+                  </p>
+                  <p className="font-medium text-xs">
+                    {exportStatus.baseline_date
+                      ? new Date(exportStatus.baseline_date).toLocaleString()
+                      : 'Not set'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Second row - export-only mode: export stats */}
+            {syncMode === 'export' && exportStatus && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t pt-3 mt-3">
+                <div>
+                  <p className="text-muted-foreground flex items-center gap-1">
+                    Total Exported
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Total photos exported to the folder.
+                      </TooltipContent>
+                    </Tooltip>
+                  </p>
+                  <p className="font-medium">{exportStatus.total_exported ?? 0}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground flex items-center gap-1">
+                    Export Mode
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {exportStatus.export_mode === 'going_forward'
+                          ? 'Only exports photos added after the baseline date.'
+                          : 'Exports your entire photo library.'}
+                      </TooltipContent>
+                    </Tooltip>
+                  </p>
+                  <p className="font-medium capitalize">
+                    {exportStatus.export_mode?.replace('_', ' ') || 'going forward'}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground flex items-center gap-1">
+                    Export Baseline
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Only photos added after this date will be exported.
+                      </TooltipContent>
+                    </Tooltip>
+                  </p>
+                  <p className="font-medium text-xs">
+                    {exportStatus.baseline_date
+                      ? new Date(exportStatus.baseline_date).toLocaleString()
+                      : 'Not set'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Second row - import-only mode: just Last Imported */}
+            {syncMode === 'import' && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t pt-3 mt-3">
+                <div>
+                  <p className="text-muted-foreground flex items-center gap-1">
+                    Last Imported
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Photos imported in the most recent sync.
+                      </TooltipContent>
+                    </Tooltip>
+                  </p>
+                  <p className="font-medium">{status.last_imported ?? 0}</p>
+                </div>
+              </div>
+            )}
           </TooltipProvider>
-          {status.sources && status.sources.length > 0 && (
-            <div className="flex gap-2 flex-wrap">
-              {status.sources.map((source) => (
-                <Badge key={source} variant="outline">{source}</Badge>
-              ))}
+        </div>
+      )}
+
+      {(activeSync || activeExport) && (
+        <div className="rounded-lg border bg-card/60 p-4 space-y-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Activity className="w-4 h-4" />
+            {syncMode === 'bidirectional' ? 'Sync in progress' : activeSync ? 'Import in progress' : 'Export in progress'}
+          </div>
+          {activeSync && (
+            <div>
+              <div className="flex justify-between text-sm mb-2">
+                <span>{syncMode === 'bidirectional' ? `Import: ${activeSync.message}` : activeSync.message}</span>
+                <span>{activeSync.progress}%</span>
+              </div>
+              <Progress value={activeSync.progress} />
+            </div>
+          )}
+          {activeExport && (
+            <div className={activeSync ? 'mt-3' : ''}>
+              <div className="flex justify-between text-sm mb-2">
+                <span>{syncMode === 'bidirectional' ? `Export: ${activeExport.message}` : activeExport.message}</span>
+                <span>{activeExport.progress}%</span>
+              </div>
+              <Progress value={activeExport.progress} />
             </div>
           )}
         </div>
       )}
 
-      {activeSync && (
-        <div className="rounded-lg border bg-card/60 p-4 space-y-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Activity className="w-4 h-4" /> Sync in progress
-          </div>
-          <div>
-            <div className="flex justify-between text-sm mb-2">
-              <span>{activeSync.message}</span>
-              <span>{activeSync.progress}%</span>
-            </div>
-            <Progress value={activeSync.progress} />
-          </div>
-        </div>
-      )}
-
       <section className="rounded-lg border p-6 space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-semibold">Sync Photos</h2>
-            <p className="text-sm text-muted-foreground">
-              Scan configured source folders and import new photos to Apple Photos.
-            </p>
-          </div>
+        <div>
+          <h2 className="text-xl font-semibold">
+            {syncMode === 'import' && 'Import Photos'}
+            {syncMode === 'bidirectional' && 'Sync Photos'}
+            {syncMode === 'export' && 'Export Photos'}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {syncMode === 'import' && 'Scan configured source folders and import new photos to Apple Photos.'}
+            {syncMode === 'bidirectional' && 'Import photos from folders AND export from Apple Photos to the same folder.'}
+            {syncMode === 'export' && 'Export photos from Apple Photos to your configured folder.'}
+          </p>
         </div>
+
+        {/* Warning for bidirectional mode */}
+        {syncMode === 'bidirectional' && (
+          <Alert variant="warning" className="border-orange-500 bg-orange-50">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Disable NextCloud Auto-Upload</AlertTitle>
+            <AlertDescription>
+              When using bidirectional sync, disable auto-upload from the NextCloud mobile app to avoid duplicates.
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="flex flex-wrap gap-3">
           <Button
@@ -363,16 +721,69 @@ export default function Photos() {
             )}
             Sync
           </Button>
+          {/* Set Baseline button for export/bidirectional modes when no baseline exists */}
+          {(syncMode === 'bidirectional' || syncMode === 'export') && exportStatus && !exportStatus.baseline_date && (
+            <Button
+              variant="secondary"
+              disabled={syncLoading}
+              onClick={handleSetBaseline}
+              className="min-w-[120px]"
+            >
+              Set Baseline
+            </Button>
+          )}
+          {/* Full Library Export button for export/bidirectional modes */}
+          {(syncMode === 'bidirectional' || syncMode === 'export') && (
+            <Button
+              variant="ghost"
+              disabled={syncLoading}
+              onClick={() => setShowFullLibraryWarning(true)}
+              className="min-w-[140px]"
+            >
+              Full Library
+            </Button>
+          )}
         </div>
 
         <SyncStatsView result={syncResult} />
       </section>
 
+      {/* Full Library Warning Dialog */}
+      <Dialog open={showFullLibraryWarning} onOpenChange={setShowFullLibraryWarning}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500" />
+              {syncMode === 'bidirectional' ? 'Full Library Sync' : 'Export Full Library'}
+            </DialogTitle>
+            <DialogDescription>
+              {syncMode === 'bidirectional'
+                ? 'This will import all photos from your folder AND export your entire Apple Photos library. For large libraries, this may take a long time.'
+                : 'This will export your entire Apple Photos library. For large libraries, this may take a long time.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 text-sm text-muted-foreground">
+            <p>Recommended: Run a simulation first to preview what will be synced.</p>
+          </div>
+          <DialogFooter className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowFullLibraryWarning(false)}>
+              Cancel
+            </Button>
+            <Button variant="secondary" onClick={() => { setShowFullLibraryWarning(false); handleSyncAction(true, true); }}>
+              Simulate First
+            </Button>
+            <Button onClick={() => handleSyncAction(false, true)}>
+              {syncMode === 'bidirectional' ? 'Sync All' : 'Export All'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <section className="rounded-lg border p-6 space-y-4">
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold flex items-center gap-2">
-              Sync history
+              Import history
               {(historyLoading || activeSync) && (
                 <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
               )}

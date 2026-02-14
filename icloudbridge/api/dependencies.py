@@ -15,6 +15,7 @@ from fastapi import Depends
 
 from icloudbridge.core.config import AppConfig, load_config
 from icloudbridge.core.passwords_sync import PasswordsSyncEngine
+from icloudbridge.core.photos_export_engine import ExportConfig, PhotoExportEngine
 from icloudbridge.core.photos_sync import PhotoSyncEngine
 from icloudbridge.core.reminders_sync import RemindersSyncEngine
 from icloudbridge.core.sync import NotesSyncEngine
@@ -124,6 +125,49 @@ async def get_photos_sync_engine(
     return engine
 
 
+async def get_photos_export_engine(
+    config: Annotated[AppConfig, Depends(get_config)]
+) -> PhotoExportEngine:
+    """Get an initialized photo export engine.
+
+    This engine exports photos from Apple Photos to a local folder.
+    Requires bidirectional or export sync mode to be enabled.
+    The export folder defaults to the first import source path.
+    """
+    from pathlib import Path
+
+    if not config.photos.enabled:
+        raise ValueError("Photo sync is disabled in configuration")
+
+    if config.photos.sync_mode not in ("export", "bidirectional"):
+        raise ValueError(
+            f"Photo export requires sync_mode='export' or 'bidirectional', "
+            f"got '{config.photos.sync_mode}'"
+        )
+
+    export_cfg = config.photos.export
+
+    # Determine export folder (default to first import source path)
+    export_folder = export_cfg.export_folder
+    if not export_folder:
+        # Use first configured import source path
+        if config.photos.sources:
+            first_source = next(iter(config.photos.sources.values()))
+            export_folder = first_source.path
+        else:
+            raise ValueError("No export folder configured and no import sources available")
+
+    export_config = ExportConfig(
+        export_folder=Path(export_folder),
+        organize_by=export_cfg.organize_by,
+    )
+
+    db = await get_photos_db(config)
+    engine = PhotoExportEngine(config=export_config, db=db)
+    await engine.initialize()
+    return engine
+
+
 async def get_notes_db(config: Annotated[AppConfig, Depends(get_config)]) -> NotesDB:
     """Get a notes database connection.
 
@@ -184,6 +228,7 @@ NotesSyncEngineDep = Annotated[NotesSyncEngine, Depends(get_notes_sync_engine)]
 RemindersSyncEngineDep = Annotated[RemindersSyncEngine, Depends(get_reminders_sync_engine)]
 PasswordsSyncEngineDep = Annotated[PasswordsSyncEngine, Depends(get_passwords_sync_engine)]
 PhotosSyncEngineDep = Annotated[PhotoSyncEngine, Depends(get_photos_sync_engine)]
+PhotosExportEngineDep = Annotated[PhotoExportEngine, Depends(get_photos_export_engine)]
 NotesDBDep = Annotated[NotesDB, Depends(get_notes_db)]
 RemindersDBDep = Annotated[RemindersDB, Depends(get_reminders_db)]
 PasswordsDBDep = Annotated[PasswordsDB, Depends(get_passwords_db)]

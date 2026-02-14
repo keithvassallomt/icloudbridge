@@ -60,6 +60,69 @@ class PhotosDB:
                 )
                 """
             )
+
+            # Migration: add origin column for tracking where photo came from
+            try:
+                await db.execute(
+                    "ALTER TABLE photo_assets ADD COLUMN origin TEXT DEFAULT 'nextcloud'"
+                )
+            except Exception:
+                pass  # Column already exists
+
+            # Migration: add sync_direction column
+            try:
+                await db.execute(
+                    "ALTER TABLE photo_assets ADD COLUMN sync_direction TEXT DEFAULT 'import'"
+                )
+            except Exception:
+                pass  # Column already exists
+
+            # Migration: add nextcloud_path column for export tracking
+            try:
+                await db.execute("ALTER TABLE photo_assets ADD COLUMN nextcloud_path TEXT")
+            except Exception:
+                pass  # Column already exists
+
+            # Migration: add nextcloud_etag column for change detection
+            try:
+                await db.execute("ALTER TABLE photo_assets ADD COLUMN nextcloud_etag TEXT")
+            except Exception:
+                pass  # Column already exists
+
+            # Table for tracking exports from Apple Photos to NextCloud
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS photo_exports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_hash TEXT UNIQUE NOT NULL,
+                    apple_asset_uuid TEXT NOT NULL,
+                    nextcloud_path TEXT NOT NULL,
+                    nextcloud_etag TEXT,
+                    file_size INTEGER NOT NULL,
+                    media_type TEXT NOT NULL,
+                    captured_at TEXT,
+                    exported_at REAL NOT NULL
+                )
+                """
+            )
+            await db.execute(
+                """CREATE INDEX IF NOT EXISTS idx_export_hash ON photo_exports(content_hash)"""
+            )
+            await db.execute(
+                """CREATE INDEX IF NOT EXISTS idx_export_uuid ON photo_exports(apple_asset_uuid)"""
+            )
+
+            # Singleton table for export state (baseline date, last export time)
+            await db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS photo_export_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    baseline_date REAL,
+                    last_export REAL
+                )
+                """
+            )
+
             await db.commit()
 
             # Backfill mtime from filesystem for existing records (one-time migration)
@@ -154,13 +217,16 @@ class PhotosDB:
         album: str | None,
         captured_at: datetime | None,
         mtime: datetime | None = None,
+        origin: str = "nextcloud",
+        sync_direction: str = "import",
     ) -> None:
         async with aiosqlite.connect(self.db_path) as db:
             await db.execute(
                 """
                 INSERT OR IGNORE INTO photo_assets
-                (content_hash, source_path, file_size, media_type, source_name, album, captured_at, first_seen, mtime)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (content_hash, source_path, file_size, media_type, source_name, album,
+                 captured_at, first_seen, mtime, origin, sync_direction)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     content_hash,
@@ -172,6 +238,8 @@ class PhotosDB:
                     captured_at.isoformat() if captured_at else None,
                     datetime.utcnow().timestamp(),
                     mtime.timestamp() if mtime else None,
+                    origin,
+                    sync_direction,
                 ),
             )
             await db.commit()
@@ -267,4 +335,112 @@ class PhotosDB:
         return {
             "total_imported": imported,
             "pending": pending_existing,
+        }
+
+    # Export tracking methods
+
+    async def get_export_by_hash(self, content_hash: str) -> dict | None:
+        """Check if a photo has been exported by its content hash."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM photo_exports WHERE content_hash = ?",
+                (content_hash,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def get_export_by_uuid(self, apple_asset_uuid: str) -> dict | None:
+        """Check if a photo has been exported by its Apple Photos UUID."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM photo_exports WHERE apple_asset_uuid = ?",
+                (apple_asset_uuid,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def record_export(
+        self,
+        *,
+        content_hash: str,
+        apple_asset_uuid: str,
+        nextcloud_path: str,
+        nextcloud_etag: str | None,
+        file_size: int,
+        media_type: str,
+        captured_at: datetime | None,
+    ) -> None:
+        """Record a photo export to NextCloud."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT OR REPLACE INTO photo_exports
+                (content_hash, apple_asset_uuid, nextcloud_path, nextcloud_etag,
+                 file_size, media_type, captured_at, exported_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    content_hash,
+                    apple_asset_uuid,
+                    nextcloud_path,
+                    nextcloud_etag,
+                    file_size,
+                    media_type,
+                    captured_at.isoformat() if captured_at else None,
+                    datetime.utcnow().timestamp(),
+                ),
+            )
+            await db.commit()
+
+    async def get_export_state(self) -> dict | None:
+        """Get the export state (baseline date, last export time)."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM photo_export_state WHERE id = 1"
+            ) as cursor:
+                row = await cursor.fetchone()
+                return dict(row) if row else None
+
+    async def set_export_baseline(self, baseline_date: datetime | None = None) -> None:
+        """Set the export baseline date. Photos before this date won't be exported."""
+        if baseline_date is None:
+            baseline_date = datetime.utcnow()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO photo_export_state (id, baseline_date, last_export)
+                VALUES (1, ?, NULL)
+                ON CONFLICT(id) DO UPDATE SET baseline_date = excluded.baseline_date
+                """,
+                (baseline_date.timestamp(),),
+            )
+            await db.commit()
+            logger.info("Set export baseline to %s", baseline_date.isoformat())
+
+    async def update_last_export(self) -> None:
+        """Update the last export timestamp."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO photo_export_state (id, baseline_date, last_export)
+                VALUES (1, NULL, ?)
+                ON CONFLICT(id) DO UPDATE SET last_export = excluded.last_export
+                """,
+                (datetime.utcnow().timestamp(),),
+            )
+            await db.commit()
+
+    async def get_export_stats(self) -> dict[str, int]:
+        """Get export statistics."""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT COUNT(*) FROM photo_exports"
+            ) as cursor:
+                total_exported = (await cursor.fetchone())[0]
+
+        return {
+            "total_exported": total_exported,
         }

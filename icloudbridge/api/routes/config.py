@@ -71,6 +71,11 @@ async def get_config(config: ConfigDep):
         passwords_nextcloud_username=config.passwords.nextcloud_username,
         photos_default_album=config.photos.default_album,
         photo_sources=_serialize_photo_sources(config.photos.sources),
+        # Photo sync mode and export settings
+        photos_sync_mode=config.photos.sync_mode,
+        photos_export_mode=config.photos.export_mode,
+        photos_export_folder=str(config.photos.export.export_folder) if config.photos.export.export_folder else None,
+        photos_export_organize_by=config.photos.export.organize_by,
     )
 
 
@@ -284,6 +289,17 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
                 detail=f"Invalid photo sources configuration: {exc}",
             )
 
+    # Update photo sync mode and export settings
+    if update.photos_sync_mode is not None:
+        config.photos.sync_mode = update.photos_sync_mode
+    if update.photos_export_mode is not None:
+        config.photos.export_mode = update.photos_export_mode
+    if update.photos_export_folder is not None:
+        from pathlib import Path
+        config.photos.export.export_folder = Path(update.photos_export_folder).expanduser().resolve() if update.photos_export_folder else None
+    if update.photos_export_organize_by is not None:
+        config.photos.export.organize_by = update.photos_export_organize_by
+
     # Save config to disk
     try:
         print(f"[DEBUG SAVE] Before save - username: {config.reminders.caldav_username}")
@@ -329,6 +345,11 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
         photos_default_album=config.photos.default_album,
         photo_sources=_serialize_photo_sources(config.photos.sources),
+        # Photo sync mode and export settings
+        photos_sync_mode=config.photos.sync_mode,
+        photos_export_mode=config.photos.export_mode,
+        photos_export_folder=str(config.photos.export.export_folder) if config.photos.export.export_folder else None,
+        photos_export_organize_by=config.photos.export.organize_by,
     )
 
 

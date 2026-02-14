@@ -69,6 +69,40 @@ icloudbridge photos --initial-scan
 icloudbridge photos --source nextcloud --source screenshots
 ```
 
+### `photos-export`
+Export photos from Apple Photos to a local folder (requires `photos.sync_mode` set to `export` or `bidirectional`). The export folder defaults to the same folder as your import source. NextCloud desktop app handles syncing the folder to the cloud.
+
+| Option | Description |
+|--------|-------------|
+| `--dry-run` | Preview what would be exported without copying files. |
+| `--full-library` | Export entire library (ignores baseline date). |
+| `--album NAME` | Filter export to a specific Apple Photos album. |
+| `--since DATE` | Only export photos taken after this date (ISO format: `YYYY-MM-DD`). |
+| `--set-baseline-only` | Set the export baseline to now without exporting anything. |
+
+The default behavior ("going forward" mode) only exports photos added after the baseline date. The baseline is set automatically on the first export run. Photos can be organized by date (YYYY/MM subfolders) or kept flat in the export folder root.
+
+```
+# Preview what would be exported
+icloudbridge photos-export --dry-run
+
+# Perform actual export
+icloudbridge photos-export
+
+# Export entire library (preview first!)
+icloudbridge photos-export --full-library --dry-run
+icloudbridge photos-export --full-library
+
+# Export only photos from a specific album
+icloudbridge photos-export --album "Vacation 2024" --dry-run
+
+# Export photos since a specific date
+icloudbridge photos-export --since 2024-01-01
+
+# Set baseline without exporting (useful for initial setup)
+icloudbridge photos-export --set-baseline-only
+```
+
 ### `db-paths`
 Print the file paths for the Notes, Reminders, and Passwords SQLite databases so you can
 back them up or inspect them with a SQL browser.

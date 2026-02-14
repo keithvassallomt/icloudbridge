@@ -535,6 +535,73 @@ class APIClient {
     }
   }
 
+  // Photo Export (Apple Photos → NextCloud)
+  async exportPhotos(options?: {
+    fullLibrary?: boolean;
+    albumFilter?: string;
+    dryRun?: boolean;
+    sinceDate?: string;
+  }): Promise<any> {
+    try {
+      const { data } = await this.client.post('/photos/export', {
+        full_library: options?.fullLibrary ?? false,
+        album_filter: options?.albumFilter,
+        dry_run: options?.dryRun ?? false,
+        since_date: options?.sinceDate,
+      });
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getPhotosExportStatus(): Promise<any> {
+    try {
+      const { data } = await this.client.get('/photos/export/status');
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getPhotosExportHistory(limit: number = 10): Promise<SyncHistoryResponse> {
+    try {
+      const { data } = await this.client.get<SyncHistoryResponse>('/photos/export/history', {
+        params: { limit },
+      });
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async setPhotosExportBaseline(): Promise<{ status: string; message: string; baseline_date: string }> {
+    try {
+      const { data } = await this.client.post('/photos/export/set-baseline');
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getPhotosLibraryAlbums(): Promise<{ albums: Array<{ uuid: string; name: string; count: number }> }> {
+    try {
+      const { data } = await this.client.get('/photos/library/albums');
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getPhotosLibraryStats(): Promise<any> {
+    try {
+      const { data } = await this.client.get('/photos/library/stats');
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
   // Schedules
   async getSchedules(service?: string, enabled?: boolean): Promise<Schedule[]> {
     try {
