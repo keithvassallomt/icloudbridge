@@ -137,6 +137,7 @@ async def get_status(photos_db: PhotosDBDep, config: ConfigDep):
 
     photos_pending_since = None
     last_skipped_existing = 0
+    last_imported_count = 0
     if photos_success_logs:
         last_log = photos_success_logs[0]
         photos_pending_since = last_log.get("completed_at") or last_log.get("started_at")
@@ -145,8 +146,10 @@ async def get_status(photos_db: PhotosDBDep, config: ConfigDep):
             try:
                 stats_payload = json.loads(stats_json)
                 last_skipped_existing = int(stats_payload.get("skipped_existing", 0) or 0)
+                last_imported_count = int(stats_payload.get("imported", 0) or 0)
             except (ValueError, TypeError):
                 last_skipped_existing = 0
+                last_imported_count = 0
 
     await photos_db.initialize()
     stats = await photos_db.get_stats(pending_since=photos_pending_since)
@@ -166,7 +169,8 @@ async def get_status(photos_db: PhotosDBDep, config: ConfigDep):
 
     return {
         "enabled": True,
-        "total_imported": stats.get("total_imported", 0),
+        "library_items": stats.get("total_imported", 0),
+        "last_imported": last_imported_count,
         "pending": stats.get("pending", 0),
         "last_sync": last_sync,
         "skipped_existing": last_skipped_existing,

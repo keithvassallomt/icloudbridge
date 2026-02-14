@@ -55,6 +55,71 @@ class PhotoSyncEngine:
 
     async def initialize(self) -> None:
         await self.db.initialize()
+        # Run one-time migration to catch up files added since initial scan
+        await self._migrate_new_files_to_db()
+        # Mark all existing records as imported (initial scan didn't set this)
+        await self._migrate_mark_all_imported()
+
+    async def _migrate_new_files_to_db(self) -> None:
+        """One-time migration: add files in source folders but not in DB.
+
+        Assumes these files are already in Apple Photos (e.g., synced via iCloud).
+        This avoids the slow AppleScript check for each file.
+        """
+        if await self.db.has_migration("new_files_catchup_v1"):
+            return
+
+        logger.info("Running one-time migration: catching up new files...")
+        candidates = list(self.scanner.iter_candidates())
+        added = 0
+
+        for candidate in candidates:
+            # Check if already in DB by path+size (fast)
+            existing = await self.db.get_by_path_and_size(candidate.path, candidate.size)
+            if existing:
+                continue
+
+            # Hash the file and check by hash
+            file_hash = await self._hash_file(candidate.path)
+            existing_by_hash = await self.db.get_by_hash(file_hash)
+            if existing_by_hash:
+                continue
+
+            # New file - add to DB as "already imported" (assume in Photos)
+            await self.db.record_discovery(
+                content_hash=file_hash,
+                path=candidate.path,
+                size=candidate.size,
+                media_type=candidate.media_type,
+                source_name=candidate.source_name,
+                album=candidate.album,
+                captured_at=candidate.mtime,
+                mtime=candidate.mtime,
+            )
+            # Mark as imported so it doesn't get queued for import
+            await self.db.mark_imported(
+                content_hash=file_hash,
+                album=candidate.album,
+                apple_local_identifier=None,
+            )
+            added += 1
+
+        await self.db.set_migration("new_files_catchup_v1")
+        logger.info("Migration complete: added %d files to database", added)
+
+    async def _migrate_mark_all_imported(self) -> None:
+        """One-time migration: mark all records as imported.
+
+        The initial scan (FirstRunWizard) recorded files but didn't mark them
+        as imported. This fixes the count so total_imported reflects reality.
+        """
+        if await self.db.has_migration("mark_all_imported_v1"):
+            return
+
+        logger.info("Running migration: marking all records as imported...")
+        await self.db.mark_all_imported()
+        await self.db.set_migration("mark_all_imported_v1")
+        logger.info("Migration complete: all records marked as imported")
 
     async def sync(
         self,
@@ -89,6 +154,7 @@ class PhotoSyncEngine:
         skipped_existing = 0
         total_candidates = len(candidates)
 
+        skipped_by_mtime = 0
         for idx, candidate in enumerate(candidates):
             # Report progress every 10 files or at milestones
             if progress_callback and (idx % 10 == 0 or idx == total_candidates - 1):
@@ -101,9 +167,21 @@ class PhotoSyncEngine:
                     progress = 10 + int((idx / total_candidates) * 40)
                 await progress_callback(progress, f"Analyzing file {idx + 1} of {total_candidates}...")
 
+            # Fast-path: check if file is already known by path+size+mtime (skip expensive hashing)
+            existing_by_path = await self.db.get_by_path_and_size(candidate.path, candidate.size)
+            if existing_by_path:
+                stored_mtime = existing_by_path.get("mtime")
+                # If mtime matches, file is unchanged - skip without hashing
+                if stored_mtime is not None and abs(stored_mtime - candidate.mtime.timestamp()) < 1.0:
+                    skipped_by_mtime += 1
+                    continue
+
             file_hash = await self._hash_file(candidate.path)
             existing = await self.db.get_by_hash(file_hash)
             if existing:
+                # Backfill mtime for existing records (migration from older schema)
+                if existing.get("mtime") is None:
+                    await self.db.update_mtime(file_hash, candidate.mtime)
                 continue
 
             if (
@@ -150,6 +228,7 @@ class PhotoSyncEngine:
                     source_name=candidate.source_name,
                     album=candidate.album,
                     captured_at=captured_at,
+                    mtime=candidate.mtime,
                 )
 
             new_records.append(
@@ -159,12 +238,17 @@ class PhotoSyncEngine:
         if not new_records:
             if progress_callback:
                 await progress_callback(100, "No new files to import")
+            logger.info(
+                "Photo sync complete: %d discovered, %d skipped by mtime (fast-path), %d skipped existing",
+                len(candidates), skipped_by_mtime, skipped_existing,
+            )
             return {
                 "discovered": len(candidates),
                 "new_assets": 0,
                 "imported": 0,
                 "dry_run": dry_run,
                 "skipped_existing": skipped_existing,
+                "skipped_by_mtime": skipped_by_mtime,
                 "sources": scanned_sources,
             }
 
@@ -183,6 +267,7 @@ class PhotoSyncEngine:
                 "initial_scan": initial_scan,
                 "pending": [str(record.candidate.path) for record in new_records[:50]],
                 "skipped_existing": skipped_existing,
+                "skipped_by_mtime": skipped_by_mtime,
                 "sources": scanned_sources,
             }
 
@@ -235,6 +320,7 @@ class PhotoSyncEngine:
             "imported": total_imported,
             "dry_run": False,
             "skipped_existing": skipped_existing,
+            "skipped_by_mtime": skipped_by_mtime,
             "albums": {album: len(records) for album, records in grouped.items()},
             "sources": scanned_sources,
         }

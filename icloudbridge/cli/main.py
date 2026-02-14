@@ -214,10 +214,14 @@ def photos(
     table.add_column("Value", style="green")
     table.add_row("Sources scanned", ", ".join(source or engine.scanner.available_sources()) or "None")
     table.add_row("Files discovered", str(stats.get("discovered", 0)))
+    table.add_row("Skipped (fast-path)", str(stats.get("skipped_by_mtime", 0)))
+    table.add_row("Skipped (in Photos)", str(stats.get("skipped_existing", 0)))
     table.add_row("New assets", str(stats.get("new_assets", 0)))
     table.add_row("Imported", str(stats.get("imported", 0)))
-    table.add_row("Dry run", "Yes" if stats.get("dry_run") else "No")
-    table.add_row("Initial scan", "Yes" if stats.get("initial_scan") else "No")
+    if stats.get("dry_run"):
+        table.add_row("Mode", "Dry run (no changes)")
+    elif stats.get("initial_scan"):
+        table.add_row("Mode", "Initial scan (cache only)")
 
     albums = stats.get("albums")
     if albums:

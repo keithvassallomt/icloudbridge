@@ -13,7 +13,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 interface PhotosStatus {
   enabled: boolean;
   message?: string;
-  total_imported?: number;
+  library_items?: number;
+  last_imported?: number;
   pending?: number;
   last_sync?: string;
   sources?: string[];
@@ -242,10 +243,34 @@ export default function Photos() {
         <div className="rounded-lg border p-4 space-y-3">
           <h3 className="text-lg font-semibold">Status</h3>
           <TooltipProvider>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-sm">
               <div>
-                <p className="text-muted-foreground">Total Imported</p>
-                <p className="font-medium">{status.total_imported ?? 0}</p>
+                <p className="text-muted-foreground flex items-center gap-1">
+                  Library Items
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Total photos/videos tracked in source folders.
+                    </TooltipContent>
+                  </Tooltip>
+                </p>
+                <p className="font-medium">{status.library_items ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-muted-foreground flex items-center gap-1">
+                  Last Imported
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Info className="w-3.5 h-3.5 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Photos imported in the most recent sync.
+                    </TooltipContent>
+                  </Tooltip>
+                </p>
+                <p className="font-medium">{status.last_imported ?? 0}</p>
               </div>
               <div>
                 <p className="text-muted-foreground">Pending</p>
@@ -269,7 +294,7 @@ export default function Photos() {
                       <Info className="w-3.5 h-3.5 text-muted-foreground" />
                     </TooltipTrigger>
                     <TooltipContent>
-                      Photos are skipped when they are already in your Apple Photos library.
+                      Photos skipped because they already exist in Apple Photos.
                     </TooltipContent>
                   </Tooltip>
                 </p>
