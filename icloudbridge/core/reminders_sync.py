@@ -548,9 +548,10 @@ class RemindersSyncEngine:
 
         # Process new local reminders (not in database)
         # Skip completed reminders that aren't already mapped - don't sync historical completed items
+        # BUT still sync recurring reminders even if the current instance is completed
         for local_uuid, local_reminder in local_by_uuid.items():
             if local_uuid not in processed_local:
-                if local_reminder.completed:
+                if local_reminder.completed and not local_reminder.recurrence_rules:
                     logger.debug(f"Skipping new completed reminder: {local_reminder.title}")
                     continue
                 plan["create_remote"].append(local_reminder)
@@ -558,9 +559,10 @@ class RemindersSyncEngine:
 
         # Process new remote TODOs (not in database)
         # Skip completed TODOs that aren't already mapped - don't sync historical completed items
+        # BUT still sync recurring TODOs even if the current instance is completed
         for remote_uid, remote_todo in remote_by_uid.items():
             if remote_uid not in processed_remote:
-                if remote_todo.completed:
+                if remote_todo.completed and not remote_todo.recurrence_rules:
                     logger.debug(f"Skipping new completed TODO: {remote_todo.summary}")
                     continue
                 plan["create_local"].append(remote_todo)

@@ -137,6 +137,27 @@ class PhotoSyncEngine:
         self._original_name_cache.clear()
         self._existing_live_stems.clear()
 
+        # Open a persistent DB connection for the duration of the sync
+        await self.db.open()
+        try:
+            return await self._sync_inner(
+                sources=sources,
+                dry_run=dry_run,
+                initial_scan=initial_scan,
+                progress_callback=progress_callback,
+            )
+        finally:
+            await self.db.close()
+
+    async def _sync_inner(
+        self,
+        *,
+        sources: Iterable[str] | None = None,
+        dry_run: bool = False,
+        initial_scan: bool = False,
+        progress_callback: ProgressCallback | None = None,
+    ) -> dict:
+
         if progress_callback:
             await progress_callback(5, "Scanning source folders...")
 
@@ -156,37 +177,43 @@ class PhotoSyncEngine:
         total_candidates = len(candidates)
 
         skipped_by_mtime = 0
-        for idx, candidate in enumerate(candidates):
-            # Report progress every 10 files or at milestones
-            if progress_callback and (idx % 10 == 0 or idx == total_candidates - 1):
-                # Progress scaling depends on whether we'll import or not
-                # Dry-run/initial_scan: 10% to 95% during hashing (no import phase)
-                # Normal sync: 10% to 50% during hashing (import phase is 55-95%)
-                if dry_run or initial_scan:
-                    progress = 10 + int((idx / total_candidates) * 85)
-                else:
-                    progress = 10 + int((idx / total_candidates) * 40)
-                await progress_callback(progress, f"Analyzing file {idx + 1} of {total_candidates}...")
+
+        # --- Phase 1: Hash files concurrently and filter by DB lookups ---
+        # Candidates that survive DB checks need a library existence check.
+        needs_library_check: list[tuple[PhotoCandidate, str, datetime | None, str | None]] = []
+
+        hash_semaphore = asyncio.Semaphore(8)
+
+        async def _analyse_one(candidate: PhotoCandidate) -> None:
+            """Hash and DB-check a single candidate (runs concurrently)."""
+            nonlocal skipped_by_mtime, skipped_exported, skipped_existing
 
             # Fast-path: check if file is already known by path+size+mtime (skip expensive hashing)
             existing_by_path = await self.db.get_by_path_and_size(candidate.path, candidate.size)
             if existing_by_path:
                 stored_mtime = existing_by_path.get("mtime")
-                # If mtime matches, file is unchanged - skip without hashing
-                if stored_mtime is not None and abs(stored_mtime - candidate.mtime.timestamp()) < 1.0:
+                # Only skip if mtime matches AND the file was actually imported
+                if (
+                    stored_mtime is not None
+                    and abs(stored_mtime - candidate.mtime.timestamp()) < 1.0
+                    and existing_by_path.get("last_imported") is not None
+                ):
                     skipped_by_mtime += 1
-                    continue
+                    return
 
-            file_hash = await self._hash_file(candidate.path)
+            async with hash_semaphore:
+                file_hash = await self._hash_file(candidate.path)
+
             existing = await self.db.get_by_hash(file_hash)
             if existing:
                 # Backfill mtime for existing records (migration from older schema)
                 if existing.get("mtime") is None:
                     await self.db.update_mtime(file_hash, candidate.mtime)
-                continue
+                # Only skip if the file was actually imported into Photos
+                if existing.get("last_imported") is not None:
+                    return
 
             # Bidirectional dedup: skip if this was exported FROM Apple Photos
-            # (Wife's photo scenario - we exported it, now seeing it in NextCloud)
             export_record = await self.db.get_export_by_hash(file_hash)
             if export_record:
                 logger.debug(
@@ -194,7 +221,7 @@ class PhotoSyncEngine:
                     candidate.path,
                 )
                 skipped_exported += 1
-                continue
+                return
 
             if (
                 not initial_scan
@@ -206,23 +233,82 @@ class PhotoSyncEngine:
                     candidate.path,
                 )
                 skipped_existing += 1
-                continue
+                return
 
             # Extract EXIF timestamp for images, fall back to mtime
             captured_at = candidate.mtime
             if not initial_scan and candidate.media_type == "image":
-                exif_timestamp = await asyncio.to_thread(extract_capture_timestamp, candidate.path)
+                async with hash_semaphore:  # reuse semaphore to limit I/O
+                    exif_timestamp = await asyncio.to_thread(extract_capture_timestamp, candidate.path)
                 if exif_timestamp:
                     captured_at = exif_timestamp
 
             if not initial_scan:
                 filename_for_lookup: str | None = None
                 if candidate.media_type == "image" and captured_at:
-                    filename_for_lookup = await self._get_original_filename(candidate)
+                    async with hash_semaphore:
+                        filename_for_lookup = await self._get_original_filename(candidate)
                     if not filename_for_lookup:
                         filename_for_lookup = candidate.path.name
+                else:
+                    filename_for_lookup = candidate.path.name
 
-                if await self._already_in_library(filename=filename_for_lookup):
+                needs_library_check.append((candidate, file_hash, captured_at, filename_for_lookup))
+            else:
+                needs_library_check.append((candidate, file_hash, captured_at, None))
+
+        # Process candidates in batches for progress reporting
+        BATCH_SIZE = 50
+        for batch_start in range(0, total_candidates, BATCH_SIZE):
+            batch = candidates[batch_start : batch_start + BATCH_SIZE]
+            await asyncio.gather(*(_analyse_one(c) for c in batch))
+
+            if progress_callback:
+                done = min(batch_start + BATCH_SIZE, total_candidates)
+                if dry_run or initial_scan:
+                    progress = 10 + int((done / total_candidates) * 60)
+                else:
+                    progress = 10 + int((done / total_candidates) * 30)
+                await progress_callback(progress, f"Analyzed {done} of {total_candidates} files...")
+
+        # --- Phase 2: Batch library existence check via single AppleScript call ---
+        if not initial_scan and needs_library_check:
+            # Collect unique filenames that need checking (skip already-cached ones)
+            filenames_to_check: list[str] = []
+            for _, _, _, fn in needs_library_check:
+                if fn and fn not in self._name_exists_cache:
+                    filenames_to_check.append(fn)
+
+            # Deduplicate while preserving order
+            seen: set[str] = set()
+            unique_filenames: list[str] = []
+            for fn in filenames_to_check:
+                if fn not in seen:
+                    seen.add(fn)
+                    unique_filenames.append(fn)
+
+            if unique_filenames:
+                if progress_callback:
+                    base = 70 if not (dry_run or initial_scan) else 40
+                    await progress_callback(base, f"Checking {len(unique_filenames)} filenames against Photos library...")
+
+                try:
+                    batch_results = await self.apple.batch_assets_exist_by_name(unique_filenames)
+                    self._name_exists_cache.update(batch_results)
+                except Exception as exc:
+                    logger.warning("Batch Photos lookup failed, falling back to individual checks: %s", exc)
+                    # Fall back to individual checks (slower but reliable)
+                    for fn in unique_filenames:
+                        try:
+                            exists = await self.apple.asset_exists_by_name(fn)
+                        except Exception:
+                            exists = False
+                        self._name_exists_cache[fn] = exists
+
+        # --- Phase 3: Final filtering and record creation ---
+        for candidate, file_hash, captured_at, filename_for_lookup in needs_library_check:
+            if not initial_scan and filename_for_lookup:
+                if self._name_exists_cache.get(filename_for_lookup, False):
                     logger.debug("Skipping %s (already in Photos)", candidate.path)
                     self._existing_live_stems.add(candidate.path.stem)
                     skipped_existing += 1

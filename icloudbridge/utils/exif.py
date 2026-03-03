@@ -115,26 +115,20 @@ def extract_exif_metadata(path: Path) -> dict[str, any]:
 def extract_original_filename(path: Path) -> str | None:
     """Best-effort extraction of the original camera filename."""
 
-    # Try Spotlight metadata first (macOS-only)
+    # Try Spotlight metadata first (macOS-only, fast)
     try:
         result = subprocess.run(
             ["mdls", "-name", "kMDItemOriginalFilename", "-raw", str(path)],
             capture_output=True,
             text=True,
             check=True,
+            timeout=5,
         )
         value = result.stdout.strip()
         if value and value != "(null)":
             return value
-    except (FileNotFoundError, subprocess.CalledProcessError):
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         logger.debug("mdls unavailable or returned no original filename for %s", path)
-
-    # Fall back to EXIF metadata
-    metadata = extract_exif_metadata(path)
-    for key in ("OriginalFilename", "DocumentName", "ImageUniqueID"):
-        value = metadata.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
 
     # Heuristic: many Nextcloud naming templates append the original
     # sequence number at the end (e.g., "2025-11-16 12-06-53 3643.HEIC").

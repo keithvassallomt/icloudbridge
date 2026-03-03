@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,29 @@ class PhotosDB:
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        self._conn: aiosqlite.Connection | None = None
+
+    async def open(self) -> None:
+        """Open a persistent connection for use during batch operations."""
+        if self._conn is None:
+            self._conn = await aiosqlite.connect(self.db_path)
+            self._conn.row_factory = aiosqlite.Row
+
+    async def close(self) -> None:
+        """Close the persistent connection."""
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
+
+    @contextlib.asynccontextmanager
+    async def _connection(self):
+        """Yield the shared connection if open, otherwise a temporary one."""
+        if self._conn is not None:
+            yield self._conn
+        else:
+            async with aiosqlite.connect(self.db_path) as db:
+                db.row_factory = aiosqlite.Row
+                yield db
 
     async def initialize(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,7 +185,7 @@ class PhotosDB:
 
     async def has_migration(self, name: str) -> bool:
         """Check if a migration has been applied."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             async with db.execute(
                 "SELECT 1 FROM migrations WHERE name = ?", (name,)
             ) as cursor:
@@ -169,7 +193,7 @@ class PhotosDB:
 
     async def set_migration(self, name: str) -> None:
         """Mark a migration as applied."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             await db.execute(
                 "INSERT OR IGNORE INTO migrations (name, applied_at) VALUES (?, ?)",
                 (name, datetime.utcnow().timestamp()),
@@ -177,7 +201,7 @@ class PhotosDB:
             await db.commit()
 
     async def get_by_hash(self, content_hash: str) -> dict | None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM photo_assets WHERE content_hash = ?",
@@ -188,7 +212,7 @@ class PhotosDB:
 
     async def get_by_path_and_size(self, path: Path, size: int) -> dict | None:
         """Fast lookup by path and size for deduplication before hashing."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM photo_assets WHERE source_path = ? AND file_size = ?",
@@ -199,7 +223,7 @@ class PhotosDB:
 
     async def update_mtime(self, content_hash: str, mtime: datetime) -> None:
         """Backfill mtime for existing records (migration from older schema)."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             await db.execute(
                 "UPDATE photo_assets SET mtime = ? WHERE content_hash = ? AND mtime IS NULL",
                 (mtime.timestamp(), content_hash),
@@ -220,7 +244,7 @@ class PhotosDB:
         origin: str = "nextcloud",
         sync_direction: str = "import",
     ) -> None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             await db.execute(
                 """
                 INSERT OR IGNORE INTO photo_assets
@@ -249,7 +273,7 @@ class PhotosDB:
 
         Used for migration: initial scan recorded files but didn't mark them imported.
         """
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             result = await db.execute(
                 """
                 UPDATE photo_assets
@@ -267,7 +291,7 @@ class PhotosDB:
         album: str | None,
         apple_local_identifier: str | None = None,
     ) -> None:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             await db.execute(
                 """
                 UPDATE photo_assets
@@ -300,7 +324,7 @@ class PhotosDB:
         stale_ids: list[int] = []
         pending_rows: list[aiosqlite.Row] = []
 
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             db.row_factory = aiosqlite.Row
 
             async with db.execute(
@@ -325,7 +349,7 @@ class PhotosDB:
                 stale_ids.append(row["id"])
 
         if stale_ids:
-            async with aiosqlite.connect(self.db_path) as db:
+            async with self._connection() as db:
                 await db.executemany(
                     "DELETE FROM photo_assets WHERE id = ?",
                     [(stale_id,) for stale_id in stale_ids],
@@ -341,7 +365,7 @@ class PhotosDB:
 
     async def get_export_by_hash(self, content_hash: str) -> dict | None:
         """Check if a photo has been exported by its content hash."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM photo_exports WHERE content_hash = ?",
@@ -352,7 +376,7 @@ class PhotosDB:
 
     async def get_export_by_uuid(self, apple_asset_uuid: str) -> dict | None:
         """Check if a photo has been exported by its Apple Photos UUID."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM photo_exports WHERE apple_asset_uuid = ?",
@@ -373,7 +397,7 @@ class PhotosDB:
         captured_at: datetime | None,
     ) -> None:
         """Record a photo export to NextCloud."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO photo_exports
@@ -396,7 +420,7 @@ class PhotosDB:
 
     async def get_export_state(self) -> dict | None:
         """Get the export state (baseline date, last export time)."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             db.row_factory = aiosqlite.Row
             async with db.execute(
                 "SELECT * FROM photo_export_state WHERE id = 1"
@@ -408,7 +432,7 @@ class PhotosDB:
         """Set the export baseline date. Photos before this date won't be exported."""
         if baseline_date is None:
             baseline_date = datetime.utcnow()
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             await db.execute(
                 """
                 INSERT INTO photo_export_state (id, baseline_date, last_export)
@@ -422,7 +446,7 @@ class PhotosDB:
 
     async def update_last_export(self) -> None:
         """Update the last export timestamp."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             await db.execute(
                 """
                 INSERT INTO photo_export_state (id, baseline_date, last_export)
@@ -435,7 +459,7 @@ class PhotosDB:
 
     async def get_export_stats(self) -> dict[str, int]:
         """Get export statistics."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with self._connection() as db:
             async with db.execute(
                 "SELECT COUNT(*) FROM photo_exports"
             ) as cursor:

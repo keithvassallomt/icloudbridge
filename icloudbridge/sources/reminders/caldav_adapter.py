@@ -372,20 +372,22 @@ class CalDAVAdapter:
                 if component.name == "VALARM":
                     trigger = component.get("TRIGGER")
                     if trigger:
-                        # Parse trigger duration
-                        if hasattr(trigger, "dt"):
-                            # Absolute time - convert to relative minutes
+                        trigger_val = trigger.dt if hasattr(trigger, "dt") else None
+                        if isinstance(trigger_val, timedelta):
+                            # Relative duration (e.g., -PT15M)
+                            # Negative timedelta = before due date
+                            trigger_minutes = int(abs(trigger_val.total_seconds()) / 60)
+                            alarms.append(CalDAVAlarm(trigger_minutes=trigger_minutes))
+                        elif isinstance(trigger_val, datetime):
+                            # Absolute time - convert to relative minutes from due date
                             if due_date:
-                                delta = due_date - trigger.dt
+                                delta = due_date - trigger_val
                                 trigger_minutes = int(delta.total_seconds() / 60)
                                 alarms.append(CalDAVAlarm(trigger_minutes=trigger_minutes))
                         else:
-                            # Relative duration (e.g., -PT15M for 15 minutes before)
+                            # Fallback: parse from string representation
                             trigger_str = str(trigger)
                             if trigger_str.startswith("-PT") or trigger_str.startswith("PT"):
-                                # Parse simple duration format
-                                # -PT15M = 15 minutes before
-                                # PT15M = 15 minutes after (unusual for todos)
                                 is_before = trigger_str.startswith("-PT")
                                 trigger_str = trigger_str.replace("-PT", "").replace("PT", "")
 

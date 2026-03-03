@@ -97,6 +97,16 @@ end run
 """
 
 
+# Fetch ALL media-item filenames in one call (one library scan).
+GET_ALL_FILENAMES_SCRIPT = """
+tell application "Photos"
+    set allNames to filename of media items
+    set AppleScript's text item delimiters to linefeed
+    return allNames as string
+end tell
+"""
+
+
 class PhotosAppleScriptAdapter:
     """Thin async wrapper over `osascript` for Photos operations."""
 
@@ -131,6 +141,25 @@ class PhotosAppleScriptAdapter:
     async def asset_exists_by_name(self, filename: str) -> bool:
         result = await self._run_script(CHECK_ITEM_EXISTS_BY_NAME_SCRIPT, filename)
         return result.strip() == "1"
+
+    async def batch_assets_exist_by_name(self, filenames: list[str]) -> dict[str, bool]:
+        """Check multiple filenames at once via a single AppleScript call.
+
+        Fetches ALL filenames from Photos library in one query, then matches
+        in Python. Much faster than per-file ``whose`` filters.
+
+        Returns a dict mapping each filename to whether it exists in Photos.
+        """
+        if not filenames:
+            return {}
+
+        # One library scan to get every filename
+        result = await self._run_script(GET_ALL_FILENAMES_SCRIPT)
+        library_names: set[str] = set()
+        if result:
+            library_names = {line.strip() for line in result.splitlines() if line.strip()}
+
+        return {name: name in library_names for name in filenames}
 
     async def _run_script(self, script: str, *args: str) -> str:
         """Execute an AppleScript snippet via `osascript`."""
