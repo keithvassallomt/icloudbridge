@@ -3,6 +3,31 @@ import ApplicationServices
 import EventKit
 import Photos
 
+enum RequirementCategory: String, CaseIterable {
+    case essential
+    case notes
+    case reminders
+    case photos
+
+    var title: String {
+        switch self {
+        case .essential: return "Essential"
+        case .notes: return "Notes Sync"
+        case .reminders: return "Reminders Sync"
+        case .photos: return "Photos Sync"
+        }
+    }
+
+    var subtitle: String? {
+        switch self {
+        case .essential: return nil
+        case .notes: return "Required to sync Apple Notes"
+        case .reminders: return "Required to sync Apple Reminders"
+        case .photos: return "Required to sync Apple Photos"
+        }
+    }
+}
+
 enum Requirement: CaseIterable {
     case homebrew
     case xcodeCommandLineTools
@@ -26,6 +51,23 @@ enum Requirement: CaseIterable {
         case .remindersAutomation: return "Apple Reminders"
         case .photosAutomation: return "Apple Photos"
         }
+    }
+
+    var category: RequirementCategory {
+        switch self {
+        case .homebrew, .xcodeCommandLineTools, .python, .ruby:
+            return .essential
+        case .fullDiskAccess, .accessibility, .notesAutomation:
+            return .notes
+        case .remindersAutomation:
+            return .reminders
+        case .photosAutomation:
+            return .photos
+        }
+    }
+
+    var isEssential: Bool {
+        category == .essential
     }
 }
 
@@ -407,7 +449,8 @@ final class PreflightManager {
         }
         let result = Shell.run(brew, ["list", "--versions", "python@3.12"], environment: ["HOMEBREW_NO_AUTO_UPDATE": "1"])
         if result.status == 0, !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let components = result.output.split(separator: " ")
+            let trimmedOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let components = trimmedOutput.split(separator: " ")
             let versionString = components.dropFirst().first.map(String.init) ?? ""
             let binDir = "/opt/homebrew/opt/python@3.12/bin"
             let py3 = "\(binDir)/python3"
@@ -427,7 +470,8 @@ final class PreflightManager {
         }
         let result = Shell.run(brew, ["list", "--versions", "ruby"], environment: ["HOMEBREW_NO_AUTO_UPDATE": "1"])
         if result.status == 0, !result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let parts = result.output.split(separator: " ")
+            let trimmedOutput = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = trimmedOutput.split(separator: " ")
             let versionString = parts.dropFirst().first.map(String.init) ?? ""
             let detected = Semver(versionString)
             if detected >= Semver("3.4.0") {

@@ -1,5 +1,6 @@
 """System and utility endpoints."""
 
+import json
 import logging
 import os
 import platform
@@ -18,6 +19,8 @@ from icloudbridge.api.models import (
     ShortcutStatus,
     FullDiskAccessStatus,
     NotesFolderStatus,
+    PermissionsResponse,
+    ServicePermissionStatus,
 )
 from icloudbridge.utils.db import SettingsDB
 from icloudbridge.utils.logging import set_logging_level
@@ -231,6 +234,64 @@ async def verify_setup(request: Request, config: ConfigDep) -> SetupVerification
         notes_folder=notes_folder_status,
         is_localhost=is_localhost,
         all_ready=all_ready,
+    )
+
+
+@router.get("/permissions", response_model=PermissionsResponse)
+async def get_permissions(config: ConfigDep) -> PermissionsResponse:
+    """Get per-service permission availability.
+
+    Reads permission states persisted by the macOS preflight window
+    and maps them to per-service availability. Services whose required
+    permissions have not been granted will have ``permitted=False`` with
+    a list of missing permission names.
+    """
+    permissions_file = config.general.data_dir / "permissions.json"
+
+    perms: dict[str, bool] = {}
+    if permissions_file.exists():
+        try:
+            perms = json.loads(permissions_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to read permissions.json: %s", exc)
+
+    fda = perms.get("full_disk_access", False)
+    accessibility = perms.get("accessibility", False)
+    notes_auto = perms.get("notes_automation", False)
+    reminders_auto = perms.get("reminders_automation", False)
+    photos_auto = perms.get("photos_automation", False)
+
+    # Notes requires all three permissions
+    notes_missing: list[str] = []
+    if not fda:
+        notes_missing.append("Full Disk Access")
+    if not accessibility:
+        notes_missing.append("Accessibility")
+    if not notes_auto:
+        notes_missing.append("Apple Notes automation")
+
+    reminders_missing: list[str] = []
+    if not reminders_auto:
+        reminders_missing.append("Apple Reminders access")
+
+    photos_missing: list[str] = []
+    if not photos_auto:
+        photos_missing.append("Apple Photos access")
+
+    return PermissionsResponse(
+        notes=ServicePermissionStatus(
+            permitted=not bool(notes_missing),
+            missing=notes_missing,
+        ),
+        reminders=ServicePermissionStatus(
+            permitted=not bool(reminders_missing),
+            missing=reminders_missing,
+        ),
+        photos=ServicePermissionStatus(
+            permitted=not bool(photos_missing),
+            missing=photos_missing,
+        ),
+        passwords=ServicePermissionStatus(permitted=True, missing=[]),
     )
 
 

@@ -38,9 +38,12 @@ final class PreflightCoordinator {
         case .statusesUpdated(let statuses):
             latestStatuses = statuses
             maybeStartRuntimeInstalls()
+            persistPermissions(statuses: statuses)
 
             let snapshot = currentSnapshot()
+            // Only essential requirements block the daemon
             let blockingIssue = statuses.contains { status in
+                guard status.requirement.isEssential else { return false }
                 switch status.state {
                 case .actionRequired, .failed:
                     return true
@@ -118,9 +121,11 @@ final class PreflightCoordinator {
 
     private func allRequirementsSatisfied() -> Bool {
         let augmented = augmentedStatuses(base: latestStatuses)
-        let baseSatisfied = augmented.allSatisfy { $0.state.isSatisfied }
+        let essentialsSatisfied = augmented
+            .filter { $0.requirement.isEssential }
+            .allSatisfy { $0.state.isSatisfied }
         let runtimeSatisfied = runtimeInstaller.pythonState.succeeded && runtimeInstaller.rubyState.succeeded
-        return baseSatisfied && runtimeSatisfied
+        return essentialsSatisfied && runtimeSatisfied
     }
 
     private func runtimeProgress() -> [Requirement: Double] {
@@ -234,6 +239,33 @@ final class PreflightCoordinator {
             } else if shouldSuppressWhenHealthy && healthy {
                 windowController?.close()
             }
+        }
+    }
+
+    private func persistPermissions(statuses: [RequirementStatus]) {
+        let permissionKeys: [(Requirement, String)] = [
+            (.fullDiskAccess, "full_disk_access"),
+            (.accessibility, "accessibility"),
+            (.notesAutomation, "notes_automation"),
+            (.remindersAutomation, "reminders_automation"),
+            (.photosAutomation, "photos_automation"),
+        ]
+
+        var dict: [String: Bool] = [:]
+        for (req, key) in permissionKeys {
+            let satisfied = statuses.first(where: { $0.requirement == req })?.state.isSatisfied ?? false
+            dict[key] = satisfied
+        }
+
+        let dataDir = (NSHomeDirectory() as NSString).appendingPathComponent(".icloudbridge")
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: dataDir) {
+            try? fm.createDirectory(atPath: dataDir, withIntermediateDirectories: true)
+        }
+
+        let filePath = (dataDir as NSString).appendingPathComponent("permissions.json")
+        if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: URL(fileURLWithPath: filePath))
         }
     }
 

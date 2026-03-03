@@ -14,7 +14,7 @@ import { FolderBrowserDialog } from '@/components/FolderBrowserDialog';
 import { useAppStore } from '@/store/app-store';
 import { useSyncStore } from '@/store/sync-store';
 import apiClient from '@/lib/api-client';
-import type { AppConfig, PasswordsStatus, SetupVerificationResponse } from '@/types/api';
+import type { AppConfig, PasswordsStatus, SetupVerificationResponse, PermissionsResponse } from '@/types/api';
 
 type PasswordProvider = 'vaultwarden' | 'nextcloud';
 
@@ -90,6 +90,7 @@ export default function Settings() {
   const [pendingSavePayload, setPendingSavePayload] = useState<Partial<AppConfig> | null>(null);
   const [showUnsavedPrompt, setShowUnsavedPrompt] = useState(false);
   const [afterSaveAction, setAfterSaveAction] = useState<(() => void) | null>(null);
+  const [permissions, setPermissions] = useState<PermissionsResponse | null>(null);
 
   const [savedSnapshot, setSavedSnapshot] = useState<unknown>(null);
   const sanitizedForm = useMemo(() => sanitizeConfigSnapshot(formData), [formData]);
@@ -138,6 +139,7 @@ export default function Settings() {
 
   useEffect(() => {
     loadConfig();
+    apiClient.getPermissions().then(setPermissions).catch(() => {});
   }, [loadConfig]);
 
   useEffect(() => {
@@ -807,6 +809,16 @@ export default function Settings() {
             </Alert>
           )}
 
+          {permissions && !permissions.notes.permitted && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Missing Permissions</AlertTitle>
+              <AlertDescription>
+                Notes sync requires: {permissions.notes.missing.join(', ')}.
+                Grant these in the iCloudBridge Setup window, then restart the app.
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="flex items-center justify-between p-4 border rounded-lg">
             <div>
               <Label>Enable Notes Sync</Label>
@@ -816,6 +828,7 @@ export default function Settings() {
             </div>
             <Switch
               checked={formData.notes_enabled || false}
+              disabled={permissions !== null && !permissions.notes.permitted}
               onCheckedChange={(checked) =>
                 setFormData({ ...formData, notes_enabled: checked })
               }
@@ -1003,6 +1016,16 @@ export default function Settings() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {permissions && !permissions.reminders.permitted && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Missing Permissions</AlertTitle>
+              <AlertDescription>
+                Reminders sync requires: {permissions.reminders.missing.join(', ')}.
+                Grant these in the iCloudBridge Setup window, then restart the app.
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="flex items-center justify-between p-4 border rounded-lg">
             <div>
               <Label>Enable Reminders Sync</Label>
@@ -1012,6 +1035,7 @@ export default function Settings() {
             </div>
             <Switch
               checked={formData.reminders_enabled || false}
+              disabled={permissions !== null && !permissions.reminders.permitted}
               onCheckedChange={(checked) =>
                 setFormData({ ...formData, reminders_enabled: checked })
               }
@@ -1483,6 +1507,16 @@ export default function Settings() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {permissions && !permissions.photos.permitted && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Missing Permissions</AlertTitle>
+              <AlertDescription>
+                Photos sync requires: {permissions.photos.missing.join(', ')}.
+                Grant these in the iCloudBridge Setup window, then restart the app.
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="flex items-center justify-between p-4 border rounded-lg">
             <div>
               <Label>Enable Photos Sync</Label>
@@ -1492,6 +1526,7 @@ export default function Settings() {
             </div>
             <Switch
               checked={formData.photos_enabled || false}
+              disabled={permissions !== null && !permissions.photos.permitted}
               onCheckedChange={(checked) =>
                 setFormData({ ...formData, photos_enabled: checked })
               }

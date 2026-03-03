@@ -395,3 +395,19 @@ class SetupVerificationResponse(BaseModel):
     notes_folder: NotesFolderStatus
     is_localhost: bool
     all_ready: bool
+
+
+class ServicePermissionStatus(BaseModel):
+    """Permission status for a single service."""
+
+    permitted: bool
+    missing: list[str] = Field(default_factory=list)
+
+
+class PermissionsResponse(BaseModel):
+    """Per-service permission availability based on macOS preflight checks."""
+
+    notes: ServicePermissionStatus
+    reminders: ServicePermissionStatus
+    photos: ServicePermissionStatus
+    passwords: ServicePermissionStatus

@@ -61,7 +61,7 @@ final class PreflightWindowController: NSWindowController {
     init() {
         hostingController = NSHostingController(rootView: PreflightView(model: model))
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 520),
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 720),
             styleMask: [.titled, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -116,164 +116,210 @@ struct PreflightView: View {
     private var snapshot: PreflightSnapshot { model.snapshot }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Confirm the prerequisites below before starting the sync engine.")
-                .font(.system(size: 14, weight: .semibold))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Confirm the prerequisites below before starting the sync engine.")
+                    .font(.system(size: 14, weight: .semibold))
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Runtimes").font(.headline)
-                VStack(spacing: 8) {
-                    RequirementRow(
-                        title: "Homebrew",
-                        status: status(for: .homebrew),
-                        actionTitle: buttonTitle(for: .homebrew, defaultTitle: "Install Homebrew"),
-                        actionEnabled: isActionEnabled(for: .homebrew),
-                        showsProgress: isInProgress(for: .homebrew),
-                        progress: progress(for: .homebrew),
-                        logURL: logURL(for: .homebrew),
-                        onShowLogs: { openLogs(for: .homebrew) },
-                        action: { onInstallHomebrew?() }
-                    )
-                    RequirementRow(
-                        title: "Xcode Command Line Tools",
-                        status: status(for: .xcodeCommandLineTools),
-                        actionTitle: buttonTitle(for: .xcodeCommandLineTools, defaultTitle: "Install Command Line Tools"),
-                        actionEnabled: isActionEnabled(for: .xcodeCommandLineTools),
-                        showsProgress: isInProgress(for: .xcodeCommandLineTools),
-                        progress: progress(for: .xcodeCommandLineTools),
-                        logURL: logURL(for: .xcodeCommandLineTools),
-                        onShowLogs: { openLogs(for: .xcodeCommandLineTools) },
-                        action: { onInstallXcodeCLT?() }
-                    )
-                    RequirementRow(
-                        title: "Python 3.12",
-                        status: status(for: .python),
-                        actionTitle: buttonTitle(for: .python, defaultTitle: "Install python@3.12"),
-                        actionEnabled: isActionEnabled(for: .python),
-                        showsProgress: isInProgress(for: .python),
-                        progress: progress(for: .python),
-                        logURL: logURL(for: .python),
-                        onShowLogs: { openLogs(for: .python) },
-                        action: { onInstallPython?() }
-                    )
-                    RequirementRow(
-                        title: "Ruby",
-                        status: status(for: .ruby),
-                        actionTitle: buttonTitle(for: .ruby, defaultTitle: "Install Ruby"),
-                        actionEnabled: isActionEnabled(for: .ruby),
-                        showsProgress: isInProgress(for: .ruby),
-                        progress: progress(for: .ruby),
-                        logURL: logURL(for: .ruby),
-                        onShowLogs: { openLogs(for: .ruby) },
-                        action: { onInstallRuby?() }
-                    )
-                }
-                .padding(12)
-                .background(.quaternary.opacity(0.6))
-                .cornerRadius(10)
+                VStack(alignment: .leading, spacing: 12) {
+                    // Essential (runtimes) - these block the daemon
+                    Text("Essential").font(.headline)
+                    VStack(spacing: 8) {
+                        RequirementRow(
+                            title: "Homebrew",
+                            status: status(for: .homebrew),
+                            actionTitle: buttonTitle(for: .homebrew, defaultTitle: "Install Homebrew"),
+                            actionEnabled: isActionEnabled(for: .homebrew),
+                            showsProgress: isInProgress(for: .homebrew),
+                            progress: progress(for: .homebrew),
+                            logURL: logURL(for: .homebrew),
+                            onShowLogs: { openLogs(for: .homebrew) },
+                            action: { onInstallHomebrew?() }
+                        )
+                        RequirementRow(
+                            title: "Xcode Command Line Tools",
+                            status: status(for: .xcodeCommandLineTools),
+                            actionTitle: buttonTitle(for: .xcodeCommandLineTools, defaultTitle: "Install Command Line Tools"),
+                            actionEnabled: isActionEnabled(for: .xcodeCommandLineTools),
+                            showsProgress: isInProgress(for: .xcodeCommandLineTools),
+                            progress: progress(for: .xcodeCommandLineTools),
+                            logURL: logURL(for: .xcodeCommandLineTools),
+                            onShowLogs: { openLogs(for: .xcodeCommandLineTools) },
+                            action: { onInstallXcodeCLT?() }
+                        )
+                        RequirementRow(
+                            title: "Python 3.12",
+                            status: status(for: .python),
+                            actionTitle: buttonTitle(for: .python, defaultTitle: "Install python@3.12"),
+                            actionEnabled: isActionEnabled(for: .python),
+                            showsProgress: isInProgress(for: .python),
+                            progress: progress(for: .python),
+                            logURL: logURL(for: .python),
+                            onShowLogs: { openLogs(for: .python) },
+                            action: { onInstallPython?() }
+                        )
+                        RequirementRow(
+                            title: "Ruby",
+                            status: status(for: .ruby),
+                            actionTitle: buttonTitle(for: .ruby, defaultTitle: "Install Ruby"),
+                            actionEnabled: isActionEnabled(for: .ruby),
+                            showsProgress: isInProgress(for: .ruby),
+                            progress: progress(for: .ruby),
+                            logURL: logURL(for: .ruby),
+                            onShowLogs: { openLogs(for: .ruby) },
+                            action: { onInstallRuby?() }
+                        )
+                    }
+                    .padding(12)
+                    .background(.quaternary.opacity(0.6))
+                    .cornerRadius(10)
 
-                Text("Permissions").font(.headline).padding(.top, 8)
-                VStack(spacing: 8) {
-                    RequirementRow(
-                        title: "Full Disk Access",
-                        status: status(for: .fullDiskAccess),
-                        actionTitle: "Open System Settings",
-                        actionEnabled: isActionEnabled(for: .fullDiskAccess),
-                        showsProgress: false,
-                        progress: nil,
-                        logURL: nil,
-                        onShowLogs: nil,
-                        action: { onOpenFullDiskAccess?() }
-                    )
-                    RequirementRow(
-                        title: "Accessibility",
-                        status: status(for: .accessibility),
-                        actionTitle: "Allow Accessibility control",
-                        actionEnabled: isActionEnabled(for: .accessibility),
-                        showsProgress: false,
-                        progress: nil,
-                        logURL: nil,
-                        onShowLogs: nil,
-                        action: { onOpenAccessibility?() }
-                    )
-                    RequirementRow(
-                        title: "Apple Notes",
-                        status: status(for: .notesAutomation),
-                        actionTitle: "Request Access",
-                        actionEnabled: isActionEnabled(for: .notesAutomation),
-                        showsProgress: false,
-                        progress: nil,
-                        logURL: nil,
-                        onShowLogs: nil,
-                        action: { onOpenNotesAutomation?() }
-                    )
-                    RequirementRow(
-                        title: "Apple Reminders",
-                        status: status(for: .remindersAutomation),
-                        actionTitle: "Request Access",
-                        actionEnabled: isActionEnabled(for: .remindersAutomation),
-                        showsProgress: false,
-                        progress: nil,
-                        logURL: nil,
-                        onShowLogs: nil,
-                        action: { onOpenRemindersAutomation?() }
-                    )
-                    RequirementRow(
-                        title: "Apple Photos",
-                        status: status(for: .photosAutomation),
-                        actionTitle: "Request Access",
-                        actionEnabled: isActionEnabled(for: .photosAutomation),
-                        showsProgress: false,
-                        progress: nil,
-                        logURL: nil,
-                        onShowLogs: nil,
-                        action: { onOpenPhotosAutomation?() }
-                    )
+                    // Notes Sync permissions (optional)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("Notes Sync").font(.headline)
+                        Text("Grant these to enable Apple Notes sync")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.top, 8)
+                    VStack(spacing: 8) {
+                        RequirementRow(
+                            title: "Full Disk Access",
+                            status: status(for: .fullDiskAccess),
+                            actionTitle: "Open System Settings",
+                            actionEnabled: isActionEnabled(for: .fullDiskAccess),
+                            showsProgress: false,
+                            progress: nil,
+                            logURL: nil,
+                            onShowLogs: nil,
+                            action: { onOpenFullDiskAccess?() }
+                        )
+                        RequirementRow(
+                            title: "Accessibility",
+                            status: status(for: .accessibility),
+                            actionTitle: "Allow Accessibility control",
+                            actionEnabled: isActionEnabled(for: .accessibility),
+                            showsProgress: false,
+                            progress: nil,
+                            logURL: nil,
+                            onShowLogs: nil,
+                            action: { onOpenAccessibility?() }
+                        )
+                        RequirementRow(
+                            title: "Apple Notes",
+                            status: status(for: .notesAutomation),
+                            actionTitle: "Request Access",
+                            actionEnabled: isActionEnabled(for: .notesAutomation),
+                            showsProgress: false,
+                            progress: nil,
+                            logURL: nil,
+                            onShowLogs: nil,
+                            action: { onOpenNotesAutomation?() }
+                        )
+                    }
+                    .padding(12)
+                    .background(.quaternary.opacity(0.6))
+                    .cornerRadius(10)
+
+                    // Reminders Sync permissions (optional)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("Reminders Sync").font(.headline)
+                        Text("Grant to enable Apple Reminders sync")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.top, 8)
+                    VStack(spacing: 8) {
+                        RequirementRow(
+                            title: "Apple Reminders",
+                            status: status(for: .remindersAutomation),
+                            actionTitle: "Request Access",
+                            actionEnabled: isActionEnabled(for: .remindersAutomation),
+                            showsProgress: false,
+                            progress: nil,
+                            logURL: nil,
+                            onShowLogs: nil,
+                            action: { onOpenRemindersAutomation?() }
+                        )
+                    }
+                    .padding(12)
+                    .background(.quaternary.opacity(0.6))
+                    .cornerRadius(10)
+
+                    // Photos Sync permissions (optional)
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text("Photos Sync").font(.headline)
+                        Text("Grant to enable Apple Photos sync")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.top, 8)
+                    VStack(spacing: 8) {
+                        RequirementRow(
+                            title: "Apple Photos",
+                            status: status(for: .photosAutomation),
+                            actionTitle: "Request Access",
+                            actionEnabled: isActionEnabled(for: .photosAutomation),
+                            showsProgress: false,
+                            progress: nil,
+                            logURL: nil,
+                            onShowLogs: nil,
+                            action: { onOpenPhotosAutomation?() }
+                        )
+                    }
+                    .padding(12)
+                    .background(.quaternary.opacity(0.6))
+                    .cornerRadius(10)
                 }
-                .padding(12)
-                .background(.quaternary.opacity(0.6))
-                .cornerRadius(10)
+
+                Text(summaryText)
+                    .font(.system(size: 13))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                let essentialsReady = snapshot.statuses
+                    .filter { $0.requirement.isEssential }
+                    .allSatisfy { $0.state.isSatisfied }
+
+                Toggle("Don't show this next time", isOn: Binding(
+                    get: { essentialsReady ? snapshot.suppressNext : false },
+                    set: { value in
+                        guard essentialsReady else { return }
+                        onToggleSuppress?(value)
+                        model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: value, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
+                    }
+                ))
+                .toggleStyle(.switch)
+                .disabled(!essentialsReady)
+                .onChange(of: essentialsReady) { newValue in
+                    if newValue && !snapshot.suppressNext {
+                        onToggleSuppress?(true)
+                        model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: true, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
+                    } else if !newValue {
+                        onToggleSuppress?(false)
+                        model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: false, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
+                    }
+                }
+
+                HStack {
+                    Button("Refresh") { onRefresh?() }
+                    Spacer()
+                    Button("Close") { onCloseRequested?() }
+                }
             }
-
-            Text(summaryText)
-                .font(.system(size: 13))
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            let ready = snapshot.statuses.allSatisfy { $0.state.isSatisfied }
-
-            Toggle("Don't show this next time", isOn: Binding(
-                get: { ready ? snapshot.suppressNext : false },
-                set: { value in
-                    guard ready else { return }
-                    onToggleSuppress?(value)
-                    model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: value, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
-                }
-            ))
-            .toggleStyle(.switch)
-            .disabled(!ready)
-            .onChange(of: ready) { newValue in
-                if newValue && !snapshot.suppressNext {
-                    onToggleSuppress?(true)
-                    model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: true, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
-                } else if !newValue {
-                    onToggleSuppress?(false)
-                    model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: false, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
-                }
-            }
-
-            HStack {
-                Button("Refresh") { onRefresh?() }
-                Spacer()
-                Button("Close") { onCloseRequested?() }
-            }
+            .padding(24)
         }
-        .padding(24)
-        .frame(minWidth: 900)
+        .frame(minWidth: 900, minHeight: 720)
     }
 
     private var summaryText: String {
-        snapshot.allSatisfied ? "Sync engine started. You can close this window." : "The sync engine will start automatically when prerequisites are met."
+        let essentialsReady = snapshot.statuses
+            .filter { $0.requirement.isEssential }
+            .allSatisfy { $0.state.isSatisfied }
+        if essentialsReady {
+            return "Sync engine started. Service-specific permissions can be granted later as needed."
+        }
+        return "The sync engine will start automatically when the essential prerequisites are met."
     }
 
     private func status(for requirement: Requirement) -> RequirementState {
@@ -342,13 +388,13 @@ private struct RequirementRow: View {
         HStack(alignment: .center, spacing: 10) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
-                .frame(width: 140, alignment: .leading)
+                .frame(width: 180, alignment: .leading)
 
             if showsProgress {
                 if let progress {
                     ProgressView(value: progress)
                         .progressViewStyle(.linear)
-                        .frame(width: 80)
+                        .frame(width: 100)
                 } else {
                     ProgressView()
                         .progressViewStyle(.circular)
@@ -413,7 +459,7 @@ struct PreflightView_Previews: PreviewProvider {
             logs: [:]
         )
         return PreflightView(model: PreflightModel(snapshot: snapshot))
-            .frame(width: 560, height: 420)
+            .frame(width: 560, height: 580)
     }
 }
 #endif

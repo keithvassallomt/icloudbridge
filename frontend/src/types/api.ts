@@ -370,6 +370,19 @@ export interface SetupVerificationResponse {
   all_ready: boolean;
 }
 
+// Permissions
+export interface ServicePermissionStatus {
+  permitted: boolean;
+  missing: string[];
+}
+
+export interface PermissionsResponse {
+  notes: ServicePermissionStatus;
+  reminders: ServicePermissionStatus;
+  photos: ServicePermissionStatus;
+  passwords: ServicePermissionStatus;
+}
+
 // Folder Browser
 export interface FolderItem {
   name: string;

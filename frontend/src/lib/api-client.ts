@@ -20,6 +20,7 @@ import type {
   Setting,
   SettingUpdate,
   SetupVerificationResponse,
+  PermissionsResponse,
   BrowseFoldersResponse,
   APIError,
   PasswordsSyncResponse,
@@ -718,6 +719,15 @@ class APIClient {
   async verifySetup(): Promise<SetupVerificationResponse> {
     try {
       const { data } = await this.client.get<SetupVerificationResponse>('/system/verify');
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async getPermissions(): Promise<PermissionsResponse> {
+    try {
+      const { data } = await this.client.get<PermissionsResponse>('/system/permissions');
       return data;
     } catch (error) {
       return this.handleError(error);
