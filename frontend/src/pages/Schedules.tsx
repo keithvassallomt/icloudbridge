@@ -65,7 +65,7 @@ export default function Schedules() {
     setServiceFilter,
   } = useSchedulesStore();
 
-  const { config } = useAppStore();
+  const { config, setConfig } = useAppStore();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,6 +117,9 @@ export default function Schedules() {
 
   useEffect(() => {
     loadSchedules();
+    if (!config) {
+      apiClient.getConfig().then(setConfig).catch(() => {});
+    }
   }, [loadSchedules]);
 
   const handleCreate = async () => {
