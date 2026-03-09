@@ -107,6 +107,41 @@ end tell
 """
 
 
+# Export photos by filename to a destination folder.
+# Photos.app handles downloading cloud-only originals automatically.
+EXPORT_BY_FILENAMES_SCRIPT = """
+on run argv
+    set manifestPath to item 1 of argv
+    set destFolder to item 2 of argv
+
+    set fileContent to read POSIX file manifestPath
+    set AppleScript's text item delimiters to linefeed
+    set targetNames to text items of fileContent
+
+    tell application "Photos"
+        set exportItems to {}
+        repeat with aName in targetNames
+            if aName is not "" then
+                try
+                    set matches to (media items whose filename is aName)
+                    repeat with aMatch in matches
+                        set end of exportItems to contents of aMatch
+                    end repeat
+                end try
+            end if
+        end repeat
+
+        if (count of exportItems) is 0 then
+            return "0"
+        end if
+
+        export exportItems to POSIX file destFolder using originals true
+        return (count of exportItems) as string
+    end tell
+end run
+"""
+
+
 class PhotosAppleScriptAdapter:
     """Thin async wrapper over `osascript` for Photos operations."""
 
@@ -141,6 +176,43 @@ class PhotosAppleScriptAdapter:
     async def asset_exists_by_name(self, filename: str) -> bool:
         result = await self._run_script(CHECK_ITEM_EXISTS_BY_NAME_SCRIPT, filename)
         return result.strip() == "1"
+
+    async def export_by_filenames(
+        self, filenames: list[str], dest_folder: Path
+    ) -> int:
+        """Export photos by filename to a destination folder.
+
+        Photos.app automatically downloads cloud-only originals (e.g. from
+        iCloud Shared Library) before exporting. This is the fallback for
+        photos whose originals aren't available on disk.
+
+        Returns:
+            Number of items exported.
+        """
+        if not filenames:
+            return 0
+
+        import tempfile
+
+        dest_folder.mkdir(parents=True, exist_ok=True)
+
+        # Write filenames to a manifest
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, prefix="icloudbridge_export_"
+        ) as f:
+            f.write("\n".join(filenames))
+            manifest_path = f.name
+
+        try:
+            result = await self._run_script(
+                EXPORT_BY_FILENAMES_SCRIPT, manifest_path, str(dest_folder)
+            )
+            return int(result.strip()) if result.strip().isdigit() else 0
+        except RuntimeError:
+            logger.warning("AppleScript export failed for %d items", len(filenames))
+            return 0
+        finally:
+            Path(manifest_path).unlink(missing_ok=True)
 
     async def batch_assets_exist_by_name(self, filenames: list[str]) -> dict[str, bool]:
         """Check multiple filenames at once via a single AppleScript call.
