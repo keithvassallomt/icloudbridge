@@ -393,6 +393,26 @@ class PhotoExportEngine:
                     exported += 1
                     logger.info("Exported cloud-only: %s -> %s", asset.filename, dest_path)
 
+                    # Check for a paired Live Photo .mov with the same stem
+                    mov_name = exported_file.stem + ".mov"
+                    mov_file = exported_by_name.get(mov_name.lower())
+                    if mov_file and mov_file.exists():
+                        mov_hash = await self._hash_file(mov_file)
+                        if not await self.db.get_export_by_hash(mov_hash):
+                            mov_dest = dest_path.with_suffix(".mov")
+                            shutil.move(str(mov_file), mov_dest)
+                            mov_size = mov_dest.stat().st_size
+                            await self.db.record_export(
+                                content_hash=mov_hash,
+                                apple_asset_uuid=asset.uuid + "_live",
+                                nextcloud_path=str(mov_dest.relative_to(self.config.export_folder)),
+                                nextcloud_etag=None,
+                                file_size=mov_size,
+                                media_type="video",
+                                captured_at=asset.created_date,
+                            )
+                            logger.info("Exported Live Photo video: %s -> %s", mov_name, mov_dest)
+
                 except Exception as e:
                     logger.error("Failed to export cloud-only %s: %s", asset.filename, e)
                     errors += 1

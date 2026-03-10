@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - Cloud-only photos (originals not downloaded to Mac) were failing to export to NextCloud. This affected iCloud Shared Library photos, optimized-storage photos, and any other assets where macOS hadn't fetched the full-resolution original. The export engine now detects missing originals and falls back to AppleScript `export ... using originals true`, which tells Photos.app to download and export them in their native format (no HEIC→JPEG conversion). Hash-based bidirectional dedup continues to work correctly since the exported file matches the original.
+- Live Photo `.mov` sidecar files from cloud-only exports are now synced alongside their paired image. Photo libraries that detect same-stem image+video pairs (e.g. `IMG_9150.HEIC` + `IMG_9150.MOV`) will display them as Live Photos.
 
 ## [0.2.1] - 2026-03-03 — "No Means No"
 
