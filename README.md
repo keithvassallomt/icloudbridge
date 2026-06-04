@@ -4,6 +4,10 @@ A small window into Apple's walled garden. Keep your Apple Notes, Reminders, Pas
 
 > iCloudBridge is in no way affiliated with or endorsed by Apple, Inc.
 
+> [!NOTE]
+> <img width="200" height="auto" alt="friendly-manifesto-badge" src="https://github.com/user-attachments/assets/cb91210b-0f66-46fe-93a8-a3a67857593c" /> <br>
+> This project voluntarily adheres to The Friendly Manifesto. Read more [here](https://friendlymanifesto.org)
+
 ## Features
 
 - 🗒️ Apple Notes can be synced with a folder containing Markdown files. If using Nextcloud, this can then be synced to your instance and used via the Nextcloud Notes app. Supports images, URLs, attachments, folders and checkboxes (TODO items).
