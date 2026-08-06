@@ -12,6 +12,16 @@ final class PreflightCoordinator {
     private let shownKey = "preflight.hasShownOnce"
     private let suppressKey = "preflight.suppressWhenHealthy"
 
+    private var interpreterWatchTimer: Timer?
+    private var isRecoveringInterpreter = false
+    private var lastInterpreterRecovery: Date?
+
+    /// How often to ask the backend whether its interpreter is still valid.
+    private let interpreterCheckInterval: TimeInterval = 10 * 60
+    /// Floor between recovery attempts, so a rebuild that fails to help does not
+    /// turn into a restart loop.
+    private let interpreterRecoveryCooldown: TimeInterval = 30 * 60
+
     init(backendManager: BackendProcessManager) {
         self.backendManager = backendManager
         if defaults.object(forKey: suppressKey) == nil {
@@ -25,8 +35,110 @@ final class PreflightCoordinator {
         }
     }
 
+    deinit {
+        interpreterWatchTimer?.invalidate()
+    }
+
     func start() {
         preflightManager.runFullCheck()
+        startInterpreterWatch()
+    }
+
+    // MARK: Interpreter recovery
+
+    /// Watch for the backend's interpreter being replaced underneath it.
+    ///
+    /// A Homebrew Python upgrade deletes the Cellar directory the backend is
+    /// executing from. macOS then revokes the process's Reminders, Photos and
+    /// file access without any error: syncs keep running and simply see nothing.
+    /// Rebuilding the venv and restarting is the only way back.
+    private func startInterpreterWatch() {
+        guard interpreterWatchTimer == nil else { return }
+
+        let schedule: () -> Void = { [weak self] in
+            guard let self else { return }
+            self.interpreterWatchTimer = Timer.scheduledTimer(
+                withTimeInterval: self.interpreterCheckInterval,
+                repeats: true
+            ) { [weak self] _ in
+                self?.checkInterpreterHealth()
+            }
+        }
+
+        if Thread.isMainThread {
+            schedule()
+        } else {
+            DispatchQueue.main.async { schedule() }
+        }
+    }
+
+    private func checkInterpreterHealth() {
+        guard backendStarted, !isRecoveringInterpreter else { return }
+
+        if let last = lastInterpreterRecovery,
+           Date().timeIntervalSince(last) < interpreterRecoveryCooldown {
+            return
+        }
+
+        backendManager?.interpreterHealthy { [weak self] healthy, reason in
+            guard let self, !healthy else { return }
+            NSLog("Backend interpreter is no longer valid: \(reason ?? "unknown reason")")
+            self.recoverInterpreter()
+        }
+    }
+
+    private func recoverInterpreter() {
+        guard !isRecoveringInterpreter, let resources = Bundle.main.resourceURL else { return }
+
+        isRecoveringInterpreter = true
+        lastInterpreterRecovery = Date()
+
+        // Rebuild first: restarting alone would just relaunch from the same
+        // stale venv, whose recorded interpreter no longer exists.
+        NSLog("Rebuilding Python venv and restarting backend to restore macOS permissions")
+        let backendDir = resources.appendingPathComponent("backend_src", isDirectory: true)
+        runtimeInstaller.ensurePython(from: backendDir)
+
+        waitForPythonInstall { [weak self] succeeded in
+            guard let self else { return }
+            if succeeded {
+                self.backendManager?.restart()
+                // The rebuilt venv runs from a binary macOS has not seen before,
+                // so permissions have to be granted again.
+                self.preflightManager.runFullCheck()
+            } else {
+                NSLog("Python venv rebuild failed; leaving backend as-is")
+            }
+            self.isRecoveringInterpreter = false
+        }
+    }
+
+    /// Poll the installer until it stops running, then report whether it worked.
+    ///
+    /// `sawRunning` guards against sampling before ensurePython's async work has
+    /// started, which would otherwise read the *previous* run's result.
+    private func waitForPythonInstall(attempt: Int = 0, sawRunning: Bool = false, completion: @escaping (Bool) -> Void) {
+        let maxAttempts = 120  // ~10 minutes at 5s intervals
+        let running = runtimeInstaller.pythonState.isRunning
+
+        if sawRunning && !running {
+            completion(runtimeInstaller.pythonState.succeeded)
+            return
+        }
+
+        guard attempt < maxAttempts else {
+            NSLog("Timed out waiting for the Python venv rebuild")
+            completion(false)
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.waitForPythonInstall(
+                attempt: attempt + 1,
+                sawRunning: sawRunning || running,
+                completion: completion
+            )
+        }
     }
 
     func presentPreflightWindow() {

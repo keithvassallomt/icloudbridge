@@ -34,6 +34,11 @@ Returning to the dashboard at a later date will show you the status of the last 
 
 ![Monitor schedule](images/docs_schedules_4.png)
 
+A schedule that covers several folders or lists reports "Partial Success" when some of them synced and others didn't, so you can tell the difference between one folder having a problem and the whole sync being down.
+
+> [!TIP]
+> Rather than remembering to check the dashboard, set up [Failure Notifications](notifications.md) to have iCloudBridge email you when a scheduled sync fails.
+
 ---
 
-[< Previous - Photo Synchronisation](photos.md) | [Next - Logs >](logs.md)
+[< Previous - Photo Synchronisation](photos.md) | [Next - Failure Notifications >](notifications.md)

@@ -18,6 +18,7 @@ from icloudbridge.api.dependencies import (
 )
 from icloudbridge.api.models import HealthResponse, StatusResponse, VersionResponse
 from icloudbridge.utils.db import SchedulesDB, SyncLogsDB
+from icloudbridge.utils.runtime_health import check_interpreter
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,17 @@ async def health_check():
         status="healthy",
         timestamp=datetime.now().isoformat(),
     )
+
+
+@router.get("/health/interpreter")
+async def interpreter_health():
+    """Report whether the Python runtime backing this process is still intact.
+
+    The menubar app polls this: an unhealthy result means macOS has revoked (or
+    never granted) this process's privileges because its interpreter was
+    replaced, and the only fix is rebuilding the venv and restarting the backend.
+    """
+    return check_interpreter().as_dict()
 
 
 @router.get("/version", response_model=VersionResponse)

@@ -26,6 +26,7 @@ from icloudbridge.utils.converters import (
     markdown_to_html,
     sanitize_filename,
 )
+from icloudbridge.utils.exceptions import SourceUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,7 @@ class MarkdownAdapter:
             List of folder paths (relative to base_path)
         """
         if not self.base_path.exists():
-            logger.debug(f"Base path does not exist: {self.base_path}")
+            logger.warning(f"Base path does not exist: {self.base_path}")
             return []
 
         folders = set()
@@ -186,6 +187,16 @@ class MarkdownAdapter:
             search_path = self.base_path / folder_name
         else:
             search_path = self.base_path
+
+        # A missing base path means the whole destination is gone (unmounted
+        # volume, revoked file access), not that it holds no notes. Reporting it
+        # as empty would make the sync planner delete every mapped Apple note.
+        if not self.base_path.exists():
+            raise SourceUnavailableError(
+                f"Markdown notes destination is not available: {self.base_path}. "
+                "The volume may be unmounted, or the backend may have lost file "
+                "access. Refusing to sync so that notes are not deleted."
+            )
 
         if not search_path.exists():
             logger.debug(f"Folder does not exist: {search_path}")

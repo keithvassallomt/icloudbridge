@@ -118,6 +118,19 @@ class ConfigResponse(BaseModel):
     photos_export_mode: str | None = None
     photos_export_folder: str | None = None
     photos_export_organize_by: str | None = None
+    # Failure notifications (password is never returned, only whether one is set)
+    notifications_enabled: bool = False
+    notifications_smtp_host: str | None = None
+    notifications_smtp_port: int | None = None
+    notifications_smtp_username: str | None = None
+    notifications_smtp_use_tls: bool | None = None
+    notifications_smtp_use_ssl: bool | None = None
+    notifications_smtp_password_set: bool = False
+    notifications_from_address: str | None = None
+    notifications_to_addresses: list[str] = Field(default_factory=list)
+    notifications_notify_on_partial_failure: bool | None = None
+    notifications_notify_on_recovery: bool | None = None
+    notifications_reminder_interval_hours: int | None = None
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -174,6 +187,22 @@ class ConfigUpdateRequest(BaseModel):
     photos_export_mode: str | None = None
     photos_export_folder: str | None = None
     photos_export_organize_by: str | None = None
+    # Failure notifications
+    notifications_enabled: bool | None = None
+    notifications_smtp_host: str | None = None
+    notifications_smtp_port: int | None = None
+    notifications_smtp_username: str | None = None
+    notifications_smtp_password: str | None = Field(
+        default=None,
+        description="SMTP password will be stored in system keyring",
+    )
+    notifications_smtp_use_tls: bool | None = None
+    notifications_smtp_use_ssl: bool | None = None
+    notifications_from_address: str | None = None
+    notifications_to_addresses: list[str] | None = None
+    notifications_notify_on_partial_failure: bool | None = None
+    notifications_notify_on_recovery: bool | None = None
+    notifications_reminder_interval_hours: int | None = None
 
 
 class ErrorResponse(BaseModel):

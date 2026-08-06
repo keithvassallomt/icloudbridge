@@ -134,6 +134,70 @@ class CredentialStore:
             logger.error(f"Failed to delete CalDAV password: {e}")
             return False
 
+    def set_smtp_password(self, username: str, password: str) -> None:
+        """
+        Store the SMTP password in the system keyring.
+
+        Args:
+            username: SMTP username
+            password: SMTP password (or app-specific password) to store securely
+
+        Raises:
+            keyring.errors.PasswordSetError: If password cannot be stored
+        """
+        try:
+            self._set_password_with_recreate(f"smtp:{username}", password)
+            logger.info(f"Stored SMTP password for user: {username}")
+        except Exception as e:
+            logger.error(f"Failed to store SMTP password: {e}")
+            raise
+
+    def get_smtp_password(self, username: str) -> str | None:
+        """
+        Retrieve the SMTP password from the system keyring.
+
+        Args:
+            username: SMTP username
+
+        Returns:
+            Password if found, None otherwise
+        """
+        try:
+            password = keyring.get_password(self.service_name, f"smtp:{username}")
+            if password:
+                logger.debug(f"Retrieved SMTP password for user: {username}")
+            else:
+                logger.debug(f"No SMTP password found for user: {username}")
+            return password
+        except Exception as e:
+            logger.error(f"Failed to retrieve SMTP password: {e}")
+            return None
+
+    def delete_smtp_password(self, username: str) -> bool:
+        """
+        Delete the SMTP password from the system keyring.
+
+        Args:
+            username: SMTP username
+
+        Returns:
+            True if deleted, False if not found or error
+        """
+        try:
+            keyring.delete_password(self.service_name, f"smtp:{username}")
+            logger.info(f"Deleted SMTP password for user: {username}")
+            return True
+        except keyring.errors.PasswordDeleteError:
+            logger.warning(f"No SMTP password found to delete for user: {username}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to delete SMTP password: {e}")
+            return False
+
+    def has_smtp_password(self, username: str) -> bool:
+        """Return True when an SMTP password is stored for the user."""
+        return self.get_smtp_password(username) is not None
+
     def list_stored_users(self) -> list[str]:
         """
         List all users with stored CalDAV passwords.

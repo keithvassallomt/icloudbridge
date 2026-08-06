@@ -18,6 +18,7 @@ from icloudbridge.sources.reminders.eventkit import (
 )
 from icloudbridge.utils.datetime_utils import safe_fromtimestamp
 from icloudbridge.utils.db import RemindersDB
+from icloudbridge.utils.exceptions import SourceUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -202,10 +203,26 @@ class RemindersSyncEngine:
             # Step 0: Ensure calendars exist on both sides
             # Check if Apple Reminders calendar exists, create if not
             apple_calendars = await self.reminders_adapter.list_calendars()
+
+            # list_calendars() already rebuilt the store and retried before
+            # returning nothing, so an empty list here means Reminders is truly
+            # unreadable. Stop now: every mapped reminder would otherwise look
+            # locally deleted and we would wipe the CalDAV side.
+            if not apple_calendars:
+                raise SourceUnavailableError(
+                    "Apple Reminders returned no lists, so the backend cannot read "
+                    "your reminders. Refusing to sync so that remote tasks are not "
+                    "deleted. Restart iCloudBridge and re-grant Reminders access if "
+                    "prompted."
+                )
+
             apple_cal_lookup = {cal.title.lower(): cal for cal in apple_calendars}
             local_reminders: list[EventKitReminder]
             effective_apple_name = apple_calendar_name
             target_apple_calendar = apple_cal_lookup.get(apple_calendar_name.lower())
+            # A list we have synced before but can no longer see is not the same
+            # as a list the user emptied; withhold deletions in that case.
+            apple_calendar_missing = target_apple_calendar is None
             if not target_apple_calendar:
                 if dry_run:
                     logger.warning(
@@ -274,8 +291,22 @@ class RemindersSyncEngine:
             db_mappings = {m["local_uuid"]: m for m in all_mappings}
 
             # Step 4: Determine sync operations
+            effective_skip_deletions = skip_deletions
+            if apple_calendar_missing and db_mappings and not skip_deletions:
+                logger.warning(
+                    "Apple list '%s' has %d existing mapping(s) but is no longer visible - "
+                    "skipping deletions for this run so remote tasks are preserved",
+                    apple_calendar_name,
+                    len(db_mappings),
+                )
+                effective_skip_deletions = True
+
             sync_plan = await self._build_sync_plan(
-                local_by_uuid, remote_by_uid, db_mappings, skip_deletions, deletion_threshold
+                local_by_uuid,
+                remote_by_uid,
+                db_mappings,
+                effective_skip_deletions,
+                deletion_threshold,
             )
 
             # Step 5: Execute sync plan
@@ -574,6 +605,21 @@ class RemindersSyncEngine:
             logger.warning(
                 f"Deletion threshold exceeded: {total_deletions} deletions (threshold: {deletion_threshold})"
             )
+
+            # One side going completely empty while the other still holds every
+            # mapped item is the signature of an unreadable source, not of a
+            # user deleting everything. Say so, rather than inviting the user to
+            # raise the threshold and destroy their data.
+            if not local_by_uuid and plan["delete_remote"]:
+                raise SourceUnavailableError(
+                    f"Every mapped reminder ({total_deletions}) disappeared from Apple "
+                    "Reminders at once, which almost always means the backend lost "
+                    "access rather than that you deleted them. Refusing to delete the "
+                    "remote copies. Restart iCloudBridge and check that your reminder "
+                    "lists are visible before syncing again. If you really did clear "
+                    "the list, re-run with deletions enabled once the count looks right."
+                )
+
             logger.warning("Use --skip-deletions to skip deletions, or increase --deletion-threshold")
             raise RuntimeError(f"Deletion threshold exceeded: {total_deletions} > {deletion_threshold}")
 

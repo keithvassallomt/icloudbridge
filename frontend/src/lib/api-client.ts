@@ -6,6 +6,7 @@ import type {
   AppConfig,
   ConfigValidationResponse,
   ConnectionTestResponse,
+  TestNotificationResponse,
   NotesSyncRequest,
   RemindersSyncRequest,
   SyncResponse,
@@ -152,6 +153,15 @@ class APIClient {
   async resetConfig(): Promise<{ status: string; message: string }> {
     try {
       const { data } = await this.client.post<{ status: string; message: string }>('/config/reset');
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async sendTestNotification(): Promise<TestNotificationResponse> {
+    try {
+      const { data } = await this.client.post<TestNotificationResponse>('/config/notifications/test');
       return data;
     } catch (error) {
       return this.handleError(error);

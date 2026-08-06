@@ -24,4 +24,4 @@ You can easily filter through logs using the Filter panel.
 
 The Export feature will export your logs to a CSV file. This can be useful when requesting support or submitting a bug. 
 
-[< Previous - Schedules](schedules.md)
+[< Previous - Failure Notifications](notifications.md)

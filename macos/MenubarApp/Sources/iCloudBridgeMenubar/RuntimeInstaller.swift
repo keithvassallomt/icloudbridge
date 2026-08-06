@@ -85,10 +85,24 @@ final class RuntimeInstaller {
         let venvPython = venvDir.appendingPathComponent("bin/python3")
         let pyVersion = Shell.run(python.path, ["--version"]).output.trimmingCharacters(in: .whitespacesAndNewlines)
         let pyproject = resources.appendingPathComponent("pyproject.toml")
-        let cacheKey = requirementsFingerprint(requirements, pyproject: pyproject, pythonVersion: pyVersion)
+        let cacheKey = requirementsFingerprint(
+            requirements,
+            pyproject: pyproject,
+            pythonVersion: pyVersion,
+            interpreter: resolvedInterpreter(python)
+        )
         let marker = venvDir.appendingPathComponent(".fingerprint")
 
-        if fm.fileExists(atPath: venvPython.path),
+        // Rebuild whenever the recorded interpreter has been removed, even if the
+        // fingerprint still matches - venvs built before fingerprints tracked the
+        // interpreter path would otherwise stay broken forever.
+        let stale = venvIsStale()
+        if stale {
+            NSLog("Rebuilding venv: its base interpreter is no longer installed")
+        }
+
+        if !stale,
+           fm.fileExists(atPath: venvPython.path),
            let existing = try? String(contentsOf: marker), existing == cacheKey {
             updatePython(progress: 1.0, message: "Python venv ready", running: false, succeeded: true)
             return
@@ -200,10 +214,47 @@ final class RuntimeInstaller {
         }
     }
 
-    private func requirementsFingerprint(_ url: URL, pyproject: URL, pythonVersion: String) -> String {
+    private func requirementsFingerprint(_ url: URL, pyproject: URL, pythonVersion: String, interpreter: String) -> String {
         let reqContents = (try? String(contentsOf: url)) ?? ""
         let pyprojectContents = (try? String(contentsOf: pyproject)) ?? ""
-        return pythonVersion + "|" + reqContents + "|" + pyprojectContents
+        // `interpreter` is the fully resolved binary, not the /opt/homebrew/opt
+        // symlink. Homebrew revision bumps (3.12.13_2 -> 3.12.13_4) leave
+        // `python --version` unchanged but move the binary, which is what macOS
+        // keys TCC permissions on - so the version string alone would let a venv
+        // survive an upgrade that silently stripped its permissions.
+        return pythonVersion + "|" + interpreter + "|" + reqContents + "|" + pyprojectContents
+    }
+
+    /// The real path of the interpreter behind a Homebrew symlink.
+    private func resolvedInterpreter(_ python: URL) -> String {
+        python.resolvingSymlinksInPath().path
+    }
+
+    /// The base interpreter recorded in an existing venv's pyvenv.cfg.
+    private func venvBaseInterpreter(_ venvDir: URL) -> String? {
+        let cfg = venvDir.appendingPathComponent("pyvenv.cfg")
+        guard let contents = try? String(contentsOf: cfg) else { return nil }
+
+        for line in contents.split(whereSeparator: { $0.isNewline }) {
+            let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == "executable" else { continue }
+            return parts[1].trimmingCharacters(in: .whitespaces)
+        }
+        return nil
+    }
+
+    /// True when the venv points at an interpreter that is no longer installed.
+    ///
+    /// A venv in this state still runs - the symlinks re-resolve to whatever
+    /// Homebrew has now - but it runs from a binary macOS never granted
+    /// permissions to, so Reminders and protected folders silently read empty.
+    func venvIsStale() -> Bool {
+        let venvDir = appSupportBase.appendingPathComponent("venv", isDirectory: true)
+        guard fm.fileExists(atPath: venvDir.appendingPathComponent("bin/python3").path) else {
+            return false  // No venv yet; nothing stale about that.
+        }
+        guard let recorded = venvBaseInterpreter(venvDir) else { return false }
+        return !fm.fileExists(atPath: recorded)
     }
 
     private func locateBrewPython() -> URL? {

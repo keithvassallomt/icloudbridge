@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, status
 from icloudbridge.api.dependencies import ConfigDep
 from icloudbridge.api.models import ConfigResponse, ConfigUpdateRequest
 from icloudbridge.core.config import FolderMapping, PhotoSourceConfig, PasswordsConfig
+from icloudbridge.core.notifications import FailureNotifier
 from icloudbridge.utils.credentials import CredentialStore
 from icloudbridge.sources.reminders.caldav_adapter import CalDAVAdapter
 
@@ -35,6 +36,32 @@ def _serialize_photo_sources(sources: dict[str, PhotoSourceConfig]) -> dict[str,
             "metadata_sidecars": source.metadata_sidecars,
         }
     return serialized
+
+
+def _serialize_notifications(config) -> dict:
+    """Notification fields for a config response. Never includes the password."""
+    notifications = config.notifications
+    password_set = False
+    if notifications.smtp_username:
+        try:
+            password_set = CredentialStore().has_smtp_password(notifications.smtp_username)
+        except Exception as e:  # pragma: no cover - keyring unavailable
+            logger.warning(f"Could not check for a stored SMTP password: {e}")
+
+    return {
+        "notifications_enabled": notifications.enabled,
+        "notifications_smtp_host": notifications.smtp_host,
+        "notifications_smtp_port": notifications.smtp_port,
+        "notifications_smtp_username": notifications.smtp_username,
+        "notifications_smtp_use_tls": notifications.smtp_use_tls,
+        "notifications_smtp_use_ssl": notifications.smtp_use_ssl,
+        "notifications_smtp_password_set": password_set,
+        "notifications_from_address": notifications.from_address,
+        "notifications_to_addresses": notifications.to_addresses,
+        "notifications_notify_on_partial_failure": notifications.notify_on_partial_failure,
+        "notifications_notify_on_recovery": notifications.notify_on_recovery,
+        "notifications_reminder_interval_hours": notifications.reminder_interval_hours,
+    }
 
 
 @router.get("", response_model=ConfigResponse)
@@ -76,6 +103,7 @@ async def get_config(config: ConfigDep):
         photos_export_mode=config.photos.export_mode,
         photos_export_folder=str(config.photos.export.export_folder) if config.photos.export.export_folder else None,
         photos_export_organize_by=config.photos.export.organize_by,
+        **_serialize_notifications(config),
     )
 
 
@@ -300,6 +328,49 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
     if update.photos_export_organize_by is not None:
         config.photos.export.organize_by = update.photos_export_organize_by
 
+    # Update failure notification settings
+    notification_fields = (
+        ("notifications_enabled", "enabled"),
+        ("notifications_smtp_host", "smtp_host"),
+        ("notifications_smtp_port", "smtp_port"),
+        ("notifications_smtp_username", "smtp_username"),
+        ("notifications_smtp_use_tls", "smtp_use_tls"),
+        ("notifications_smtp_use_ssl", "smtp_use_ssl"),
+        ("notifications_from_address", "from_address"),
+        ("notifications_to_addresses", "to_addresses"),
+        ("notifications_notify_on_partial_failure", "notify_on_partial_failure"),
+        ("notifications_notify_on_recovery", "notify_on_recovery"),
+        ("notifications_reminder_interval_hours", "reminder_interval_hours"),
+    )
+    for request_field, config_field in notification_fields:
+        value = getattr(update, request_field)
+        if value is not None:
+            try:
+                setattr(config.notifications, config_field, value)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid value for {request_field}: {exc}",
+                ) from exc
+
+    # Store the SMTP password after the username is set, so it is keyed correctly
+    if update.notifications_smtp_password:
+        username = update.notifications_smtp_username or config.notifications.smtp_username
+        if not username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="An SMTP username is required to store an SMTP password",
+            )
+        try:
+            credential_store.set_smtp_password(username, update.notifications_smtp_password)
+            logger.info(f"SMTP password stored in keyring for user: {username}")
+        except Exception as e:
+            logger.error(f"Failed to store SMTP password in keyring: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to store SMTP password: {str(e)}",
+            )
+
     # Save config to disk
     try:
         print(f"[DEBUG SAVE] Before save - username: {config.reminders.caldav_username}")
@@ -350,7 +421,45 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
         photos_export_mode=config.photos.export_mode,
         photos_export_folder=str(config.photos.export.export_folder) if config.photos.export.export_folder else None,
         photos_export_organize_by=config.photos.export.organize_by,
+        **_serialize_notifications(config),
     )
+
+
+@router.post("/notifications/test")
+async def send_test_notification(config: ConfigDep):
+    """Send a test notification email using the saved settings.
+
+    Reports the underlying SMTP error verbatim, since that is what the user
+    needs in order to fix a misconfigured server or rejected password.
+    """
+    notifications = config.notifications
+
+    missing = []
+    if not notifications.smtp_host:
+        missing.append("SMTP host")
+    if not notifications.from_address:
+        missing.append("from address")
+    if not notifications.to_addresses:
+        missing.append("at least one recipient")
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot send a test message without: {', '.join(missing)}",
+        )
+
+    try:
+        await FailureNotifier(notifications).send_test()
+    except Exception as e:
+        logger.error(f"Test notification failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not send the test message: {e}",
+        ) from e
+
+    return {
+        "sent": True,
+        "recipients": notifications.to_addresses,
+    }
 
 
 @router.get("/validate")

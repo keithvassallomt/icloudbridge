@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { Settings as SettingsIcon, RefreshCw, Save, Trash2, FileText, Calendar, Key, Image, Download, Shield, AlertTriangle, AlertCircle, ExternalLink, CheckCircle, Loader2, Database } from 'lucide-react';
+import { Settings as SettingsIcon, RefreshCw, Save, Trash2, FileText, Calendar, Key, Image, Download, Shield, AlertTriangle, AlertCircle, ExternalLink, CheckCircle, Loader2, Database, Mail, Send } from 'lucide-react';
 import { useBeforeUnload, useBlocker, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,7 +27,9 @@ const TRANSIENT_KEYS = new Set([
   'passwords_vaultwarden_password',
   'passwords_vaultwarden_client_id',
   'passwords_vaultwarden_client_secret',
-  'passwords_nextcloud_app_password'
+  'passwords_nextcloud_app_password',
+  'notifications_smtp_password',
+  'notifications_smtp_password_set'
 ]);
 
 const stripTransientFields = (value: unknown): unknown => {
@@ -79,6 +81,7 @@ export default function Settings() {
   const [verifying, setVerifying] = useState(false);
   const [passwordStatus, setPasswordStatus] = useState<PasswordsStatus | null>(null);
   const [passwordStatusLoading, setPasswordStatusLoading] = useState(false);
+  const [sendingTestEmail, setSendingTestEmail] = useState(false);
   const [vaultCredsLoading, setVaultCredsLoading] = useState(false);
   const [nextcloudCredsLoading, setNextcloudCredsLoading] = useState(false);
   const [detectedProvider, setDetectedProvider] = useState<'bitwarden' | 'vaultwarden' | null>(null);
@@ -126,6 +129,7 @@ export default function Settings() {
         passwords_vaultwarden_client_id: '',
         passwords_vaultwarden_client_secret: '',
         passwords_nextcloud_app_password: '',
+        notifications_smtp_password: '',
       };
       setFormData(nextFormData);
       setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
@@ -151,6 +155,7 @@ export default function Settings() {
         passwords_vaultwarden_client_id: '',
         passwords_vaultwarden_client_secret: '',
         passwords_nextcloud_app_password: '',
+        notifications_smtp_password: '',
       };
       setFormData(nextFormData);
       setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
@@ -243,6 +248,7 @@ export default function Settings() {
         passwords_provider: (config.passwords_provider as PasswordProvider) ?? 'vaultwarden',
         passwords_vaultwarden_password: '',
         passwords_nextcloud_app_password: '',
+        notifications_smtp_password: '',
       };
       setFormData(nextFormData);
       setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
@@ -250,6 +256,20 @@ export default function Settings() {
       setSuccess(null);
     }
   }, [config]);
+
+  const handleSendTestNotification = async () => {
+    try {
+      setSendingTestEmail(true);
+      setError(null);
+      setSuccess(null);
+      const result = await apiClient.sendTestNotification();
+      setSuccess(`Test email sent to ${result.recipients.join(', ')}`);
+    } catch (err) {
+      setError(formatError(err, 'Failed to send the test email'));
+    } finally {
+      setSendingTestEmail(false);
+    }
+  };
 
   const handleServiceReset = async (service: 'notes' | 'reminders' | 'passwords' | 'photos') => {
     const serviceNames = {
@@ -367,6 +387,7 @@ export default function Settings() {
         passwords_provider: (blankConfig.passwords_provider as PasswordProvider) ?? 'vaultwarden',
         passwords_vaultwarden_password: '',
         passwords_nextcloud_app_password: '',
+        notifications_smtp_password: '',
       };
       setFormData(nextFormData);
       setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
@@ -577,6 +598,7 @@ export default function Settings() {
           passwords_provider: (updated.passwords_provider as PasswordProvider) ?? 'vaultwarden',
           passwords_vaultwarden_password: '',
           passwords_nextcloud_app_password: '',
+          notifications_smtp_password: '',
         };
         setFormData(nextFormData);
         setSavedSnapshot(sanitizeConfigSnapshot(nextFormData));
@@ -1723,6 +1745,225 @@ export default function Settings() {
             </AlertDescription>
           </Alert>
         </CardContent>
+      </Card>
+
+      {/* Failure Notifications */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Mail className="w-6 h-6 text-primary" />
+              <div>
+                <CardTitle>Failure Notifications</CardTitle>
+                <CardDescription>Email alerts when a scheduled sync fails</CardDescription>
+              </div>
+            </div>
+            <Switch
+              checked={formData.notifications_enabled ?? false}
+              onCheckedChange={(checked) =>
+                setFormData({ ...formData, notifications_enabled: checked })
+              }
+            />
+          </div>
+        </CardHeader>
+        {formData.notifications_enabled && (
+          <CardContent className="space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="smtp-host">SMTP Server</Label>
+                <Input
+                  id="smtp-host"
+                  placeholder="smtp.example.com"
+                  value={formData.notifications_smtp_host || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, notifications_smtp_host: e.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="smtp-port">Port</Label>
+                <Input
+                  id="smtp-port"
+                  type="number"
+                  placeholder="587"
+                  value={formData.notifications_smtp_port ?? 587}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      notifications_smtp_port: Number(e.target.value) || 587,
+                    })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  587 for STARTTLS, 465 for implicit TLS
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <Label>Implicit TLS</Label>
+                <p className="text-xs text-muted-foreground">
+                  Enable for port 465. Leave off to use STARTTLS on port 587.
+                </p>
+              </div>
+              <Switch
+                checked={formData.notifications_smtp_use_ssl ?? false}
+                onCheckedChange={(checked) =>
+                  setFormData({
+                    ...formData,
+                    notifications_smtp_use_ssl: checked,
+                    notifications_smtp_use_tls: !checked,
+                  })
+                }
+              />
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="smtp-username">Username</Label>
+                <Input
+                  id="smtp-username"
+                  placeholder="alerts@example.com"
+                  value={formData.notifications_smtp_username || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, notifications_smtp_username: e.target.value })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="smtp-password">Password</Label>
+                <Input
+                  id="smtp-password"
+                  type="password"
+                  placeholder={
+                    config?.notifications_smtp_password_set
+                      ? 'Stored in keychain - leave blank to keep'
+                      : 'App-specific password'
+                  }
+                  value={formData.notifications_smtp_password || ''}
+                  onChange={(e) =>
+                    setFormData({ ...formData, notifications_smtp_password: e.target.value })
+                  }
+                />
+                <p className="text-xs text-muted-foreground">
+                  Stored in the macOS keychain, never in the config file
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="notify-from">From Address</Label>
+              <Input
+                id="notify-from"
+                placeholder="icloudbridge@example.com"
+                value={formData.notifications_from_address || ''}
+                onChange={(e) =>
+                  setFormData({ ...formData, notifications_from_address: e.target.value })
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="notify-to">Send Alerts To</Label>
+              <Input
+                id="notify-to"
+                placeholder="you@example.com, someone@example.com"
+                value={(formData.notifications_to_addresses || []).join(', ')}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    notifications_to_addresses: e.target.value
+                      .split(',')
+                      .map((address) => address.trim())
+                      .filter(Boolean),
+                  })
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                Separate multiple recipients with commas
+              </p>
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <Label>Alert on partial failures</Label>
+                <p className="text-xs text-muted-foreground">
+                  Notify when only some folders or calendars fail, not just total failures
+                </p>
+              </div>
+              <Switch
+                checked={formData.notifications_notify_on_partial_failure ?? true}
+                onCheckedChange={(checked) =>
+                  setFormData({
+                    ...formData,
+                    notifications_notify_on_partial_failure: checked,
+                  })
+                }
+              />
+            </div>
+
+            <div className="flex items-center justify-between rounded-md border p-3">
+              <div>
+                <Label>Notify on recovery</Label>
+                <p className="text-xs text-muted-foreground">
+                  Send a message when a failing sync starts working again
+                </p>
+              </div>
+              <Switch
+                checked={formData.notifications_notify_on_recovery ?? true}
+                onCheckedChange={(checked) =>
+                  setFormData({ ...formData, notifications_notify_on_recovery: checked })
+                }
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="notify-interval">Repeat Reminders Every (hours)</Label>
+              <Input
+                id="notify-interval"
+                type="number"
+                min={1}
+                value={formData.notifications_reminder_interval_hours ?? 24}
+                onChange={(e) =>
+                  setFormData({
+                    ...formData,
+                    notifications_reminder_interval_hours: Number(e.target.value) || 24,
+                  })
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                One alert is sent when a sync starts failing. While it stays broken, further
+                alerts are sent at most this often.
+              </p>
+            </div>
+
+            <div className="pt-2 border-t space-y-2">
+              <Button
+                onClick={handleSendTestNotification}
+                variant="outline"
+                disabled={sendingTestEmail || loading || hasUnsavedChanges}
+              >
+                {sendingTestEmail ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 mr-2" />
+                    Send Test Email
+                  </>
+                )}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                {hasUnsavedChanges
+                  ? 'Save your changes first - the test uses the saved settings.'
+                  : 'Sends a test message using the saved settings.'}
+              </p>
+            </div>
+          </CardContent>
+        )}
       </Card>
 
       {/* Advanced Settings */}

@@ -19,6 +19,7 @@ from icloudbridge.utils.converters import (
     strip_leading_heading,
 )
 from icloudbridge.utils.db import NotesDB
+from icloudbridge.utils.exceptions import SourceUnavailableError
 from icloudbridge.utils.slugs import generate_attachment_slug
 
 logger = logging.getLogger(__name__)
@@ -350,6 +351,28 @@ class NotesSyncEngine:
                     apple_note.name,
                     folder_name,
                 )
+
+            # Step 3b: Refuse to act on a destination that went entirely blank.
+            # The markdown side reading as empty while every note it held is
+            # still mapped means we could not read it (revoked file access, a
+            # volume that remounted under us), not that the files were removed.
+            if not skip_deletions and not remote_notes_by_path:
+                expected_folder = str(
+                    self.markdown_adapter.base_path / markdown_subfolder
+                    if markdown_subfolder
+                    else self.markdown_adapter.base_path
+                )
+                orphaned = [
+                    path for path in mappings_by_remote_path if path.startswith(expected_folder)
+                ]
+                if orphaned:
+                    raise SourceUnavailableError(
+                        f"All {len(orphaned)} synced markdown file(s) vanished from "
+                        f"'{expected_folder}' at once, which almost always means the "
+                        "backend cannot read that location rather than that the files "
+                        "were deleted. Refusing to delete the matching Apple notes. "
+                        "Restart iCloudBridge and confirm the folder is readable."
+                    )
 
             # Step 4: Check deletion threshold (if not disabled and not skipping deletions)
             if deletion_threshold > 0 and not skip_deletions and not dry_run:
@@ -692,6 +715,11 @@ class NotesSyncEngine:
 
             return stats
 
+        except SourceUnavailableError:
+            # Propagate unchanged so callers can tell "we could not read a source"
+            # apart from "the sync itself went wrong".
+            logger.error("Sync aborted for folder %s: source unavailable", folder_name)
+            raise
         except Exception as e:
             logger.exception("Sync failed for folder %s", folder_name)
             raise RuntimeError(f"Sync failed for folder '{folder_name}': {e}") from e

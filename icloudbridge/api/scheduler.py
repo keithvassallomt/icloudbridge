@@ -16,6 +16,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from icloudbridge.api.websocket import send_schedule_run, send_sync_progress
 from icloudbridge.core.config import AppConfig, load_config
+from icloudbridge.core.notifications import FailureNotifier
 from icloudbridge.core.passwords_sync import PasswordsSyncEngine
 from icloudbridge.core.photos_sync import PhotoSyncEngine
 from icloudbridge.core.reminders_sync import RemindersSyncEngine
@@ -25,6 +26,77 @@ from icloudbridge.utils.credentials import CredentialStore
 from icloudbridge.utils.db import SchedulesDB, SyncLogsDB
 
 logger = logging.getLogger(__name__)
+
+
+def summarize_sync_result(result: object, label: str = "") -> tuple[list[str], int, int]:
+    """Extract failures from a service sync result.
+
+    Service syncs report failures for individual folders and calendars *inside*
+    their return value rather than raising, so a run in which every single unit
+    failed still returns normally. Without walking the result, such a run gets
+    recorded as a success.
+
+    A "unit" is a folder or calendar, not an item. A bare `errors` count with no
+    accompanying messages is an item-level tally (three photos out of five
+    hundred failed to copy) and is reported without marking its unit as failed,
+    so that it cannot masquerade as a total outage.
+
+    Returns:
+        (failure descriptions, number of failed units, number of units covered)
+    """
+    if not isinstance(result, dict):
+        return [], 0, 1
+
+    failures: list[str] = []
+    failed_units = 0
+    units = 0
+
+    # Per-folder outcomes from notes syncs
+    folder_results = result.get("folder_results")
+    if isinstance(folder_results, list):
+        units += len(folder_results)
+        for entry in folder_results:
+            if isinstance(entry, dict) and entry.get("status") == "error":
+                failed_units += 1
+                folder = entry.get("folder", "unknown folder")
+                failures.append(f"{folder}: {entry.get('error', 'unknown error')}")
+
+    # Nested per-calendar results: reminders auto mode returns a dict keyed by
+    # "Apple list -> CalDAV calendar", each holding its own stats.
+    nested_units = 0
+    for key, value in result.items():
+        if key == "details" or not isinstance(value, dict):
+            continue
+        if "errors" in value or "folder_results" in value:
+            nested_failures, nested_failed, nested_count = summarize_sync_result(
+                value, label=str(key)
+            )
+            failures.extend(nested_failures)
+            failed_units += nested_failed
+            nested_units += nested_count
+    units += nested_units
+
+    # Explicit messages mean this result's own unit failed
+    messages = result.get("error_messages")
+    if isinstance(messages, list) and messages:
+        if not folder_results and not nested_units:
+            failed_units += 1
+            units = max(units, 1)
+        for message in messages:
+            failures.append(f"{label}: {message}" if label else str(message))
+
+    # A count with nothing more descriptive attached: report it, but do not let
+    # it imply that a whole folder or calendar is down.
+    elif not failures:
+        try:
+            count = int(result.get("errors") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count > 0:
+            prefix = f"{label}: " if label else ""
+            failures.append(f"{prefix}{count} item error(s)")
+
+    return failures, failed_units, max(units, 1)
 
 
 class SchedulerManager:
@@ -234,6 +306,54 @@ class SchedulerManager:
                 result = await self._run_service_sync(service, service_config)
                 duration = datetime.now().timestamp() - start_time
 
+                # A clean return does not mean a clean run: per-folder and
+                # per-calendar failures are reported inside the result.
+                failures, failed_units, units = summarize_sync_result(result)
+
+                if failures:
+                    schedule_failed = True
+                    everything_failed = failed_units > 0 and failed_units >= units
+                    run_status = "error" if everything_failed else "partial_success"
+                    error_msg = "; ".join(failures[:10])
+                    if len(failures) > 10:
+                        error_msg += f" (and {len(failures) - 10} more)"
+
+                    logger.error(
+                        "Scheduled %s sync reported %d failure(s) across %d unit(s) (%s): %s",
+                        service,
+                        len(failures),
+                        units,
+                        schedule_name,
+                        error_msg,
+                    )
+
+                    await self.sync_logs_db.update_log(
+                        log_id=log_id,
+                        status=run_status,
+                        duration_seconds=duration,
+                        stats_json=json.dumps(result),
+                        error_message=error_msg,
+                    )
+
+                    await send_schedule_run(service, schedule_id, schedule_name, "failed")
+                    await send_sync_progress(
+                        service=service,
+                        status="error" if everything_failed else "partial_success",
+                        progress=100,
+                        message=f"Scheduled sync had failures: {schedule_name}",
+                        stats=result,
+                    )
+
+                    await self._notify_failure(
+                        service=service,
+                        schedule_id=schedule_id,
+                        schedule_name=schedule_name,
+                        failures=failures,
+                        units=units,
+                        total_failure=everything_failed,
+                    )
+                    continue
+
                 await self.sync_logs_db.update_log(
                     log_id=log_id,
                     status="success",
@@ -255,6 +375,12 @@ class SchedulerManager:
                     service,
                     schedule_name,
                     duration,
+                )
+
+                await self._notify_recovery(
+                    service=service,
+                    schedule_id=schedule_id,
+                    schedule_name=schedule_name,
                 )
 
             except Exception as exc:  # pylint: disable=broad-except
@@ -284,6 +410,15 @@ class SchedulerManager:
                     message=f"Scheduled sync failed: {schedule_name}",
                 )
 
+                await self._notify_failure(
+                    service=service,
+                    schedule_id=schedule_id,
+                    schedule_name=schedule_name,
+                    failures=[error_msg],
+                    units=1,
+                    total_failure=True,
+                )
+
         # Update schedule run timestamps regardless of success so users can diagnose failures
         next_run_time = None
         job = self.scheduler.get_job(f"schedule_{schedule_id}")
@@ -299,6 +434,42 @@ class SchedulerManager:
             logger.warning("Scheduled sync completed with failures: %s", schedule_name)
         else:
             logger.info("Scheduled sync completed for all services: %s", schedule_name)
+
+    async def _notify_failure(
+        self,
+        *,
+        service: str,
+        schedule_id: int,
+        schedule_name: str,
+        failures: list[str],
+        units: int,
+        total_failure: bool,
+    ) -> None:
+        """Alert on a failed scheduled run, without ever raising into the caller."""
+        try:
+            await FailureNotifier(self.config.notifications).notify_failure(
+                schedule_id=schedule_id,
+                schedule_name=schedule_name,
+                service=service,
+                failures=failures,
+                units=units,
+                total_failure=total_failure,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Failure notification raised unexpectedly: %s", exc)
+
+    async def _notify_recovery(
+        self, *, service: str, schedule_id: int, schedule_name: str
+    ) -> None:
+        """Clear failure state after a clean run, and report the recovery."""
+        try:
+            await FailureNotifier(self.config.notifications).notify_recovery(
+                schedule_id=schedule_id,
+                schedule_name=schedule_name,
+                service=service,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Recovery notification raised unexpectedly: %s", exc)
 
     def _extract_service_config(self, config_dict: dict, service: str) -> dict:
         """Return the config dictionary applicable to a specific service."""

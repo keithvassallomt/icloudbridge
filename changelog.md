@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.5] - 2026-08-06
+
+### Added
+- Failure notifications. iCloudBridge can now email you when a scheduled sync fails, and again when it starts working. Set it up under Settings → Failure Notifications, where there's a test button to check it before you rely on it. Your SMTP password goes in the Keychain. You'll get one email when something breaks and a daily reminder while it stays broken, rather than one every half hour.
+
+### Fixed
+- Scheduled syncs were recording failures as successes. When individual folders or lists failed, the scheduler only saw that the run had finished and logged it as a success — so a sync could be completely broken for weeks while the dashboard looked perfectly healthy. Runs are now marked as failed, or as a partial success when only some folders were affected.
+- Syncs no longer delete anything when they can't read one side. macOS sometimes withdraws iCloudBridge's access to Reminders, Photos and your files without warning, usually after a Python upgrade on your Mac. Everything then reads as empty rather than unavailable, and the sync concluded you'd deleted it all and started removing the copies on the other side. The deletion threshold was catching this, but it asked you to confirm a deletion you never intended. Syncs now stop and explain what's actually wrong.
+- Reminders access recovers on its own. A dead connection to Apple Reminders used to stay dead until you restarted the app.
+- A Python upgrade no longer quietly breaks everything. iCloudBridge now notices when the interpreter it runs on has been replaced, rebuilds its environment and restarts — which is what restores its macOS permissions. Previously it carried on running without them and never said so.
+
 ## [0.2.4] - 2026-05-12
 
 ### Fixed

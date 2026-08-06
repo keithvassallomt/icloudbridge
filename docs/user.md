@@ -11,6 +11,7 @@ iCloudBridge provides a web-based interface to manage and interact with your iCl
 - [Password Synchronisation](passwords.md)
 - [Photo Synchronisation](photos.md)
 - [Schedules](schedules.md)
+- [Failure Notifications](notifications.md)
 - [Logs](logs.md)
 
 ---

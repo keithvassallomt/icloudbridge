@@ -81,6 +81,26 @@ export interface AppConfig {
   // Export folder defaults to first import source path (local folder, not WebDAV)
   photos_export_folder?: string;
   photos_export_organize_by?: 'date' | 'flat';
+  // Failure notifications
+  notifications_enabled?: boolean;
+  notifications_smtp_host?: string;
+  notifications_smtp_port?: number;
+  notifications_smtp_username?: string;
+  notifications_smtp_password?: string;
+  // Read-only: whether a password is already stored in the keyring
+  notifications_smtp_password_set?: boolean;
+  notifications_smtp_use_tls?: boolean;
+  notifications_smtp_use_ssl?: boolean;
+  notifications_from_address?: string;
+  notifications_to_addresses?: string[];
+  notifications_notify_on_partial_failure?: boolean;
+  notifications_notify_on_recovery?: boolean;
+  notifications_reminder_interval_hours?: number;
+}
+
+export interface TestNotificationResponse {
+  sent: boolean;
+  recipients: string[];
 }
 
 export interface PhotoSource {

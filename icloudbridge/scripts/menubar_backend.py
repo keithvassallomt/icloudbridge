@@ -10,6 +10,7 @@ import uvicorn
 
 from icloudbridge.core.config import load_config
 from icloudbridge.utils.logging import setup_logging
+from icloudbridge.utils.runtime_health import log_interpreter_status
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,10 @@ def run() -> None:
     logger.info("Data dir: %s", data_dir)
     logger.info("Log file: %s", log_path)
     logger.info("Listening on http://%s:%s", host, port)
+
+    # Surface a stale interpreter at startup rather than letting it show up
+    # later as inexplicably empty reminder lists and folders.
+    log_interpreter_status("Startup interpreter check")
 
     uvicorn.run(
         "icloudbridge.api.app:app",

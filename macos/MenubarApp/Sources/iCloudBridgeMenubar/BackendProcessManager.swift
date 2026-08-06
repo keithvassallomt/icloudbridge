@@ -9,6 +9,7 @@ final class BackendProcessManager {
     private let appSupportGems = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/iCloudBridge/gems")
 
     private let healthURL = URL(string: "http://127.0.0.1:27731/api/health")!
+    private let interpreterHealthURL = URL(string: "http://127.0.0.1:27731/api/health/interpreter")!
 
     func start() {
         queue.async { [weak self] in
@@ -128,6 +129,36 @@ final class BackendProcessManager {
             }
         }
         task.resume()
+    }
+
+    /// Ask the backend whether the interpreter it is running from is still intact.
+    ///
+    /// Completion carries the reason when it is not, so the caller can log
+    /// something better than "the backend stopped working".
+    func interpreterHealthy(completion: @escaping (Bool, String?) -> Void) {
+        var request = URLRequest(url: interpreterHealthURL)
+        request.timeoutInterval = 2.0
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            guard error == nil,
+                  let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let healthy = json["healthy"] as? Bool
+            else {
+                // An older backend has no such endpoint; assume healthy rather
+                // than triggering a rebuild loop against it.
+                completion(true, nil)
+                return
+            }
+            completion(healthy, json["reason"] as? String)
+        }
+        task.resume()
+    }
+
+    /// Stop the backend and start it again from a freshly resolved interpreter.
+    func restart() {
+        stop()
+        start()
     }
 
     func backendHealthySync() -> Bool {

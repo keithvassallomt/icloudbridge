@@ -37,6 +37,10 @@ features:
     title: Schedules
     details: Create recurring schedules to automatically sync notes, reminders and photos
     link: /schedules
+  - icon: 📧
+    title: Failure Notifications
+    details: Get an email when a scheduled sync fails, and another when it starts working again
+    link: /notifications
   - icon: 📊
     title: Logs
     details: Keep a close eye on everything iCloudBridge is doing, in real time

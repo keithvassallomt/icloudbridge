@@ -458,6 +458,79 @@ class GeneralConfig(BaseSettings):
         return Path(v).expanduser().resolve()
 
 
+class NotificationsConfig(BaseSettings):
+    """Email alerting for scheduled sync failures."""
+
+    enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    # STARTTLS on a submission port (587). Set use_ssl instead for implicit TLS (465).
+    smtp_use_tls: bool = True
+    smtp_use_ssl: bool = False
+    from_address: str = ""
+    to_addresses: list[str] = Field(default_factory=list)
+    # Alert on runs where only some folders/calendars failed, not just total failures
+    notify_on_partial_failure: bool = True
+    # Send a recovery message when a previously failing sync succeeds again
+    notify_on_recovery: bool = True
+    # While a sync stays broken, repeat at most this often (hours)
+    reminder_interval_hours: int = 24
+
+    @field_validator("smtp_port", mode="before")
+    @classmethod
+    def validate_smtp_port(cls, v: int) -> int:
+        """Ensure the SMTP port is a usable TCP port."""
+        port = int(v)
+        if not 0 < port < 65536:
+            raise ValueError("smtp_port must be between 1 and 65535")
+        return port
+
+    @field_validator("reminder_interval_hours", mode="before")
+    @classmethod
+    def validate_reminder_interval(cls, v: int) -> int:
+        """Keep repeat alerts to at most one per hour."""
+        hours = int(v)
+        if hours < 1:
+            raise ValueError("reminder_interval_hours must be at least 1")
+        return hours
+
+    @field_validator("to_addresses", mode="before")
+    @classmethod
+    def normalize_recipients(cls, v: object) -> list[str]:
+        """Accept a comma-separated string as well as a list."""
+        if not v:
+            return []
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        return [str(part).strip() for part in v if str(part).strip()]
+
+    def get_smtp_password(self) -> str | None:
+        """
+        Get the SMTP password from the keyring.
+
+        Follows the same pattern as the other credentials: the secret lives in
+        the system keyring, keyed by username, and never in the config file.
+        """
+        if not self.smtp_username:
+            return None
+
+        try:
+            from icloudbridge.utils.credentials import CredentialStore
+
+            password = CredentialStore().get_smtp_password(self.smtp_username)
+            if password:
+                logger.debug("Using SMTP password from system keyring")
+            return password
+        except Exception as e:
+            logger.warning(f"Failed to retrieve SMTP password from keyring: {e}")
+            return None
+
+    def is_deliverable(self) -> bool:
+        """True when enough is configured to actually send a message."""
+        return bool(self.enabled and self.smtp_host and self.from_address and self.to_addresses)
+
+
 class AppConfig(BaseSettings):
     """Main application configuration."""
 
@@ -472,6 +545,7 @@ class AppConfig(BaseSettings):
     reminders: RemindersConfig = Field(default_factory=RemindersConfig)
     photos: PhotosConfig = Field(default_factory=PhotosConfig)
     passwords: PasswordsConfig = Field(default_factory=PasswordsConfig)
+    notifications: NotificationsConfig = Field(default_factory=NotificationsConfig)
 
     @classmethod
     def load_from_file(cls, config_path: Path) -> "AppConfig":

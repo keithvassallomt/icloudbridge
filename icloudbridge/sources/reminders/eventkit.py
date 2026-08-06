@@ -23,6 +23,8 @@ from EventKit import (
 )
 
 from icloudbridge.utils.datetime_utils import safe_fromtimestamp
+from icloudbridge.utils.exceptions import SourceUnavailableError
+from icloudbridge.utils.runtime_health import log_interpreter_status
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +163,19 @@ class RemindersAdapter:
             RemindersAdapter._shared_store = EKEventStore.alloc().init()
             logger.debug("Created shared EKEventStore instance")
 
-        self.store = RemindersAdapter._shared_store
+    @property
+    def store(self) -> EKEventStore:
+        """
+        The shared EventKit store.
+
+        Read from the class on every access rather than cached per-instance, so
+        that a store rebuilt by _refresh_store() is picked up by adapters that
+        were constructed before the rebuild.
+        """
+        if RemindersAdapter._shared_store is None:
+            RemindersAdapter._shared_store = EKEventStore.alloc().init()
+            logger.debug("Created shared EKEventStore instance")
+        return RemindersAdapter._shared_store
 
     @classmethod
     def reset_shared_store(cls) -> None:
@@ -169,6 +183,30 @@ class RemindersAdapter:
         cls._shared_store = None
         cls._access_granted = False
         logger.debug("Reset shared EKEventStore instance")
+
+    async def _refresh_store(self) -> None:
+        """
+        Rebuild the shared EventKit store and re-request access.
+
+        A long-lived EKEventStore can stop returning data without raising:
+        macOS drops TCC privileges for a running process whose executable has
+        been replaced underneath it (a Homebrew Python upgrade will do this),
+        and the store then reports an empty database rather than an error.
+        Rebuilding is the only way to find out whether access is really gone.
+        """
+        async with RemindersAdapter._store_lock:
+            store = RemindersAdapter._shared_store
+            if store is not None:
+                try:
+                    store.reset()
+                except Exception as e:  # pragma: no cover - defensive
+                    logger.debug(f"EKEventStore.reset() failed: {e}")
+
+            RemindersAdapter._shared_store = EKEventStore.alloc().init()
+            RemindersAdapter._access_granted = False
+            logger.info("Rebuilt shared EKEventStore instance")
+
+        await self.request_access()
 
     async def request_access(self) -> bool:
         """Request access to Reminders. Returns True if granted."""
@@ -198,21 +236,39 @@ class RemindersAdapter:
         RemindersAdapter._access_granted = await future
         return RemindersAdapter._access_granted
 
+    def _read_calendars(self) -> list[ReminderCalendar]:
+        """Read reminder calendars straight from the store, without recovery."""
+        calendars = self.store.calendarsForEntityType_(EKEntityTypeReminder) or []
+        return [
+            ReminderCalendar(uuid=cal.calendarIdentifier(), title=cal.title())
+            for cal in calendars
+        ]
+
     async def list_calendars(self) -> list[ReminderCalendar]:
-        """List all reminder calendars/lists."""
+        """
+        List all reminder calendars/lists.
+
+        An empty result is treated as a fault rather than a valid answer: macOS
+        always keeps at least one Reminders list, so zero lists means the store
+        is dead or access has been revoked. We rebuild the store and retry once
+        before giving up.
+        """
         if not RemindersAdapter._access_granted:
             await self.request_access()
 
-        calendars = self.store.calendarsForEntityType_(EKEntityTypeReminder)
-        result = []
+        result = self._read_calendars()
 
-        for cal in calendars:
-            result.append(
-                ReminderCalendar(
-                    uuid=cal.calendarIdentifier(),
-                    title=cal.title(),
-                )
+        if not result:
+            logger.warning(
+                "EventKit returned no reminder lists - rebuilding the store and retrying"
             )
+            await self._refresh_store()
+            result = self._read_calendars()
+
+            if not result:
+                # Rebuilding did not help, so the problem is the process rather
+                # than the store. Record why, since this is otherwise invisible.
+                log_interpreter_status("Reminders unreadable after store rebuild")
 
         logger.info(f"Found {len(result)} reminder calendars")
         return result
@@ -234,7 +290,16 @@ class RemindersAdapter:
             logger.info(f"Creating Apple Reminders calendar: {calendar_name}")
 
             # Get the default source for reminders (usually iCloud)
-            sources = self.store.sources()
+            sources = self.store.sources() or []
+
+            # No sources at all means the store is dead rather than empty - the
+            # same failure that makes list_calendars() come back empty. Rebuild
+            # and retry before concluding anything.
+            if not sources:
+                logger.warning("EventKit reported no sources - rebuilding the store and retrying")
+                await self._refresh_store()
+                sources = self.store.sources() or []
+
             default_source = None
             for source in sources:
                 if source.sourceType() == 1:  # EKSourceTypeCalDAV (iCloud)
@@ -246,8 +311,11 @@ class RemindersAdapter:
                 default_source = sources[0]
 
             if not default_source:
-                logger.error("No source available for creating calendar")
-                return None
+                raise SourceUnavailableError(
+                    "Apple Reminders reported no accounts, so no list can be created. "
+                    "The backend has most likely lost Reminders access. "
+                    "Restart iCloudBridge and re-grant access if prompted."
+                )
 
             # Create new calendar
             new_calendar = EventKit.EKCalendar.calendarForEntityType_eventStore_(
@@ -269,6 +337,11 @@ class RemindersAdapter:
             else:
                 logger.error(f"Failed to create calendar: {calendar_name}")
                 return None
+
+        except SourceUnavailableError:
+            # Never downgrade "source is unreachable" to "creation failed" - the
+            # caller has to be able to tell those apart.
+            raise
 
         except Exception as e:
             logger.error(f"Failed to create calendar '{calendar_name}': {e}", exc_info=True)

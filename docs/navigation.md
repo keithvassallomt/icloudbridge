@@ -34,6 +34,8 @@ The settings page shows you all of the configuration which was saved when you ra
 
 ![Settings Page](images/docs_nav_settings.png)
 
+The settings page is also where you set up [Failure Notifications](notifications.md), which email you when a scheduled sync fails.
+
 The settings page also allows you to reset individual services. For example, resetting the Reminder sync service will forget your Nextcloud/CalDAV credentials and list/calendar mappings, allowing you to reconfigure them from scratch. Note that none of your data will be deleted when you reset a service; it simply clears the configuration for that service.
 
 If you want to start fresh, click the "Complete Reset" button at the bottom of the settings page. This will clear all saved configurations for all services, allowing you to run the First-Run Wizard again from scratch. Again, none of your data will be deleted when performing a complete reset.
