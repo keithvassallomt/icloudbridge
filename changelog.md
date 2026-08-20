@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- Bitwarden Cloud sign-ins failed with a 429 error on some networks, no matter how long you waited. iCloudBridge didn't identify itself when connecting, so it was sent using the underlying HTTP library's default name — which the network layer in front of Bitwarden treats as suspicious and refuses outright on connections it already scores poorly. The same request from the same machine succeeded under any other name. iCloudBridge now identifies itself as `iCloudBridge/<version>`. Thanks to @MehdiMamas for reporting this and for running the tests that isolated it (#17).
+
 ### Changed
 - Bitwarden and Vaultwarden sign-in rejections now explain themselves. A refused sign-in surfaced as `Client error '429 Unknown Error'`, which reads like a problem with your server address or your API key when it is neither. The message now says that the server is refusing repeated sign-in attempts, that this is temporary, and how long to wait when the server tells us. The log also records whether the refusal came from Bitwarden itself or from the network in front of it — the difference between waiting it out and a genuine bug worth reporting.
 

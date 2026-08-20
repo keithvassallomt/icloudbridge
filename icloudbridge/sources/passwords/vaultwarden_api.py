@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 import httpx
 from argon2.low_level import Type, hash_secret_raw
 
+from icloudbridge import __version__
+
 from .bitwarden_crypto import (
     encrypt_optional_list,
     encrypt_string,
@@ -31,6 +33,12 @@ class VaultwardenAPIClient:
     """
 
     BITWARDEN_WEB_CLIENT_VERSION = "2025.11.0"  # Keep aligned with Bitwarden web releases
+
+    # Identify ourselves by name. httpx's default "python-httpx/x.y" user agent gets
+    # scored as a bot by the edge in front of Bitwarden cloud and refused with an empty
+    # HTTP 429 on some networks, while the identical request with any other user agent
+    # succeeds from the same address (issue #17).
+    USER_AGENT = f"iCloudBridge/{__version__}"
 
     # A 429 from Bitwarden cloud may come from its own rate limiter or from the CDN in
     # front of it. These headers tell the two apart, so log them rather than retrying
@@ -97,7 +105,7 @@ class VaultwardenAPIClient:
         self.device_identifier = hashlib.sha256(seed.encode()).hexdigest()
         # Keep deterministic device identifier; use browser device type (Bitwarden public client).
         self.device_type = 2
-        default_headers: dict[str, str] = {}
+        default_headers: dict[str, str] = {"User-Agent": self.USER_AGENT}
         if host_is_bitwarden:
             default_headers["Bitwarden-Client-Name"] = "web"
             default_headers["Bitwarden-Client-Version"] = self.BITWARDEN_WEB_CLIENT_VERSION
