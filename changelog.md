@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- Bitwarden and Vaultwarden sign-in rejections now explain themselves. A refused sign-in surfaced as `Client error '429 Unknown Error'`, which reads like a problem with your server address or your API key when it is neither. The message now says that the server is refusing repeated sign-in attempts, that this is temporary, and how long to wait when the server tells us. The log also records whether the refusal came from Bitwarden itself or from the network in front of it — the difference between waiting it out and a genuine bug worth reporting.
+
 ## [0.2.5] - 2026-08-06
 
 ### Added

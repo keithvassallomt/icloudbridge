@@ -4,6 +4,8 @@ import base64
 import hashlib
 import logging
 import unicodedata
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -29,6 +31,11 @@ class VaultwardenAPIClient:
     """
 
     BITWARDEN_WEB_CLIENT_VERSION = "2025.11.0"  # Keep aligned with Bitwarden web releases
+
+    # A 429 from Bitwarden cloud may come from its own rate limiter or from the CDN in
+    # front of it. These headers tell the two apart, so log them rather than retrying
+    # blindly into whatever is refusing us.
+    RATE_LIMIT_DIAGNOSTIC_HEADERS = ("server", "cf-ray", "cf-mitigated", "retry-after")
 
     def __init__(
         self,
@@ -59,6 +66,7 @@ class VaultwardenAPIClient:
         scheme = parsed.scheme or "https"
 
         host_is_bitwarden = host.endswith("bitwarden.com") or host.endswith("bitwarden.eu")
+        self._host_is_bitwarden = host_is_bitwarden
 
         # Allow override via config. Bitwarden cloud expects the public "web" client id;
         # Vaultwarden/self-hosted works with "browser".
@@ -123,6 +131,62 @@ class VaultwardenAPIClient:
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning(f"Failed to inject system trust store for Vaultwarden: {exc}")
 
+    @staticmethod
+    def _parse_retry_after(response: httpx.Response) -> float | None:
+        """Read a Retry-After header as seconds, accepting both delay and HTTP-date forms."""
+
+        raw = response.headers.get("Retry-After")
+        if not raw:
+            return None
+        raw = raw.strip()
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+        try:
+            when = parsedate_to_datetime(raw)
+        except (TypeError, ValueError):
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return max(0.0, (when - datetime.now(timezone.utc)).total_seconds())
+
+    def _rate_limit_message(self, response: httpx.Response) -> str:
+        """Explain a 429 in terms the user can act on, rather than leaking the raw httpx error."""
+
+        retry_after = self._parse_retry_after(response)
+        if retry_after:
+            wait_hint = f"Try again in about {int(retry_after) + 1} seconds."
+        else:
+            wait_hint = "Wait a few minutes before trying again."
+        if self._host_is_bitwarden:
+            cause = (
+                "Bitwarden cloud limits how often the same IP address may attempt to sign in."
+            )
+        else:
+            cause = "The server is limiting how often the same IP address may attempt to sign in."
+        return (
+            f"Failed to authenticate with VaultWarden: {self.identity_base} is rate limiting "
+            f"sign-in attempts (HTTP 429). {cause} This is temporary — it does not mean your "
+            f"server URL, API key or password is wrong. {wait_hint}"
+        )
+
+    def _log_rate_limit_diagnostics(self, response: httpx.Response) -> None:
+        """Record who actually refused us: Bitwarden's rate limiter or the CDN in front of it."""
+
+        present = {
+            name: response.headers[name]
+            for name in self.RATE_LIMIT_DIAGNOSTIC_HEADERS
+            if name in response.headers
+        }
+        logger.error(
+            "HTTP 429 from %s (protocol=%s, headers=%s, body_length=%d)",
+            response.url,
+            response.http_version,
+            present or "none",
+            len(response.content or b""),
+        )
+
     async def authenticate(self) -> None:
         """
         Authenticate with VaultWarden server using Bitwarden Identity API.
@@ -186,6 +250,9 @@ class VaultwardenAPIClient:
         except httpx.HTTPStatusError as e:
             logger.error(f"VaultWarden authentication failed: HTTP {e.response.status_code}")
             logger.error(f"Response: {e.response.text}")
+            if e.response.status_code == 429:
+                self._log_rate_limit_diagnostics(e.response)
+                raise Exception(self._rate_limit_message(e.response)) from e
             raise Exception(f"Failed to authenticate with VaultWarden: {e}") from e
         except Exception as e:
             logger.error(f"VaultWarden authentication failed: {e}")
