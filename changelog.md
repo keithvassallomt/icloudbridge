@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.2.6] - 2026-08-20
 
 ### Fixed
 - Bitwarden Cloud sign-ins failed with a 429 error on some networks, no matter how long you waited. iCloudBridge didn't identify itself when connecting, so it was sent using the underlying HTTP library's default name — which the network layer in front of Bitwarden treats as suspicious and refuses outright on connections it already scores poorly. The same request from the same machine succeeded under any other name. iCloudBridge now identifies itself as `iCloudBridge/<version>`. Thanks to @MehdiMamas for reporting this and for running the tests that isolated it (#17).
