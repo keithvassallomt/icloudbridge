@@ -740,7 +740,11 @@ class NotesAdapter:
             attachment_uuid = str(obj.get("uuid")) if obj.get("uuid") else None
             backup_location = obj.get("backup_location") or obj.get("filepath")
             source_path = self._rich_capture.resolve_attachment_path(backup_location)
-            if source_path and source_path.exists():
+            # Must be a regular file, not merely present. Some embedded objects
+            # carry incomplete media metadata and resolve to the account's
+            # "Media" directory itself, which then reached shutil.copy2() and
+            # failed the whole note with "[Errno 21] Is a directory".
+            if source_path and source_path.is_file():
                 filename = obj.get("filename") or source_path.name
                 attachments.append(
                     AppleNoteAttachment(
@@ -752,13 +756,26 @@ class NotesAdapter:
                         original_sources=None,
                     )
                 )
+            elif source_path:
+                logger.debug(
+                    "Skipping non-file embedded object source %s for attachment %s",
+                    source_path,
+                    attachment_uuid,
+                )
 
             for thumb in obj.get("thumbnails") or []:
                 thumb_uuid = str(thumb.get("uuid")) if thumb.get("uuid") else None
                 thumb_path = thumb.get("backup_location") or thumb.get("filepath")
                 resolved_thumb = self._rich_capture.resolve_attachment_path(thumb_path)
                 rel_thumb = thumb.get("filepath")
-                if not (thumb_uuid and resolved_thumb and resolved_thumb.exists()):
+                if resolved_thumb and not resolved_thumb.is_file():
+                    logger.debug(
+                        "Skipping non-file thumbnail source %s for attachment %s",
+                        resolved_thumb,
+                        thumb_uuid,
+                    )
+                    continue
+                if not (thumb_uuid and resolved_thumb):
                     continue
                 source_tokens = []
                 if rel_thumb:

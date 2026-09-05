@@ -83,7 +83,8 @@ final class PreflightCoordinator {
         backendManager?.interpreterHealthy { [weak self] healthy, reason in
             guard let self, !healthy else { return }
             NSLog("Backend interpreter is no longer valid: \(reason ?? "unknown reason")")
-            self.recoverInterpreter()
+            // Also a URLSession callback; recovery touches UI state and timers.
+            DispatchQueue.main.async { self.recoverInterpreter() }
         }
     }
 
@@ -331,15 +332,22 @@ final class PreflightCoordinator {
 
         backendManager.backendHealthy { [weak self] healthy in
             guard let self else { return }
-            if healthy {
+            // URLSession delivers this on its own delegate queue, and
+            // handlePostBackend shows and closes windows. AppKit traps when
+            // touched off the main thread, which killed the app - and the
+            // menu bar item with it - the moment the window was dismissed.
+            DispatchQueue.main.async {
                 self.backendStarted = true
-                self.handlePostBackend(showWindowIfAllowed: showWindowIfAllowed, forceShowWindow: forceShowWindow, snapshot: snapshot, healthy: true)
-                return
+                if !healthy {
+                    self.backendManager?.start()
+                }
+                self.handlePostBackend(
+                    showWindowIfAllowed: showWindowIfAllowed,
+                    forceShowWindow: forceShowWindow,
+                    snapshot: snapshot,
+                    healthy: healthy
+                )
             }
-
-            self.backendStarted = true
-            self.backendManager?.start()
-            self.handlePostBackend(showWindowIfAllowed: showWindowIfAllowed, forceShowWindow: forceShowWindow, snapshot: snapshot, healthy: false)
         }
     }
 

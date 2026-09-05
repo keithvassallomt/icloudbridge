@@ -663,81 +663,82 @@ def notes_sync(
                 "pending_local_notes": [],
             }
 
-            for folder_name in folders_to_sync:
-                try:
-                    console.print(f"[bold]Syncing folder:[/bold] {folder_name}")
-                    stats = await sync_engine.sync_folder(
-                        folder_name,
-                        folder_name,
-                        dry_run=dry_run,
-                        skip_deletions=skip_deletions,
-                        deletion_threshold=deletion_threshold,
-                        sync_mode=mode,
-                    )
-                except RuntimeError as e:
-                    console.print(f"[red]Error syncing {folder_name}: {e}[/red]")
-                    logger.exception("Folder sync failed")
-                    continue
+            async with sync_engine.rich_capture_scope():
+                for folder_name in folders_to_sync:
+                    try:
+                        console.print(f"[bold]Syncing folder:[/bold] {folder_name}")
+                        stats = await sync_engine.sync_folder(
+                            folder_name,
+                            folder_name,
+                            dry_run=dry_run,
+                            skip_deletions=skip_deletions,
+                            deletion_threshold=deletion_threshold,
+                            sync_mode=mode,
+                        )
+                    except RuntimeError as e:
+                        console.print(f"[red]Error syncing {folder_name}: {e}[/red]")
+                        logger.exception("Folder sync failed")
+                        continue
 
-                total_stats["created_local"] += stats.get("created_local", 0)
-                total_stats["created_remote"] += stats.get("created_remote", 0)
-                total_stats["updated_local"] += stats.get("updated_local", 0)
-                total_stats["updated_remote"] += stats.get("updated_remote", 0)
-                total_stats["deleted_local"] += stats.get("deleted_local", 0)
-                total_stats["deleted_remote"] += stats.get("deleted_remote", 0)
-                total_stats["unchanged"] += stats.get("unchanged", 0)
-                total_stats["would_delete_local"] += stats.get("would_delete_local", 0)
-                total_stats["would_delete_remote"] += stats.get("would_delete_remote", 0)
-                if stats.get("pending_local_notes"):
-                    total_stats["pending_local_notes"].extend(stats["pending_local_notes"])
+                    total_stats["created_local"] += stats.get("created_local", 0)
+                    total_stats["created_remote"] += stats.get("created_remote", 0)
+                    total_stats["updated_local"] += stats.get("updated_local", 0)
+                    total_stats["updated_remote"] += stats.get("updated_remote", 0)
+                    total_stats["deleted_local"] += stats.get("deleted_local", 0)
+                    total_stats["deleted_remote"] += stats.get("deleted_remote", 0)
+                    total_stats["unchanged"] += stats.get("unchanged", 0)
+                    total_stats["would_delete_local"] += stats.get("would_delete_local", 0)
+                    total_stats["would_delete_remote"] += stats.get("would_delete_remote", 0)
+                    if stats.get("pending_local_notes"):
+                        total_stats["pending_local_notes"].extend(stats["pending_local_notes"])
 
-                # Show folder stats
-                numeric_keys = [
-                    "created_local",
-                    "created_remote",
-                    "updated_local",
-                    "updated_remote",
-                    "deleted_local",
-                    "deleted_remote",
-                ]
+                    # Show folder stats
+                    numeric_keys = [
+                        "created_local",
+                        "created_remote",
+                        "updated_local",
+                        "updated_remote",
+                        "deleted_local",
+                        "deleted_remote",
+                    ]
 
-                if dry_run:
-                    if any(stats.get(k, 0) > 0 for k in numeric_keys) or stats["would_delete_local"] > 0 or stats["would_delete_remote"] > 0:
+                    if dry_run:
+                        if any(stats.get(k, 0) > 0 for k in numeric_keys) or stats["would_delete_local"] > 0 or stats["would_delete_remote"] > 0:
+                            console.print(
+                                f"  [yellow]Preview:[/yellow] "
+                                f"{stats['created_remote']} would create, "
+                                f"{stats['updated_remote']} would update, "
+                                f"{stats['would_delete_remote']} would delete "
+                                f"(remote)"
+                            )
+                            console.print(
+                                f"  [yellow]Preview:[/yellow] "
+                                f"{stats['created_local']} would create, "
+                                f"{stats['updated_local']} would update, "
+                                f"{stats['would_delete_local']} would delete "
+                                f"(local)"
+                            )
+                        else:
+                            console.print(f"  [dim]No changes needed ({stats['unchanged']} unchanged)[/dim]")
+                    elif any(stats.get(k, 0) > 0 for k in numeric_keys):
                         console.print(
-                            f"  [yellow]Preview:[/yellow] "
-                            f"{stats['created_remote']} would create, "
-                            f"{stats['updated_remote']} would update, "
-                            f"{stats['would_delete_remote']} would delete "
+                            f"  [green]✓[/green] "
+                            f"{stats['created_remote']} created, "
+                            f"{stats['updated_remote']} updated, "
+                            f"{stats['deleted_remote']} deleted "
                             f"(remote)"
                         )
                         console.print(
-                            f"  [yellow]Preview:[/yellow] "
-                            f"{stats['created_local']} would create, "
-                            f"{stats['updated_local']} would update, "
-                            f"{stats['would_delete_local']} would delete "
+                            f"  [green]✓[/green] "
+                            f"{stats['created_local']} created, "
+                            f"{stats['updated_local']} updated, "
+                            f"{stats['deleted_local']} deleted "
                             f"(local)"
                         )
                     else:
                         console.print(f"  [dim]No changes needed ({stats['unchanged']} unchanged)[/dim]")
-                elif any(stats.get(k, 0) > 0 for k in numeric_keys):
-                    console.print(
-                        f"  [green]✓[/green] "
-                        f"{stats['created_remote']} created, "
-                        f"{stats['updated_remote']} updated, "
-                        f"{stats['deleted_remote']} deleted "
-                        f"(remote)"
-                    )
-                    console.print(
-                        f"  [green]✓[/green] "
-                        f"{stats['created_local']} created, "
-                        f"{stats['updated_local']} updated, "
-                        f"{stats['deleted_local']} deleted "
-                        f"(local)"
-                    )
-                else:
-                    console.print(f"  [dim]No changes needed ({stats['unchanged']} unchanged)[/dim]")
 
-                print_pending_notes(stats.get("pending_local_notes"))
+                    print_pending_notes(stats.get("pending_local_notes"))
 
             if total_stats["pending_local_notes"]:
                 pending_count = len(total_stats["pending_local_notes"])

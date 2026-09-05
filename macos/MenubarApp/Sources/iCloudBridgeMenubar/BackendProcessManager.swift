@@ -6,7 +6,7 @@ final class BackendProcessManager {
     private var crashCount = 0
     private var lastCrashTime: Date?
     private let appSupportVenv = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/iCloudBridge/venv")
-    private let appSupportGems = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support/iCloudBridge/gems")
+    // Ruby lives outside Application Support; see RubyRuntime for why.
 
     private let healthURL = URL(string: "http://127.0.0.1:27731/api/health")!
     private let interpreterHealthURL = URL(string: "http://127.0.0.1:27731/api/health/interpreter")!
@@ -183,13 +183,20 @@ final class BackendProcessManager {
             return nil
         }
         let backendSrc = resources.appendingPathComponent("backend_src", isDirectory: true)
-        let env: [String: String] = [
-            "PYTHONPATH": backendSrc.path,
-            "BUNDLE_APP_CONFIG": appSupportGems.appendingPathComponent(".bundle").path,
-            "BUNDLE_PATH": appSupportGems.path,
-            "BUNDLE_WITHOUT": "development test",
-            "ICLOUDBRIDGE_VENV_PYTHON": venvPython.path
-        ]
+        var env: [String: String] = RubyRuntime.environment()
+        env["PYTHONPATH"] = backendSrc.path
+        env["ICLOUDBRIDGE_VENV_PYTHON"] = venvPython.path
+
+        // Name the exact Bundler the installer built, so the backend never
+        // falls through to whichever one Homebrew happens to ship today.
+        if FileManager.default.isExecutableFile(atPath: RubyRuntime.bundleExecutable.path) {
+            env["ICLOUDBRIDGE_BUNDLE_PATH"] = RubyRuntime.bundleExecutable.path
+            if let version = RubyRuntime.pinnedBundlerVersion() {
+                env["ICLOUDBRIDGE_BUNDLER_VERSION"] = version
+            }
+        } else {
+            NSLog("Managed Bundler missing at \(RubyRuntime.bundleExecutable.path); Notes rich capture will fall back to a discovered bundle")
+        }
         let args = ["-m", "icloudbridge.scripts.menubar_backend"]
         return (executable: venvPython, arguments: args, environment: env)
     }

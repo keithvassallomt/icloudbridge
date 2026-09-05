@@ -450,8 +450,15 @@ class MarkdownAdapter:
         base_folder = base_folder.resolve()
 
         for relative_ref, source_path in attachments.items():
-            if not source_path or not source_path.exists():
-                logger.debug("Skipping missing attachment source %s", source_path)
+            # Defensive: a source adapter should hand us only regular files, but
+            # this is the boundary where a bad path becomes an OSError, so it
+            # checks rather than trusts. Directories, broken symlinks and
+            # special files all fail is_file().
+            if not source_path or not source_path.is_file():
+                logger.warning(
+                    "Skipping invalid attachment source %s; expected a regular file",
+                    source_path,
+                )
                 continue
 
             dest_path = self._resolve_attachment_destination(base_folder, relative_ref)
@@ -491,7 +498,13 @@ class MarkdownAdapter:
 
         inlined = markdown
         for ref, file_path in attachment_paths.items():
-            if not file_path.exists():
+            # read_bytes() on a directory raises the same [Errno 21] that
+            # shutil.copy2() does, so this path needs the same guard.
+            if not file_path.is_file():
+                logger.warning(
+                    "Skipping invalid inline attachment source %s; expected a regular file",
+                    file_path,
+                )
                 continue
             mime, _ = mimetypes.guess_type(str(file_path))
             if not mime:

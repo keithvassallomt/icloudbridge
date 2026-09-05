@@ -6,7 +6,7 @@ import logging
 import logging.handlers
 import os
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from icloudbridge.core.config import AppConfig
@@ -156,8 +156,13 @@ def log_subprocess_output(
     *,
     category: str,
     level: str = "DEBUG",
+    on_line: Callable[[str], None] | None = None,
 ) -> None:
-    """Stream a subprocess' stdout/stderr into the logger."""
+    """Stream a subprocess' stdout/stderr into the logger.
+
+    ``on_line`` also receives each non-empty line, so a caller can retain a tail
+    of the output for an error message without reading the pipe twice.
+    """
     levelno, levelname = _parse_level(level)
     if process.stdout is None:
         return
@@ -166,6 +171,8 @@ def log_subprocess_output(
         if not text:
             continue
         logger.log(levelno, text, extra={"log_category": category, "force_level": levelname})
+        if on_line is not None:
+            on_line(text)
 
 
 class WebSocketLogHandler(logging.Handler):

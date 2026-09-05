@@ -593,23 +593,24 @@ class SchedulerManager:
         total_stats["pending_local_notes"] = []
         folder_results: list[dict] = []
 
-        for folder_info in folders:
-            folder = folder_info["name"]
-            try:
-                stats = await engine.sync_folder(
-                    folder_name=folder,
-                    markdown_subfolder=folder,
-                    dry_run=dry_run,
-                    skip_deletions=skip_deletions,
-                    deletion_threshold=deletion_threshold,
-                    sync_mode=sync_mode,
-                )
-                _aggregate_stats(total_stats, stats)
-                folder_results.append({"folder": folder, "status": "success", "stats": stats})
-            except Exception as exc:  # pylint: disable=broad-except
-                total_stats["errors"] += 1
-                folder_results.append({"folder": folder, "status": "error", "error": str(exc)})
-                logger.error("Scheduled notes sync failed for folder %s: %s", folder, exc)
+        async with engine.rich_capture_scope():
+            for folder_info in folders:
+                folder = folder_info["name"]
+                try:
+                    stats = await engine.sync_folder(
+                        folder_name=folder,
+                        markdown_subfolder=folder,
+                        dry_run=dry_run,
+                        skip_deletions=skip_deletions,
+                        deletion_threshold=deletion_threshold,
+                        sync_mode=sync_mode,
+                    )
+                    _aggregate_stats(total_stats, stats)
+                    folder_results.append({"folder": folder, "status": "success", "stats": stats})
+                except Exception as exc:  # pylint: disable=broad-except
+                    total_stats["errors"] += 1
+                    folder_results.append({"folder": folder, "status": "error", "error": str(exc)})
+                    logger.error("Scheduled notes sync failed for folder %s: %s", folder, exc)
 
         total_stats["folder_count"] = len(folder_results)
         total_stats["folder_results"] = folder_results

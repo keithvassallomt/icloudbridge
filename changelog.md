@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.7] - 2026-09-05
+
+### Fixed
+- Apple Notes sync failed for every folder with `Command '[...bundle, exec, ruby...]' returned non-zero exit status 1`. The real error was one line earlier in the debug log: `invalid switch in RUBYOPT: -S`. Ruby was dying at startup, before the ripper ran, so the folder named in each error had nothing to do with it. `bundle exec` starts its child Ruby with a `RUBYOPT` holding the absolute path to Bundler's own `setup` file, and Ruby splits that variable on spaces — so with Bundler installed under `~/Library/Application Support/iCloudBridge`, everything after "Application" was read as command-line switches. iCloudBridge now keeps its Ruby in `~/Library/iCloudBridge/Runtime/Ruby`, where there are no spaces to split on. The old gem folder is rebuilt automatically on first launch and then removed.
+- A single note could fail to sync with `[Errno 21] Is a directory`, taking the whole folder's sync down with it. Some Apple Notes embedded objects have incomplete media metadata and point at your account's `Media` folder rather than at an actual file. iCloudBridge checked only that the path existed, and a folder exists — so it tried to copy a folder as though it were an attachment. Attachments now have to be real files. An embedded object with no file behind it is skipped and noted in the log, and the note syncs with the rest of its attachments intact.
+- Notes sync could run under macOS's own Ruby 2.6 instead of the Homebrew Ruby its gems were built for, failing with `uninitialized constant Gem::Resolver::APISet::GemParser`. iCloudBridge asked for "ruby" and let the system decide which one that meant; launched from the Dock it inherits a minimal search path where that resolves to the Ruby macOS ships, which is far too old for the rest of the toolchain. It now names the interpreter outright. This was previously hidden behind the startup failure above, so it tended to appear only once that was fixed.
+- The setup window could freeze permanently, usually just as the Python and Ruby setup finished, leaving it stuck on whichever step was last on screen. The window updated a piece of its own state from inside a SwiftUI change handler, which re-enters a lock the framework is already holding and is not re-entrant — so the main thread waited on itself forever. It looked like the Ruby install had hung; the install had in fact already completed. The update is now deferred until the framework has finished, so the window keeps up.
+- iCloudBridge could quit outright — taking its menu bar icon with it — when the setup window closed itself after a check, for example right after pressing Refresh. The result of the backend health check arrives on a background thread, and the window was being closed directly from there; macOS terminates an app that touches its interface from anywhere but the main thread. The window is now closed on the main thread as it should be.
+- Notes sync failures now say what actually went wrong. The underlying error from the ripper is included in the message instead of just the exit status, which is what made the failure above look like a problem with a particular Notes folder.
+
+### Changed
+- iCloudBridge now installs and runs the exact Bundler version its `Gemfile.lock` asks for, rather than whichever one Homebrew last left on your Mac. A mismatch used to make Bundler quietly install its own copy into iCloudBridge's gem folder and run from there — which is how the path above ended up in `RUBYOPT` in the first place.
+- A sync across several Notes folders now takes one snapshot of your notes and reuses it, rather than copying the whole Notes container and starting Ruby again for each folder. Six folders meant six full captures, and six copies of the same failure when something was wrong.
+
 ## [0.2.6] - 2026-08-20
 
 ### Fixed

@@ -285,19 +285,16 @@ struct PreflightView: View {
                     get: { essentialsReady ? snapshot.suppressNext : false },
                     set: { value in
                         guard essentialsReady else { return }
-                        onToggleSuppress?(value)
-                        model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: value, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
+                        setSuppress(value)
                     }
                 ))
                 .toggleStyle(.switch)
                 .disabled(!essentialsReady)
                 .onChange(of: essentialsReady) { newValue in
                     if newValue && !snapshot.suppressNext {
-                        onToggleSuppress?(true)
-                        model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: true, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
+                        setSuppress(true)
                     } else if !newValue {
-                        onToggleSuppress?(false)
-                        model.snapshot = PreflightSnapshot(statuses: snapshot.statuses, suppressNext: false, allSatisfied: snapshot.allSatisfied, progress: snapshot.progress, logs: snapshot.logs)
+                        setSuppress(false)
                     }
                 }
 
@@ -310,6 +307,30 @@ struct PreflightView: View {
             .padding(24)
         }
         .frame(minWidth: 900, minHeight: 720)
+    }
+
+    /// Record the suppress choice and republish the snapshot.
+    ///
+    /// The republish is deferred by one runloop turn on purpose. Both callers
+    /// run inside SwiftUI's update dispatch - `.onChange` fires while the
+    /// framework is already publishing this object - and assigning to an
+    /// `@Published` there re-enters `ObservableObjectPublisher`'s lock. That
+    /// lock is an `os_unfair_lock`, which is not recursive, so the main thread
+    /// blocks on itself and the whole window freezes on whatever it last drew.
+    /// `essentialsReady` flips the moment the runtime installs finish, which is
+    /// what made this look like the installer hanging.
+    private func setSuppress(_ value: Bool) {
+        onToggleSuppress?(value)
+        let current = snapshot
+        DispatchQueue.main.async {
+            model.snapshot = PreflightSnapshot(
+                statuses: current.statuses,
+                suppressNext: value,
+                allSatisfied: current.allSatisfied,
+                progress: current.progress,
+                logs: current.logs
+            )
+        }
     }
 
     private var summaryText: String {

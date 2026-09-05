@@ -144,10 +144,24 @@ enum PreflightEvent {
 }
 
 final class Shell {
-    static func run(_ launchPath: String, _ arguments: [String], environment: [String: String] = [:]) -> ShellResult {
+    /// Run a command, capturing stdout+stderr.
+    ///
+    /// `timeout` is a backstop, not a schedule: a child that outlives it is
+    /// killed and the partial output returned. Without it, one wedged
+    /// subprocess strands the installer's serial queue forever, and the setup
+    /// window sits on whatever message it last drew with no way to recover.
+    static func run(
+        _ launchPath: String,
+        _ arguments: [String],
+        environment: [String: String] = [:],
+        timeout: TimeInterval = 3600
+    ) -> ShellResult {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: launchPath)
         task.arguments = arguments
+        // Nothing here is interactive; give every child an immediate EOF so it
+        // can never block waiting on input that will never arrive.
+        task.standardInput = FileHandle.nullDevice
         var env = ProcessInfo.processInfo.environment
         environment.forEach { env[$0.key] = $0.value }
         task.environment = env
@@ -156,14 +170,60 @@ final class Shell {
         task.standardOutput = pipe
         task.standardError = pipe
 
+        // Drain the pipe while the child runs, not after it exits. A pipe holds
+        // about 64KB; once it fills, the child blocks writing and we block in
+        // waitUntilExit(), and neither side ever moves again. `pip install` and
+        // `bundle install` both produce far more than that, so reading after
+        // waiting deadlocks the installer with no output and no error.
+        var collected = Data()
+        let lock = NSLock()
+        let drained = DispatchSemaphore(value: 0)
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            if chunk.isEmpty {
+                handle.readabilityHandler = nil
+                drained.signal()
+                return
+            }
+            lock.lock()
+            collected.append(chunk)
+            lock.unlock()
+        }
+
         do {
             try task.run()
         } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
             return ShellResult(status: -1, output: "Failed to start: \(error.localizedDescription)")
         }
-        task.waitUntilExit()
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let output = String(data: data, encoding: .utf8) ?? ""
+        // Enforce the timeout without blocking on waitUntilExit(), which cannot
+        // be interrupted once entered.
+        let exited = DispatchSemaphore(value: 0)
+        task.terminationHandler = { _ in exited.signal() }
+
+        var timedOut = false
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            timedOut = true
+            task.terminate()                                  // SIGTERM
+            if exited.wait(timeout: .now() + 10) == .timedOut {
+                kill(task.processIdentifier, SIGKILL)
+                _ = exited.wait(timeout: .now() + 10)
+            }
+        }
+
+        // Wait for EOF so no trailing output is lost, but don't hang forever if
+        // a grandchild inherited the write end and is still holding it open.
+        if drained.wait(timeout: .now() + 5) == .timedOut {
+            pipe.fileHandleForReading.readabilityHandler = nil
+        }
+
+        lock.lock()
+        var output = String(data: collected, encoding: .utf8) ?? ""
+        lock.unlock()
+        if timedOut {
+            output += "\n[timed out after \(Int(timeout))s and was killed]"
+            return ShellResult(status: -2, output: output)
+        }
         return ShellResult(status: task.terminationStatus, output: output)
     }
 }

@@ -15,6 +15,8 @@ enum RuntimeInstallerError: Error, LocalizedError {
     case gemfileMissing
     case pipFailed(String)
     case bundleFailed(String)
+    case bundlerInstallFailed(String)
+    case bundlerVersionUnknown
 
     var errorDescription: String? {
         switch self {
@@ -30,6 +32,10 @@ enum RuntimeInstallerError: Error, LocalizedError {
             return "pip install failed: \(msg)"
         case .bundleFailed(let msg):
             return "bundle install failed: \(msg)"
+        case .bundlerInstallFailed(let msg):
+            return "Could not install the pinned Bundler: \(msg)"
+        case .bundlerVersionUnknown:
+            return "Gemfile.lock has no BUNDLED WITH version"
         }
     }
 }
@@ -47,22 +53,73 @@ final class RuntimeInstaller {
         return url
     }()
 
+    /// Managed Ruby runtime root.
+    ///
+    /// Deliberately NOT under "Application Support": `bundle exec` hands the
+    /// child Ruby its own `RUBYOPT=-r<abs path>/bundler/setup`, and Ruby splits
+    /// that value on whitespace. A space anywhere in the Bundler path makes the
+    /// remainder parse as switches - "Application Support/..." surfaces as
+    /// `invalid switch in RUBYOPT: -S` before any script runs.
+    private let rubyRuntimeBase: URL = {
+        let url = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(RubyRuntime.relativeRoot, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }()
+
     var pythonState = RuntimeInstallState(progress: 0, message: "Pending", isRunning: false, succeeded: false)
     var rubyState = RuntimeInstallState(progress: 0, message: "Pending", isRunning: false, succeeded: false)
+
+    // `pythonState`/`rubyState` are published to the UI on the main thread, so
+    // they flip to isRunning only *after* the work has already been queued.
+    // Callers poll those flags to decide whether to start an install, and would
+    // otherwise queue the same install several times before the first one is
+    // visibly running - each redundant pass resetting the progress message and
+    // making a finished install look like it had started over.
+    private let dispatchLock = NSLock()
+    private var pythonQueued = false
+    private var rubyQueued = false
 
     var onProgress: (() -> Void)?
 
     // MARK: Public API
 
     func ensurePython(from resources: URL) {
+        dispatchLock.lock()
+        if pythonQueued {
+            dispatchLock.unlock()
+            return
+        }
+        pythonQueued = true
+        dispatchLock.unlock()
+
         queue.async { [weak self] in
-            self?.installPythonIfNeeded(resources: resources)
+            guard let self else { return }
+            defer {
+                self.dispatchLock.lock()
+                self.pythonQueued = false
+                self.dispatchLock.unlock()
+            }
+            self.installPythonIfNeeded(resources: resources)
         }
     }
 
     func ensureRuby(from resources: URL) {
+        dispatchLock.lock()
+        if rubyQueued {
+            dispatchLock.unlock()
+            return
+        }
+        rubyQueued = true
+        dispatchLock.unlock()
+
         queue.async { [weak self] in
-            self?.installRubyIfNeeded(resources: resources)
+            guard let self else { return }
+            defer {
+                self.dispatchLock.lock()
+                self.rubyQueued = false
+                self.dispatchLock.unlock()
+            }
+            self.installRubyIfNeeded(resources: resources)
         }
     }
 
@@ -156,28 +213,94 @@ final class RuntimeInstaller {
             return
         }
 
-        let gemHome = appSupportBase.appendingPathComponent("gems", isDirectory: true)
-        let marker = gemHome.appendingPathComponent(".fingerprint")
-        let cacheKey = (try? String(contentsOf: gemlock)) ?? ""
+        guard let bundlerVersion = RubyRuntime.bundledWithVersion(lockfile: gemlock) else {
+            updateRuby(message: RuntimeInstallerError.bundlerVersionUnknown.localizedDescription, running: false, succeeded: false)
+            return
+        }
 
-        if fm.fileExists(atPath: marker.path), let existing = try? String(contentsOf: marker), existing == cacheKey {
+        let gemHome = RubyRuntime.gemHome
+        let binDir = RubyRuntime.binDir
+        let bundleExe = RubyRuntime.bundleExecutable
+        let marker = RubyRuntime.fingerprintFile
+
+        let rubyVersion = Shell.run(brewRuby.path, ["--version"]).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cacheKey = rubyRuntimeFingerprint(
+            lockfile: gemlock,
+            rubyVersion: rubyVersion,
+            interpreter: resolvedInterpreter(brewRuby),
+            bundlerVersion: bundlerVersion
+        )
+
+        if fm.isExecutableFile(atPath: bundleExe.path),
+           let existing = try? String(contentsOf: marker), existing == cacheKey {
+            // Retry the legacy cleanup here too: the tree is only removed once
+            // the new runtime works, and that removal can fail transiently.
+            removeLegacyGemTree(log: logFile(named: "ruby-install.log"))
             updateRuby(progress: 1.0, message: "Ruby bundle ready", running: false, succeeded: true)
             return
         }
 
-        try? fm.createDirectory(at: gemHome, withIntermediateDirectories: true)
-        let env = [
-            "BUNDLE_APP_CONFIG": gemHome.appendingPathComponent(".bundle").path,
-            "BUNDLE_PATH": gemHome.path,
-            "BUNDLE_WITHOUT": "development test",
-            "BUNDLE_DEPLOYMENT": "true"
-        ]
         let rubyLog = logFile(named: "ruby-install.log")
         resetLog(at: rubyLog)
-        updateRuby(progress: 0.4, message: "Installing Ruby gems", running: true, succeeded: false)
+
+        // The whole point of the v2 layout. Assert it rather than trusting it -
+        // a future refactor that moves the root back under a path with a space
+        // would otherwise reintroduce the RUBYOPT failure silently.
+        guard RubyRuntime.isWhitespaceFree(rubyRuntimeBase) else {
+            let msg = "Ruby runtime path contains whitespace: \(rubyRuntimeBase.path)"
+            appendLog(msg, to: rubyLog)
+            updateRuby(message: msg, running: false, succeeded: false, log: rubyLog)
+            return
+        }
+
+        // Wipe only when the tree was built somewhere else or against a
+        // different interpreter. Gem installs carry wrappers and cached paths
+        // tied to where they were built, so those cases need a clean rebuild -
+        // but a smoke-test failure leaves a perfectly good tree behind, and
+        // deleting tens of thousands of files just to reinstall the same gems
+        // turns every retry into a multi-minute native rebuild.
+        let layoutKey = [RubyRuntime.schemaVersion, rubyRuntimeBase.path, resolvedInterpreter(brewRuby)]
+            .joined(separator: "|")
+        let existingLayout = try? String(contentsOf: RubyRuntime.layoutFile)
+        if existingLayout != layoutKey, fm.fileExists(atPath: gemHome.path) {
+            updateRuby(progress: 0.1, message: "Cleaning previous Ruby runtime", running: true, succeeded: false)
+            appendLog("layout changed; rebuilding gem tree from scratch\n", to: rubyLog)
+            try? fm.removeItem(at: gemHome)
+            try? fm.removeItem(at: binDir)
+        }
+        try? fm.removeItem(at: marker)
+        try? fm.removeItem(at: RubyRuntime.bundlerVersionFile)
+        try? fm.createDirectory(at: gemHome, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: binDir, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: RubyRuntime.bundleConfig, withIntermediateDirectories: true)
+        try? layoutKey.write(to: RubyRuntime.layoutFile, atomically: true, encoding: .utf8)
+
+        var env = RubyRuntime.environment()
+        env["BUNDLE_DEPLOYMENT"] = "true"
+
+        updateRuby(progress: 0.25, message: "Installing Bundler \(bundlerVersion)", running: true, succeeded: false)
+        // Address `gem` directly rather than via `ruby -S`, which searches PATH -
+        // and a GUI-launched app's PATH need not contain Homebrew's Ruby.
+        let brewGem = brewRuby.deletingLastPathComponent().appendingPathComponent("gem")
+        let bundlerResult = Shell.run(
+            brewGem.path,
+            ["install", "bundler",
+             "-v", bundlerVersion,
+             "--no-document",
+             "--install-dir", gemHome.path,
+             "--bindir", binDir.path],
+            environment: env
+        )
+        appendLog(bundlerResult.output, to: rubyLog)
+        guard bundlerResult.status == 0, fm.isExecutableFile(atPath: bundleExe.path) else {
+            updateRuby(message: RuntimeInstallerError.bundlerInstallFailed(bundlerResult.output).localizedDescription, running: false, succeeded: false, log: rubyLog)
+            return
+        }
+
+        updateRuby(progress: 0.5, message: "Installing Ruby gems (this can take a few minutes)", running: true, succeeded: false)
         let result = Shell.run(
-            brewRuby.path,
-            ["-S", "bundle", "install", "--gemfile", gemfile.path],
+            bundleExe.path,
+            ["_\(bundlerVersion)_", "install", "--gemfile", gemfile.path],
             environment: env
         )
         appendLog(result.output, to: rubyLog)
@@ -186,8 +309,29 @@ final class RuntimeInstaller {
             return
         }
 
+        try? bundlerVersion.write(to: RubyRuntime.bundlerVersionFile, atomically: true, encoding: .utf8)
         try? cacheKey.write(to: marker, atomically: true, encoding: .utf8)
+        removeLegacyGemTree(log: rubyLog)
         updateRuby(progress: 1.0, message: "Ruby bundle ready", running: false, succeeded: true, log: rubyLog)
+    }
+
+    /// Drop the pre-v2 gem tree once the new runtime has proven itself.
+    private func removeLegacyGemTree(log: URL) {
+        let legacy = RubyRuntime.legacyGemHome
+        guard fm.fileExists(atPath: legacy.path) else { return }
+        do {
+            try fm.removeItem(at: legacy)
+            appendLog("removed legacy gem tree at \(legacy.path)\n", to: log)
+        } catch {
+            // Non-fatal: the new runtime is already live and in use.
+            appendLog("could not remove legacy gem tree: \(error.localizedDescription)\n", to: log)
+        }
+    }
+
+    private func summarise(_ output: String) -> String {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = trimmed.split(whereSeparator: { $0.isNewline })
+        return lines.suffix(5).joined(separator: "\n")
     }
 
     private func updatePython(progress: Double? = nil, message: String, running: Bool, succeeded: Bool, log: URL? = nil) {
@@ -223,6 +367,24 @@ final class RuntimeInstaller {
         // keys TCC permissions on - so the version string alone would let a venv
         // survive an upgrade that silently stripped its permissions.
         return pythonVersion + "|" + interpreter + "|" + reqContents + "|" + pyprojectContents
+    }
+
+    /// Fingerprint for the managed Ruby runtime.
+    ///
+    /// Wider than the lockfile alone: a `brew upgrade` can move the Ruby binary
+    /// without changing `ruby --version`, and the gem tree is built against a
+    /// specific interpreter. The schema version forces the rebuild that moves
+    /// existing installs off the old Application Support path.
+    private func rubyRuntimeFingerprint(lockfile: URL, rubyVersion: String, interpreter: String, bundlerVersion: String) -> String {
+        let lockContents = (try? String(contentsOf: lockfile)) ?? ""
+        return [
+            RubyRuntime.schemaVersion,
+            rubyRuntimeBase.path,
+            interpreter,
+            rubyVersion,
+            bundlerVersion,
+            lockContents
+        ].joined(separator: "|")
     }
 
     /// The real path of the interpreter behind a Homebrew symlink.

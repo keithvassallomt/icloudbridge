@@ -265,39 +265,40 @@ async def sync_notes(
                 }
                 folder_results = []
 
-                for folder_info in folders:
-                    folder_name = folder_info["name"]
-                    try:
-                        folder_result = await engine.sync_folder(
-                            folder_name=folder_name,
-                            markdown_subfolder=folder_name,
-                            dry_run=request.dry_run,
-                            skip_deletions=request.skip_deletions,
-                            deletion_threshold=request.deletion_threshold,
-                            sync_mode=request.mode,
-                        )
+                async with engine.rich_capture_scope():
+                    for folder_info in folders:
+                        folder_name = folder_info["name"]
+                        try:
+                            folder_result = await engine.sync_folder(
+                                folder_name=folder_name,
+                                markdown_subfolder=folder_name,
+                                dry_run=request.dry_run,
+                                skip_deletions=request.skip_deletions,
+                                deletion_threshold=request.deletion_threshold,
+                                sync_mode=request.mode,
+                            )
 
-                        # Aggregate statistics
-                        total_stats["created"] += folder_result.get("created", 0)
-                        total_stats["updated"] += folder_result.get("updated", 0)
-                        total_stats["deleted"] += folder_result.get("deleted", 0)
-                        total_stats["unchanged"] += folder_result.get("unchanged", 0)
-                        if folder_result.get("pending_local_notes"):
-                            total_stats["pending_local_notes"].extend(folder_result["pending_local_notes"])
+                            # Aggregate statistics
+                            total_stats["created"] += folder_result.get("created", 0)
+                            total_stats["updated"] += folder_result.get("updated", 0)
+                            total_stats["deleted"] += folder_result.get("deleted", 0)
+                            total_stats["unchanged"] += folder_result.get("unchanged", 0)
+                            if folder_result.get("pending_local_notes"):
+                                total_stats["pending_local_notes"].extend(folder_result["pending_local_notes"])
 
-                        folder_results.append({
-                            "folder": folder_name,
-                            "status": "success",
-                            "stats": folder_result
-                        })
-                    except Exception as e:
-                        total_stats["errors"] += 1
-                        folder_results.append({
-                            "folder": folder_name,
-                            "status": "error",
-                            "error": str(e)
-                        })
-                        logger.error(f"Failed to sync folder {folder_name}: {e}")
+                            folder_results.append({
+                                "folder": folder_name,
+                                "status": "success",
+                                "stats": folder_result
+                            })
+                        except Exception as e:
+                            total_stats["errors"] += 1
+                            folder_results.append({
+                                "folder": folder_name,
+                                "status": "error",
+                                "error": str(e)
+                            })
+                            logger.error(f"Failed to sync folder {folder_name}: {e}")
 
                 # Create aggregated result for automatic mode
                 result = total_stats.copy()

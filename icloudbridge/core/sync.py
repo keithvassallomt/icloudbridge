@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import contextlib
 import logging
 import mimetypes
 import os
@@ -74,6 +75,8 @@ class NotesSyncEngine:
         self.use_shortcut_pipeline = prefer_shortcuts
         self.db = NotesDB(db_path)
         self._temp_attachment_files: set[Path] = set()
+        # True while a rich_capture_scope is open; see that method.
+        self._rich_capture_scoped = False
 
     async def initialize(self) -> None:
         """
@@ -147,6 +150,28 @@ class NotesSyncEngine:
         except Exception as e:
             logger.error(f"Failed to migrate root notes: {e}")
             raise RuntimeError(f"Failed to migrate root notes: {e}") from e
+
+    @contextlib.asynccontextmanager
+    async def rich_capture_scope(self):
+        """Capture the Apple Notes snapshot once for a whole sync operation.
+
+        The ripper copies the entire Notes container and starts a Ruby process,
+        so doing it per folder made a six-folder sync pay that cost six times -
+        and, when the runtime was broken, report the same startup failure once
+        per folder as if each folder were individually at fault.
+
+        Inside the scope `sync_folder` reuses the snapshot instead of retaking
+        it. Mid-sync invalidations (`clear_rich_cache` after a Shortcuts write)
+        still force a fresh capture, so writes stay visible.
+        """
+        outermost = not self._rich_capture_scoped
+        self._rich_capture_scoped = True
+        try:
+            yield
+        finally:
+            if outermost:
+                self._rich_capture_scoped = False
+                self.notes_adapter.clear_rich_cache(cleanup_workspace=True)
 
     async def sync_folder(
         self,
@@ -239,7 +264,12 @@ class NotesSyncEngine:
 
             # Step 1: Fetch all notes from Apple Notes
             logger.debug(f"Fetching notes from Apple Notes folder: {folder_name}")
-            await self.notes_adapter.refresh_rich_cache()
+            if self._rich_capture_scoped:
+                # Reuse this operation's snapshot; only capture if absent or
+                # invalidated by a write earlier in the run.
+                await self.notes_adapter.ensure_rich_cache()
+            else:
+                await self.notes_adapter.refresh_rich_cache()
             apple_notes = await self.notes_adapter.get_notes(folder_name)
             logger.info(f"Found {len(apple_notes)} notes in Apple Notes")
 
@@ -724,7 +754,10 @@ class NotesSyncEngine:
             logger.exception("Sync failed for folder %s", folder_name)
             raise RuntimeError(f"Sync failed for folder '{folder_name}': {e}") from e
         finally:
-            self.notes_adapter.clear_rich_cache(cleanup_workspace=True)
+            # Within a scope the snapshot outlives this folder; the scope owner
+            # tears it down once the whole operation is finished.
+            if not self._rich_capture_scoped:
+                self.notes_adapter.clear_rich_cache(cleanup_workspace=True)
 
     async def _push_to_remote(
         self,
@@ -1097,7 +1130,28 @@ class NotesSyncEngine:
         logger.info(f"Starting selective sync with {len(folder_mappings)} folder mapping(s)")
         results: dict[str, dict[str, int]] = {}
 
-        # Step 1: Sync each mapped folder
+        async with self.rich_capture_scope():
+            await self._sync_mapped_folders(
+                folder_mappings,
+                results,
+                dry_run=dry_run,
+                skip_deletions=skip_deletions,
+                deletion_threshold=deletion_threshold,
+            )
+
+        logger.info(f"Selective sync complete. Processed {len(results)} folder(s)")
+        return results
+
+    async def _sync_mapped_folders(
+        self,
+        folder_mappings: dict,
+        results: dict[str, dict[str, int]],
+        *,
+        dry_run: bool,
+        skip_deletions: bool,
+        deletion_threshold: int,
+    ) -> None:
+        """Sync each mapped folder, recording per-folder stats or errors."""
         for apple_folder, mapping_config in folder_mappings.items():
             if not mapping_config:
                 logger.info(f"Skipping excluded folder: {apple_folder}")
@@ -1147,9 +1201,6 @@ class NotesSyncEngine:
             except Exception as e:
                 logger.error(f"Failed to sync folder '{apple_folder}': {e}")
                 results[apple_folder] = {"error": str(e)}
-
-        logger.info(f"Selective sync complete. Processed {len(results)} folder(s)")
-        return results
 
     async def list_folders(self) -> list[dict]:
         """
