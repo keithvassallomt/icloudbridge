@@ -690,7 +690,7 @@ export default function Photos() {
             <AlertTriangle className="h-4 w-4" />
             <AlertTitle>Disable NextCloud Auto-Upload</AlertTitle>
             <AlertDescription>
-              When using bidirectional sync, disable auto-upload from the NextCloud mobile app to avoid duplicates.
+              When using bidirectional sync, disable auto-upload from the NextCloud iOS mobile app to avoid duplicates.
             </AlertDescription>
           </Alert>
         )}

@@ -9,6 +9,16 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Default ceiling for a single `osascript` invocation. Photos can legitimately
+# be slow (cloud originals are downloaded on demand), but without a bound a
+# pathological query blocks the sync forever rather than failing the batch.
+DEFAULT_SCRIPT_TIMEOUT = 1800.0
+
+# Importing into Photos copies every file into the library, so a large album
+# batch is legitimately slower than a query. Kept generous so the bound only
+# catches a genuine hang, not a big-but-healthy import.
+IMPORT_SCRIPT_TIMEOUT = 3600.0
+
 
 LIST_ALBUMS_SCRIPT = """
 tell application "Photos"
@@ -165,7 +175,9 @@ class PhotosAppleScriptAdapter:
         if not manifest.exists():
             raise FileNotFoundError(f"Manifest not found: {manifest}")
 
-        result = await self._run_script(IMPORT_SCRIPT, str(manifest), album_name)
+        result = await self._run_script(
+            IMPORT_SCRIPT, str(manifest), album_name, timeout=IMPORT_SCRIPT_TIMEOUT
+        )
 
         # Parse comma-separated list of identifiers
         if not result:
@@ -178,7 +190,10 @@ class PhotosAppleScriptAdapter:
         return result.strip() == "1"
 
     async def export_by_filenames(
-        self, filenames: list[str], dest_folder: Path
+        self,
+        filenames: list[str],
+        dest_folder: Path,
+        timeout: float | None = DEFAULT_SCRIPT_TIMEOUT,
     ) -> int:
         """Export photos by filename to a destination folder.
 
@@ -186,8 +201,16 @@ class PhotosAppleScriptAdapter:
         iCloud Shared Library) before exporting. This is the fallback for
         photos whose originals aren't available on disk.
 
+        Each `whose filename is ...` lookup is a full library scan, so the
+        manifest is deduplicated: a repeated filename returns the same media
+        items anyway, and querying it twice only doubles the cost.
+
         Returns:
             Number of items exported.
+
+        Raises:
+            TimeoutError: if Photos exceeds `timeout`.
+            RuntimeError: if the AppleScript itself fails.
         """
         if not filenames:
             return 0
@@ -196,21 +219,30 @@ class PhotosAppleScriptAdapter:
 
         dest_folder.mkdir(parents=True, exist_ok=True)
 
+        # Deduplicate while preserving order.
+        unique_names = list(dict.fromkeys(n for n in filenames if n))
+        if len(unique_names) != len(filenames):
+            logger.debug(
+                "Cloud export manifest: %d requested -> %d unique filenames",
+                len(filenames),
+                len(unique_names),
+            )
+
         # Write filenames to a manifest
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".txt", delete=False, prefix="icloudbridge_export_"
         ) as f:
-            f.write("\n".join(filenames))
+            f.write("\n".join(unique_names))
             manifest_path = f.name
 
         try:
             result = await self._run_script(
-                EXPORT_BY_FILENAMES_SCRIPT, manifest_path, str(dest_folder)
+                EXPORT_BY_FILENAMES_SCRIPT,
+                manifest_path,
+                str(dest_folder),
+                timeout=timeout,
             )
             return int(result.strip()) if result.strip().isdigit() else 0
-        except RuntimeError:
-            logger.warning("AppleScript export failed for %d items", len(filenames))
-            return 0
         finally:
             Path(manifest_path).unlink(missing_ok=True)
 
@@ -233,8 +265,16 @@ class PhotosAppleScriptAdapter:
 
         return {name: name in library_names for name in filenames}
 
-    async def _run_script(self, script: str, *args: str) -> str:
-        """Execute an AppleScript snippet via `osascript`."""
+    async def _run_script(
+        self, script: str, *args: str, timeout: float | None = DEFAULT_SCRIPT_TIMEOUT
+    ) -> str:
+        """Execute an AppleScript snippet via `osascript`.
+
+        Raises:
+            TimeoutError: if the script exceeds `timeout` seconds. The
+                `osascript` process is killed so it cannot outlive the sync.
+            RuntimeError: if osascript exits non-zero.
+        """
         cmd = ["osascript", "-"]
         cmd.extend(args)
 
@@ -244,7 +284,21 @@ class PhotosAppleScriptAdapter:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate(script.encode("utf-8"))
+
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(script.encode("utf-8")), timeout=timeout
+            )
+        except asyncio.TimeoutError:
+            # Photos may still be churning; kill it so the next batch can run.
+            process.kill()
+            try:
+                await process.wait()
+            except ProcessLookupError:
+                pass
+            raise TimeoutError(
+                f"AppleScript timed out after {timeout:.0f}s"
+            ) from None
 
         if process.returncode != 0:
             error = stderr.decode().strip()

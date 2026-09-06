@@ -86,7 +86,7 @@ To enable photo export (Apple Photos → Nextcloud), you first need to configure
 > [!IMPORTANT]
 > **Disable NextCloud Mobile Auto-Upload**
 >
-> When using bidirectional sync, you must **disable auto-upload** of media from the NextCloud mobile app. Failing to do so will result in duplicate photos! iCloudBridge will handle exporting your Apple Photos to NextCloud - the mobile app's auto-upload is no longer needed.
+> When using bidirectional sync, you must **disable auto-upload** of media from the NextCloud iOS mobile app. Failing to do so will result in duplicate photos! iCloudBridge will handle exporting your Apple Photos to NextCloud - the mobile app's auto-upload is no longer needed.
 
 The export folder is automatically set to the same folder as your import source. This creates a true bidirectional sync: photos flow in both directions through the same local folder, with NextCloud desktop app handling the cloud synchronization.
 

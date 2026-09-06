@@ -1660,7 +1660,7 @@ export default function Settings() {
                       <AlertTitle>Disable NextCloud Auto-Upload</AlertTitle>
                       <AlertDescription>
                         When using bidirectional sync, please <strong>disable auto-upload</strong> of media
-                        from the NextCloud mobile app. Failing to do so will result in duplicate photos!
+                        from the NextCloud iOS mobile app. Failing to do so will result in duplicate photos!
                         iCloudBridge will handle exporting your Apple Photos to NextCloud - the mobile
                         app's auto-upload is no longer needed.
                       </AlertDescription>
