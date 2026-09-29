@@ -76,23 +76,41 @@ Besides the bidirectional sync, you can also do an Export (i.e. Apple Passwords 
 
 If you keep your verification codes in Ente Auth, iCloudBridge can work out which Apple Passwords login each one belongs to. Apple Passwords doesn't let apps add a verification code to a login, so you still add each code yourself, but you get a checklist with the setup key for every login.
 
-Open **Verification codes from Ente Auth** at the bottom of the Passwords page, then:
+> [!NOTE]
+> This doesn't sync your codes. It's a one-off: if you add codes to Ente Auth later, export both files again and run it again.
 
-1. In Ente Auth, open Settings > Data > Export codes and choose Plain text.
-2. In Apple Passwords, choose File > Export All Passwords to File.
-3. Upload both files and choose Preview.
-4. For each matched login, open it in Apple Passwords, choose Edit > Set Up Verification Code > Enter Setup Key, and paste the setup key. You can scan the QR code instead.
+First, export your codes from Ente Auth: open Settings > Data > Export codes and choose Plain text. Then export your passwords from Apple Passwords with File > Export All Passwords to File..., just like for a sync.
+
+> [!NOTE]
+> An encrypted Ente export can't be read. Decrypt it first with `ente auth decrypt <export_file> <output_file>`, then upload the plain-text file.
+
+Next, open **Verification codes from Ente Auth** at the bottom of the Passwords page. It only shows when "Enable Passwords Sync" is on in Settings. Click "Apple Passwords CSV" and choose your Apple Passwords export, click "Ente Auth export" and choose your Ente export, then click "Preview".
+
+![Ente Auth verification codes](images/docs_passwords_10.png)
+
+iCloudBridge lists every Apple login it found a code for:
+
+![Ente Auth codes matched to Apple logins](images/docs_passwords_11.png)
+
+For each one, open the login in Apple Passwords and choose Edit > Set Up Verification Code > Enter Setup Key. Click "Copy setup key" in iCloudBridge and paste it in. If you'd rather scan, click "Show QR" and scan the code with Apple Passwords on your iPhone. Tick each login off as you go. The ticks aren't saved, so they're gone if you leave the page.
+
+Two kinds of login need a closer look:
+
+- **A warning about the username**: the login was matched on the service name alone, and Ente has the code for a different account name. Check it's the same account before you add the code. Above, Ente has the Dropbox code for "Ada Lovelace", but the login's username is an email address.
+- **QR code only**: the code uses settings other than 6 digits every 30 seconds, such as 8 digits. A setup key on its own doesn't carry those settings and would give the wrong codes, so scan the QR code instead.
+
+Below the list are the codes that aren't in the checklist. Click a heading to see them.
+
+![Ente Auth codes not in the checklist](images/docs_passwords_12.png)
+
+- **Needs a choice**: more than one login could fit the code, so nothing is chosen for you. Add it from Ente Auth to the right login yourself.
+- **Already set**: the login already has this code.
+- **Different code already saved**: the login already has a different code, and iCloudBridge leaves it alone.
+- **No matching login**: there's no login for this code in Apple Passwords. Apple Passwords can only add a code to an existing login.
+- **Skipped in Ente**: codes you've trashed in Ente Auth, and HOTP and Steam codes, which Apple Passwords doesn't support.
 
 > [!WARNING]
 > When you're done, delete both export files. Between them they hold every password and verification code in plain text. iCloudBridge doesn't keep a copy of either.
-
-Check any login marked with a warning before you add its code. It was matched on the service name alone, and Ente has the code for a different account name, so it may belong to another account.
-
-Some codes use settings other than 6 digits every 30 seconds, such as 8 digits. These only show a QR code, because a setup key on its own doesn't carry those settings and would give the wrong codes.
-
-An encrypted Ente export can't be read. Decrypt it first with `ente auth decrypt <export_file> <output_file>`, then upload the plain-text file.
-
-Trashed codes, HOTP codes and Steam codes are listed as skipped. A login that already has a different verification code is listed and left unchanged. When more than one login could fit a code, nothing is chosen for you.
 
 ---
 
