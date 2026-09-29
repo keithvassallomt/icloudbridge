@@ -27,6 +27,7 @@ import type {
   APIError,
   PasswordsSyncResponse,
   PasswordsStatus,
+  EnteOtpPreview,
   LogLevelResponse,
 } from '../types/api';
 
@@ -435,6 +436,20 @@ class APIClient {
           simulate: options?.simulate ?? false,
           bulk: options?.bulk ?? true,
         },
+      });
+      return data;
+    } catch (error) {
+      return this.handleError(error);
+    }
+  }
+
+  async passwordsEntePreview(appleFile: File, enteFile: File): Promise<EnteOtpPreview> {
+    try {
+      const formData = new FormData();
+      formData.append('apple_file', appleFile);
+      formData.append('ente_file', enteFile);
+      const { data } = await this.client.post<EnteOtpPreview>('/passwords/otp/ente/preview', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
       return data;
     } catch (error) {

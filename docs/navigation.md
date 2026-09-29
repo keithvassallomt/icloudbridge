@@ -19,7 +19,7 @@ To change settings and configure synchronisation options, use one of the navigat
 
 - [**Reminders**](reminders.md): Manage Apple Reminders synchronisation. Similar to the Notes page, you can select which reminder lists to sync, adjust list/calendar mappings, simulate syncs or trigger a manual sync.
 
-- [**Passwords**](passwords.md): Manage Apple Passwords synchronisation. Here, you can manually perform a bidirectional synchronisation, or you can export/import passwords to/from your chosen service.
+- [**Passwords**](passwords.md): Manage Apple Passwords synchronisation. Here, you can manually perform a bidirectional synchronisation, export/import passwords to/from your chosen service, or match Ente Auth verification codes onto existing Apple logins.
 
 - [**Photos**](photos.md): Manage Apple Photos synchronisation. This page allows you to view sync status, simulate syncs or trigger manual syncs.
 

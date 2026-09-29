@@ -215,6 +215,48 @@ export interface PasswordsSyncResponse {
   download?: PasswordsDownloadInfo;
 }
 
+export interface EnteOtpLoginRef {
+  title: string;
+  username: string;
+}
+
+export interface EnteOtpMatch {
+  issuer: string;
+  account: string;
+  title: string;
+  username: string;
+  setup_key: string;
+  otpauth_uri: string;
+}
+
+export interface EnteOtpAmbiguous {
+  issuer: string;
+  account: string;
+  candidates: EnteOtpLoginRef[];
+}
+
+export interface EnteOtpNamed {
+  issuer: string;
+  account: string;
+  title?: string;
+  username?: string;
+}
+
+export interface EnteOtpSkipped {
+  label: string;
+  reason: string;
+}
+
+export interface EnteOtpPreview {
+  status: string;
+  matched: EnteOtpMatch[];
+  ambiguous: EnteOtpAmbiguous[];
+  unmatched: EnteOtpNamed[];
+  already_set: EnteOtpNamed[];
+  conflict: EnteOtpNamed[];
+  skipped: EnteOtpSkipped[];
+}
+
 export interface PasswordsStatus {
   enabled: boolean;
   provider: 'vaultwarden' | 'nextcloud';

@@ -13,6 +13,9 @@ from fastapi.responses import FileResponse
 from icloudbridge.api.dependencies import ConfigDep, PasswordsDBDep, PasswordsSyncEngineDep
 from icloudbridge.api.downloads import download_manager
 from icloudbridge.api.models import NextcloudCredentialRequest, VaultwardenCredentialRequest
+from icloudbridge.core.otp_matcher import build_preview
+from icloudbridge.sources.passwords.apple_csv import ApplePasswordsCSVParser
+from icloudbridge.sources.passwords.ente_auth import EnteAuthParser
 from icloudbridge.sources.passwords.providers import NextcloudPasswordsProvider, VaultwardenProvider
 from icloudbridge.sources.passwords.vaultwarden_api import VaultwardenAPIClient
 from icloudbridge.utils.credentials import CredentialStore
@@ -439,6 +442,57 @@ async def import_passwords(
         log_sync_type=None,
         bulk_push=True,
     )
+
+
+@router.post("/otp/ente/preview")
+async def preview_ente_otp(
+    apple_file: UploadFile = File(...),
+    ente_file: UploadFile = File(...),
+):
+    """Match Ente Auth codes onto existing Apple Passwords logins.
+
+    Apple Passwords does not change a login that already exists when a CSV is
+    imported, so this returns setup keys for those logins and does not build
+    an import file.
+    """
+
+    apple_path: Path | None = None
+    ente_path: Path | None = None
+    try:
+        apple_path = await _save_uploaded_csv(apple_file)
+        ente_path = await _save_uploaded_csv(ente_file)
+        entries = ApplePasswordsCSVParser.parse_file(apple_path)
+        try:
+            ente_text = ente_path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Ente Auth export must be a UTF-8 text file.",
+            ) from exc
+        parsed = EnteAuthParser.parse_text(ente_text)
+        preview = build_preview(parsed, entries)
+        logger.info(
+            "Ente OTP preview: matched=%s ambiguous=%s unmatched=%s "
+            "already_set=%s conflict=%s skipped=%s",
+            len(preview["matched"]),
+            len(preview["ambiguous"]),
+            len(preview["unmatched"]),
+            len(preview["already_set"]),
+            len(preview["conflict"]),
+            len(preview["skipped"]),
+        )
+        return {"status": "success", **preview}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    finally:
+        if apple_path:
+            apple_path.unlink(missing_ok=True)
+        if ente_path:
+            ente_path.unlink(missing_ok=True)
 
 
 @router.get("/download/{token}")

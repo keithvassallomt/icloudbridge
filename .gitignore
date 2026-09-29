@@ -73,3 +73,8 @@ logs/
 # Dependencies / Libraries
 **/node_modules
 tools/notes_cloud_ripper/tools/
+
+
+ente-auth-codes-plaintext-20260928-200044.txt
+ISSUE-16.md
+fromPasswords.csv
