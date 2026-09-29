@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.3.2] - 2026-09-29
 
 ### Added
 - The Passwords page can now work out which of your Apple Passwords logins each Ente Auth verification code belongs to. Apple Passwords doesn't let apps add a code to a login, so you get a checklist with the setup key and QR code for each login, to add yourself. A login that already has a code is left alone, and when a code could fit more than one login, nothing is chosen for you. Thanks to @MehdiMamas for adding this (#16, #31).
