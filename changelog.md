@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Repeats lost everything except how often they repeat and on which weekdays. A reminder repeating on the 1st and 15th, on the last day of the month, on the last weekday, or only in certain months became a plain monthly or yearly repeat on the other side. A repeat on the second Tuesday became every Tuesday. Repeats now sync in full, both ways. A reminder whose repeat was already simplified keeps it, so set its repeat again (#22, #27).
 - After "Reset Reminders", reminders already on both sides were matched up by title and due date, but the matches weren't saved. As soon as anything else synced, all of them were created again on both sides. Matches are now saved. Matching also only covered the lists synced before anything was created. Now every list is matched while none of its reminders have synced (#29).
 - When matching, a reminder with the same title as completed ones, as in a shopping list that keeps what you bought, wasn't matched and was created again on both sides. The open one is now matched.
+- When a reminder changed in Apple Reminders, iCloudBridge deleted the task's start date and creation date on your CalDAV server. It also reset a completed task's completion date to the time of the sync. They're now kept. A start date at the due time moves with the due date (#32).
 
 ## [0.3.1] - 2026-09-26
 

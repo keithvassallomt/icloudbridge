@@ -81,31 +81,47 @@ def _valarm(alarm: CalDAVAlarm, description: str) -> Alarm:
     return valarm
 
 
+def _date_value(vtodo: VTodo, name: str) -> date | datetime | None:
+    """A task's date or date-time property, e.g. DUE, or None if it has none."""
+    prop = vtodo.get(name)
+    return prop.dt if prop is not None and hasattr(prop, "dt") else None
+
+
+def _as_moment(value: date | datetime) -> datetime:
+    """A date or date-time as an aware datetime: a date is its midnight, and a time with
+    no time zone (floating) is local time."""
+    if not isinstance(value, datetime):
+        value = datetime.combine(value, time(0))
+    return value if value.tzinfo else value.replace(tzinfo=local_timezone())
+
+
+def _starts_at_due(vtodo: VTodo) -> bool:
+    """
+    Whether a task starts at its due time, or at midnight on an all-day due date.
+
+    Reminders.app gives dated reminders a start date like this, as do other apps.
+    """
+    start, due = _date_value(vtodo, "DTSTART"), _date_value(vtodo, "DUE")
+    if start is None or due is None:
+        return False
+    if isinstance(due, datetime) != isinstance(start, datetime):
+        # All-day due date, start at a time: only its midnight counts
+        return isinstance(start, datetime) and start.date() == due and start.time() == time(0)
+    return _as_moment(start) == _as_moment(due)
+
+
 def _alarm_start(vtodo: VTodo) -> datetime | None:
     """
     The DTSTART that relative alarms count from by default, as an aware datetime.
 
-    None when there is none, or when it is the due date: counting from either is then
-    the same, and the alarm stays an offset from the due date, as Apple Reminders holds
-    it. Reminders.app gives dated reminders a start date, usually the due date.
+    None when there is none, or when the task starts at its due time: counting from
+    either is then the same, and the alarm stays an offset from the due date, as Apple
+    Reminders holds it.
     """
-    dtstart = vtodo.get("DTSTART")
-    start = dtstart.dt if dtstart is not None and hasattr(dtstart, "dt") else None
-    if not isinstance(start, datetime):
+    start = _date_value(vtodo, "DTSTART")
+    if not isinstance(start, datetime) or _starts_at_due(vtodo):
         return None
-    # A time with no time zone (floating) is local time
-    start = start if start.tzinfo else start.replace(tzinfo=local_timezone())
-
-    due_prop = vtodo.get("DUE")
-    due = due_prop.dt if due_prop is not None and hasattr(due_prop, "dt") else None
-    if isinstance(due, datetime):
-        due = due if due.tzinfo else due.replace(tzinfo=local_timezone())
-        if start == due:
-            return None
-    elif isinstance(due, date) and start.date() == due and start.time() == time(0):
-        # All-day: Reminders.app starts it at midnight on the due date
-        return None
-    return start
+    return _as_moment(start)
 
 
 def _alarm_from_valarm(valarm: Alarm, start: datetime | None) -> CalDAVAlarm | None:
@@ -856,15 +872,6 @@ class CalDAVAdapter:
 
             logger.debug(f"Successfully parsed VTODO component, updating fields...")
 
-            # Delete ALL date/time fields to ensure clean state
-            # This prevents any malformed dates from surviving the update
-            # We'll re-add them below with proper datetime objects
-            date_fields_to_clean = ["DUE", "DTSTART", "COMPLETED", "CREATED", "LAST-MODIFIED", "DTSTAMP"]
-            for field in date_fields_to_clean:
-                if field in vtodo:
-                    del vtodo[field]
-            logger.debug(f"Cleaned all date fields from VTODO")
-
             # Update fields
             if summary is not None:
                 vtodo["SUMMARY"] = summary
@@ -876,10 +883,10 @@ class CalDAVAdapter:
                 vtodo.add("status", "COMPLETED" if completed else "NEEDS-ACTION")
 
                 if completed:
+                    # Keep when it was completed; a newly completed task gets the time now.
                     # Strip microseconds as iCalendar doesn't support them
-                    if "COMPLETED" in vtodo:
-                        del vtodo["COMPLETED"]
-                    vtodo.add("completed", datetime.now(timezone.utc).replace(microsecond=0))
+                    if "COMPLETED" not in vtodo:
+                        vtodo.add("completed", datetime.now(timezone.utc).replace(microsecond=0))
 
                     if "PERCENT-COMPLETE" in vtodo:
                         del vtodo["PERCENT-COMPLETE"]
@@ -892,21 +899,29 @@ class CalDAVAdapter:
                     vtodo.add("percent-complete", 0)
             if priority is not None:
                 vtodo["PRIORITY"] = priority
+            starts_at_due = _starts_at_due(vtodo)
+            if "DUE" in vtodo:
+                del vtodo["DUE"]
             if due_date is not None:
-                if "DUE" in vtodo:
-                    del vtodo["DUE"]
                 # Determine if all-day: use provided value, or default to False
                 use_all_day = is_all_day if is_all_day is not None else False
                 if use_all_day:
                     # All-day: use date object to produce DATE (not DATE-TIME)
-                    from datetime import date as date_type
-                    due_date_value = date_type(due_date.year, due_date.month, due_date.day)
-                    vtodo.add("due", due_date_value)
+                    due_date_value = date(due_date.year, due_date.month, due_date.day)
                     logger.debug(f"Updating with all-day due date: {due_date_value}")
                 else:
                     # Specific time: strip microseconds as iCalendar doesn't support them
-                    clean_due = due_date.replace(microsecond=0)
-                    vtodo.add("due", clean_due)
+                    due_date_value = due_date.replace(microsecond=0)
+                vtodo.add("due", due_date_value)
+                # A start at the due time moves with it, so alarms that count from the
+                # start still count from the due date
+                if starts_at_due:
+                    del vtodo["DTSTART"]
+                    vtodo.add("dtstart", due_date_value)
+            # RFC 5545 requires DUE to be no earlier than DTSTART
+            start, due = _date_value(vtodo, "DTSTART"), _date_value(vtodo, "DUE")
+            if start is not None and due is not None and _as_moment(start) > _as_moment(due):
+                del vtodo["DTSTART"]
             if url is not None:
                 vtodo["URL"] = url
 
