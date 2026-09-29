@@ -210,7 +210,7 @@ async def test_fingerprints_change_only_with_their_version(tmp_path):
     engine, _, _ = await make_engine(tmp_path, [], [])
 
     assert engine._sync_fingerprints(APPLE, CALDAV) == {
-        "version": 3,
+        "version": 4,
         "apple": {"alarms": "38fe450b0b3810f2", "recurrence": "b1206d2c1ab9ea49"},
         "caldav": {"alarms": "f7a650dccae223fe", "recurrence": "e3620dd34bf8ec05"},
     }

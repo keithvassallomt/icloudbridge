@@ -12,6 +12,8 @@ from tests.reminders_fakes import make_engine
 
 DUE = "DUE:20261001T090000Z"
 START = "DTSTART:20261001T080000Z"
+# Reminders.app, and many other apps, start a task at its due time
+START_AT_DUE = "DTSTART:20261001T090000Z"
 NINE = datetime(2026, 10, 1, 9, tzinfo=timezone.utc)
 
 
@@ -52,6 +54,20 @@ def valarm(trigger: str) -> list[str]:
         # Relative to DTSTART, the default when there is one
         ([DUE, START, *valarm("TRIGGER:-PT1H")], CalDAVAlarm(trigger_date=NINE.replace(hour=7))),
         ([DUE, START, *valarm("TRIGGER;RELATED=END:-PT1H")], CalDAVAlarm(trigger_minutes=60)),
+        # From a start that is the due time: the same, so it stays an early reminder
+        ([DUE, START_AT_DUE, *valarm("TRIGGER:-PT45M")], CalDAVAlarm(trigger_minutes=45)),
+        (
+            [DUE, START_AT_DUE, *valarm("TRIGGER;RELATED=START:-PT45M")],
+            CalDAVAlarm(trigger_minutes=45),
+        ),
+        (
+            [DUE, "DTSTART;TZID=Europe/London:20261001T100000", *valarm("TRIGGER:-PT45M")],
+            CalDAVAlarm(trigger_minutes=45),
+        ),
+        (
+            ["DUE;VALUE=DATE:20261001", "DTSTART:20261001T000000", *valarm("TRIGGER:-P1D")],
+            CalDAVAlarm(trigger_minutes=1440),
+        ),
         # A fixed time, which needs no due date
         (valarm("TRIGGER;VALUE=DATE-TIME:20261001T090000Z"), CalDAVAlarm(trigger_date=NINE)),
     ],

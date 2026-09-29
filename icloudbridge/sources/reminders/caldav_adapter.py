@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 import caldav
@@ -82,13 +82,30 @@ def _valarm(alarm: CalDAVAlarm, description: str) -> Alarm:
 
 
 def _alarm_start(vtodo: VTodo) -> datetime | None:
-    """A task's DTSTART as an aware datetime, which relative alarms may count from."""
+    """
+    The DTSTART that relative alarms count from by default, as an aware datetime.
+
+    None when there is none, or when it is the due date: counting from either is then
+    the same, and the alarm stays an offset from the due date, as Apple Reminders holds
+    it. Reminders.app gives dated reminders a start date, usually the due date.
+    """
     dtstart = vtodo.get("DTSTART")
     start = dtstart.dt if dtstart is not None and hasattr(dtstart, "dt") else None
     if not isinstance(start, datetime):
         return None
     # A time with no time zone (floating) is local time
-    return start if start.tzinfo else start.replace(tzinfo=local_timezone())
+    start = start if start.tzinfo else start.replace(tzinfo=local_timezone())
+
+    due_prop = vtodo.get("DUE")
+    due = due_prop.dt if due_prop is not None and hasattr(due_prop, "dt") else None
+    if isinstance(due, datetime):
+        due = due if due.tzinfo else due.replace(tzinfo=local_timezone())
+        if start == due:
+            return None
+    elif isinstance(due, date) and start.date() == due and start.time() == time(0):
+        # All-day: Reminders.app starts it at midnight on the due date
+        return None
+    return start
 
 
 def _alarm_from_valarm(valarm: Alarm, start: datetime | None) -> CalDAVAlarm | None:

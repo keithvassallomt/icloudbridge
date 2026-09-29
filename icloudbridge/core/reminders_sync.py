@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # whenever a conversion changes what a side's alarms or repeat rules sync as. Older
 # fingerprints then count as missing, so the next sync records new ones instead of
 # taking the difference for an edit.
-FINGERPRINT_VERSION = 3
+FINGERPRINT_VERSION = 4
 
 
 def _fingerprint(items: list) -> str:
