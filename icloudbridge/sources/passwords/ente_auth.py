@@ -35,6 +35,16 @@ class OtpSecret:
     period: int
     uri: str
 
+    @property
+    def uses_default_settings(self) -> bool:
+        """True for SHA1, 6 digits and 30 seconds, the settings a bare setup key implies.
+
+        Other settings only reach Apple Passwords through the QR code, since a
+        setup key is the secret alone.
+        """
+
+        return self.algorithm == "SHA1" and self.digits == 6 and self.period == 30
+
 
 @dataclass(frozen=True)
 class SkippedOtp:
@@ -187,7 +197,10 @@ def _parse_uri(uri: str) -> tuple[OtpSecret | None, SkippedOtp | None]:
 
     algorithm = ((query.get("algorithm") or ["SHA1"])[0] or "SHA1").upper()
     if algorithm not in _SUPPORTED_ALGORITHMS:
-        algorithm = "SHA1"
+        return None, SkippedOtp(
+            label=display_label,
+            reason=f"unsupported algorithm '{algorithm}'",
+        )
     digits = _positive_int((query.get("digits") or ["6"])[0], default=6)
     period = _positive_int((query.get("period") or ["30"])[0], default=30)
 

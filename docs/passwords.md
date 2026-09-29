@@ -66,24 +66,33 @@ You can also check Bitwarden/Vaultwarden or Nextcloud passwords to confirm that 
 
 ![Passwords new in Vaultwarden](images/docs_passwords_8.png)
 
-### Verification codes from Ente Auth
-
-Apple Passwords has no way for an app to write a verification code onto a login, and importing a CSV does not change a login you already have. iCloudBridge therefore does not build an import file for this. It matches codes from Ente Auth to your existing Apple logins and shows the setup key for each one.
-
-1. In Ente Auth, open Settings > Data > Export codes and choose Plain text.
-2. In Apple Passwords, choose File > Export All Passwords to File.
-3. On the Passwords page, upload both files and choose Preview.
-4. For each matched login, open it in Apple Passwords, choose Edit > Set Up Verification Code > Enter Setup Key, and paste the setup key. You can scan the QR code instead.
-
-An encrypted Ente export is not read here. Decrypt it first with `ente auth decrypt <export_file> <output_file>`, then upload the plain-text file.
-
-Trashed codes, HOTP codes, and Steam codes are listed under skipped. A login that already has a different verification code is listed and left unchanged. When more than one login could fit a code, nothing is chosen for you.
-
 ### Unidirectional Sync
 
 Besides the bidirectional sync, you can also do an Export (i.e. Apple Passwords to another service) or an Import (Another service to Apple Passwords). 
 
 ![Passwords Unidirectional Sync](images/docs_passwords_9.png)
+
+### Verification codes from Ente Auth
+
+If you keep your verification codes in Ente Auth, iCloudBridge can work out which Apple Passwords login each one belongs to. Apple Passwords doesn't let apps add a verification code to a login, so you still add each code yourself, but you get a checklist with the setup key for every login.
+
+Open **Verification codes from Ente Auth** at the bottom of the Passwords page, then:
+
+1. In Ente Auth, open Settings > Data > Export codes and choose Plain text.
+2. In Apple Passwords, choose File > Export All Passwords to File.
+3. Upload both files and choose Preview.
+4. For each matched login, open it in Apple Passwords, choose Edit > Set Up Verification Code > Enter Setup Key, and paste the setup key. You can scan the QR code instead.
+
+> [!WARNING]
+> When you're done, delete both export files. Between them they hold every password and verification code in plain text. iCloudBridge doesn't keep a copy of either.
+
+Check any login marked with a warning before you add its code. It was matched on the service name alone, and Ente has the code for a different account name, so it may belong to another account.
+
+Some codes use settings other than 6 digits every 30 seconds, such as 8 digits. These only show a QR code, because a setup key on its own doesn't carry those settings and would give the wrong codes.
+
+An encrypted Ente export can't be read. Decrypt it first with `ente auth decrypt <export_file> <output_file>`, then upload the plain-text file.
+
+Trashed codes, HOTP codes and Steam codes are listed as skipped. A login that already has a different verification code is listed and left unchanged. When more than one login could fit a code, nothing is chosen for you.
 
 ---
 

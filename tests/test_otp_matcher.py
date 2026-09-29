@@ -1,7 +1,7 @@
 """Matching Ente Auth secrets onto Apple Passwords logins."""
 
-from icloudbridge.core.otp_matcher import domain_from_url, match
-from icloudbridge.sources.passwords.ente_auth import OtpSecret
+from icloudbridge.core.otp_matcher import build_preview, hostname_from_url, match
+from icloudbridge.sources.passwords.ente_auth import EnteParseResult, OtpSecret
 from icloudbridge.sources.passwords.models import PasswordEntry
 
 
@@ -9,13 +9,14 @@ def secret(
     issuer: str,
     account: str,
     key: str = "BPHY57NROF5SEVY7",
+    digits: int = 6,
 ) -> OtpSecret:
     return OtpSecret(
         issuer=issuer,
         account=account,
         secret=key,
         algorithm="SHA1",
-        digits=6,
+        digits=digits,
         period=30,
         uri=f"otpauth://totp/{issuer}:{account}?secret={key}&issuer={issuer}",
     )
@@ -40,10 +41,12 @@ def login(
     return entry
 
 
-def test_registrable_domain():
-    assert domain_from_url("https://accounts.google.com/ServiceLogin") == "google.com"
-    assert domain_from_url("https://www.example.co.uk/login") == "example.co.uk"
-    assert domain_from_url("vault.bitwarden.com") == "bitwarden.com"
+def test_hostname_from_url():
+    assert hostname_from_url("https://accounts.google.com/ServiceLogin") == "accounts.google.com"
+    assert hostname_from_url("https://www.example.co.uk/login") == "example.co.uk"
+    assert hostname_from_url("vault.bitwarden.com") == "vault.bitwarden.com"
+    assert hostname_from_url("GitHub") is None
+    assert hostname_from_url("Rockstar Games") is None
 
 
 def test_tier1_domain_and_username():
@@ -56,7 +59,8 @@ def test_tier1_domain_and_username():
 
     assert len(result.matched) == 1
     assert result.matched[0].login.title == "Work"
-    assert result.matched[0].setup_key == "BPHY57NROF5SEVY7"
+    assert result.matched[0].secret.secret == "BPHY57NROF5SEVY7"
+    assert not result.matched[0].account_differs
     assert result.ambiguous == []
     assert result.unmatched == []
 
@@ -94,7 +98,8 @@ def test_tier3_issuer_alone_when_one_login_fits():
     result = match([secret("GitHub", "octocat")], apple)
 
     assert [item.login.title for item in result.matched] == ["GitHub"]
-    assert result.matched[0].account == "octocat"
+    assert result.matched[0].secret.account == "octocat"
+    assert result.matched[0].account_differs
 
 
 def test_ambiguous_when_several_logins_fit():
@@ -193,3 +198,56 @@ def test_extra_urls_share_one_login():
 
     assert len(result.matched) == 1
     assert result.ambiguous == []
+
+
+def test_issuer_alone_is_not_flagged_when_ente_names_no_account():
+    apple = [login("GitHub", "ada@example.com", "https://github.com/")]
+
+    result = match([secret("GitHub", "")], apple)
+
+    assert [item.login.title for item in result.matched] == ["GitHub"]
+    assert not result.matched[0].account_differs
+
+
+def test_username_match_is_not_flagged():
+    apple = [login("GitHub", "OctoCat", "https://github.com/")]
+
+    result = match([secret("GitHub", "octocat")], apple)
+
+    assert not result.matched[0].account_differs
+
+
+def test_issuer_hostname_does_not_match_another_site_on_the_same_suffix():
+    apple = [login("Other", "ada@example.com", "https://other.co.uk/")]
+
+    result = match([secret("example.co.uk", "ada@example.com")], apple)
+
+    assert result.matched == []
+    assert result.unmatched[0].issuer == "example.co.uk"
+
+
+def test_self_hosted_subdomain_matches_the_issuer():
+    apple = [login("Cloud", "ada", "https://nextcloud.example.com/login")]
+
+    result = match([secret("Nextcloud", "ada")], apple)
+
+    assert [item.login.title for item in result.matched] == ["Cloud"]
+
+
+def test_preview_marks_codes_a_setup_key_cannot_carry():
+    apple = [
+        login("GitHub", "octocat", "https://github.com/"),
+        login("Bank", "ada", "https://bank.example.com/"),
+    ]
+    parsed = EnteParseResult(
+        secrets=[secret("GitHub", "octocat"), secret("Bank", "ada", "CKW5UEE2J5IWPYVJ", digits=8)],
+        skipped=[],
+    )
+
+    preview = build_preview(parsed, apple)
+
+    by_title = {item["title"]: item for item in preview["matched"]}
+    assert by_title["GitHub"]["qr_only"] is False
+    assert by_title["Bank"]["qr_only"] is True
+    assert by_title["Bank"]["digits"] == 8
+    assert by_title["Bank"]["account_differs"] is False

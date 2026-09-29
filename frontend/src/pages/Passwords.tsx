@@ -477,8 +477,6 @@ export default function Passwords() {
         </Alert>
       )}
 
-      <EnteOtpSection />
-
       {disabled ? (
         <ServiceDisabledNotice serviceName="Passwords" />
       ) : (
@@ -677,6 +675,8 @@ export default function Passwords() {
               </div>
             )}
           </section>
+
+          <EnteOtpSection />
         </>
       )}
     </div>

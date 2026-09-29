@@ -19,22 +19,6 @@ from icloudbridge.sources.passwords.ente_auth import (
 )
 from icloudbridge.sources.passwords.models import PasswordEntry
 
-# Second-level suffixes where the registrable name is three labels deep.
-_MULTI_PART_SUFFIXES = {
-    "co.uk",
-    "org.uk",
-    "ac.uk",
-    "gov.uk",
-    "com.au",
-    "net.au",
-    "org.au",
-    "co.jp",
-    "co.nz",
-    "com.br",
-    "com.mx",
-    "co.za",
-}
-
 _COMPACT = re.compile(r"[^a-z0-9]")
 
 
@@ -48,13 +32,15 @@ class LoginRef:
 
 @dataclass(frozen=True)
 class MatchedOtp:
-    """A secret that belongs on exactly one Apple login."""
+    """A secret that belongs on exactly one Apple login.
 
-    issuer: str
-    account: str
-    setup_key: str
-    otpauth_uri: str
+    ``account_differs`` is set when Ente names an account that isn't the
+    login's username, which happens when only the issuer matched.
+    """
+
+    secret: OtpSecret
     login: LoginRef
+    account_differs: bool
 
 
 @dataclass(frozen=True)
@@ -94,29 +80,12 @@ class OtpMatchResult:
     conflict: list[ExistingOtp] = field(default_factory=list)
 
 
-def registrable_domain(hostname: str) -> str | None:
-    """Return the registrable domain for a hostname, without a public-suffix list.
+def hostname_from_url(url: str | None) -> str | None:
+    """Lowercase hostname, without ``www.``, from a URL or a bare hostname.
 
-    ``accounts.google.com`` becomes ``google.com``. ``www.example.co.uk``
-    becomes ``example.co.uk``.
+    Returns None for text that isn't a dotted hostname, such as an issuer
+    name like ``GitHub`` or ``Rockstar Games``.
     """
-
-    host = hostname.strip().lower().rstrip(".")
-    if host.startswith("www."):
-        host = host[4:]
-    if not host or "." not in host or " " in host:
-        return None
-    parts = [part for part in host.split(".") if part]
-    if len(parts) < 2:
-        return None
-    last_two = ".".join(parts[-2:])
-    if last_two in _MULTI_PART_SUFFIXES and len(parts) >= 3:
-        return ".".join(parts[-3:])
-    return last_two
-
-
-def domain_from_url(url: str | None) -> str | None:
-    """Registrable domain from a URL or a bare hostname."""
 
     if not url:
         return None
@@ -125,10 +94,18 @@ def domain_from_url(url: str | None) -> str | None:
         return None
     if "://" not in text:
         text = f"https://{text}"
-    host = urlparse(text).hostname
+    try:
+        host = urlparse(text).hostname
+    except ValueError:
+        return None
     if not host:
         return None
-    return registrable_domain(host)
+    host = host.rstrip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    if "." not in host or " " in host:
+        return None
+    return host
 
 
 def compact_name(value: str) -> str:
@@ -144,12 +121,17 @@ def build_preview(parsed: EnteParseResult, apple_entries: list[PasswordEntry]) -
     return {
         "matched": [
             {
-                "issuer": item.issuer,
-                "account": item.account,
+                "issuer": item.secret.issuer,
+                "account": item.secret.account,
                 "title": item.login.title,
                 "username": item.login.username,
-                "setup_key": item.setup_key,
-                "otpauth_uri": item.otpauth_uri,
+                "setup_key": item.secret.secret,
+                "otpauth_uri": item.secret.uri,
+                "algorithm": item.secret.algorithm,
+                "digits": item.secret.digits,
+                "period": item.secret.period,
+                "qr_only": not item.secret.uses_default_settings,
+                "account_differs": item.account_differs,
             }
             for item in result.matched
         ],
@@ -195,9 +177,11 @@ def match(secrets: list[OtpSecret], apple_entries: list[PasswordEntry]) -> OtpMa
     Tiers, in order. The first tier that finds any login wins, so a broader
     tier cannot override a closer one:
 
-    1. Registrable domain plus username.
-    2. Issuer against the domain label or the title, plus username.
-    3. Issuer alone, when exactly one login fits.
+    1. Issuer as a hostname (``google.com``) against the login's site or a
+       subdomain of it, plus username.
+    2. Issuer against a label of the login's hostname or its title, plus username.
+    3. Issuer alone, when exactly one login fits. The match is flagged when
+       Ente names a different account.
     """
 
     index = _LoginIndex(apple_entries)
@@ -205,11 +189,11 @@ def match(secrets: list[OtpSecret], apple_entries: list[PasswordEntry]) -> OtpMa
     pending: list[tuple[OtpSecret, PasswordEntry]] = []
 
     for secret in secrets:
-        status, entries = index.lookup(secret)
-        if status == "none":
+        entries = index.lookup(secret)
+        if not entries:
             result.unmatched.append(UnmatchedOtp(issuer=secret.issuer, account=secret.account))
             continue
-        if status == "many":
+        if len(entries) > 1:
             result.ambiguous.append(
                 AmbiguousOtp(
                     issuer=secret.issuer,
@@ -255,13 +239,12 @@ def _classify_unique_matches(
         elif existing:
             result.conflict.append(_existing(secret, entry))
         else:
+            account = secret.account.strip().lower()
             result.matched.append(
                 MatchedOtp(
-                    issuer=secret.issuer,
-                    account=secret.account,
-                    setup_key=secret.secret,
-                    otpauth_uri=secret.uri,
+                    secret=secret,
                     login=_login_ref(entry),
+                    account_differs=bool(account) and account != entry.username.strip().lower(),
                 )
             )
 
@@ -286,40 +269,33 @@ def _existing(secret: OtpSecret, entry: PasswordEntry) -> ExistingOtp:
 
 
 class _LoginIndex:
-    """Domain and name lookups over Apple logins."""
+    """Hostname and name lookups over Apple logins."""
 
     def __init__(self, entries: list[PasswordEntry]) -> None:
-        self._by_domain_user: dict[tuple[str, str], list[PasswordEntry]] = defaultdict(list)
+        self._by_host_user: dict[tuple[str, str], list[PasswordEntry]] = defaultdict(list)
         self._by_name_user: dict[tuple[str, str], list[PasswordEntry]] = defaultdict(list)
         self._by_name: dict[str, list[PasswordEntry]] = defaultdict(list)
         for entry in entries:
             self._add(entry)
 
-    def lookup(self, secret: OtpSecret) -> tuple[str, list[PasswordEntry]]:
+    def lookup(self, secret: OtpSecret) -> list[PasswordEntry]:
         username = secret.account.lower().strip()
         issuer_key = compact_name(secret.issuer)
 
         if username:
-            by_domain = self._collect_domain(secret, username)
-            if by_domain:
-                return _status(by_domain), by_domain
+            issuer_host = hostname_from_url(secret.issuer)
+            if issuer_host:
+                by_host = self._by_host_user.get((issuer_host, username), [])
+                if by_host:
+                    return list(by_host)
 
-            by_name = self._dedupe(self._by_name_user.get((issuer_key, username), []))
+            by_name = self._by_name_user.get((issuer_key, username), [])
             if by_name:
-                return _status(by_name), by_name
+                return list(by_name)
 
         if len(issuer_key) < 3:
-            return "none", []
-        by_issuer = self._dedupe(self._by_name.get(issuer_key, []))
-        if not by_issuer:
-            return "none", []
-        return _status(by_issuer), by_issuer
-
-    def _collect_domain(self, secret: OtpSecret, username: str) -> list[PasswordEntry]:
-        found: list[PasswordEntry] = []
-        for domain in _domains_for_secret(secret):
-            found.extend(self._by_domain_user.get((domain, username), []))
-        return self._dedupe(found)
+            return []
+        return list(self._by_name.get(issuer_key, []))
 
     def _add(self, entry: PasswordEntry) -> None:
         username = entry.username.lower().strip()
@@ -329,13 +305,21 @@ class _LoginIndex:
             names.add(title_key)
 
         for url in entry.get_all_urls():
-            domain = domain_from_url(url)
-            if not domain:
+            host = hostname_from_url(url)
+            if not host:
                 continue
-            self._append(self._by_domain_user, (domain, username), entry)
-            label = compact_name(domain.split(".", 1)[0])
-            if label:
-                names.add(label)
+            labels = host.split(".")
+            # accounts.google.com is filed under itself and google.com, so an
+            # issuer of google.com finds it. The top-level label is left out.
+            for start in range(len(labels) - 1):
+                self._append(self._by_host_user, (".".join(labels[start:]), username), entry)
+            # Every label but the top-level one can name the site, so a
+            # self-hosted nextcloud.example.com is found by "Nextcloud".
+            if not host.replace(".", "").isdigit():
+                for label in labels[:-1]:
+                    name = compact_name(label)
+                    if name:
+                        names.add(name)
 
         for name in names:
             self._append(self._by_name_user, (name, username), entry)
@@ -346,28 +330,3 @@ class _LoginIndex:
         bucket = mapping[key]
         if all(existing is not entry for existing in bucket):
             bucket.append(entry)
-
-    @staticmethod
-    def _dedupe(entries: list[PasswordEntry]) -> list[PasswordEntry]:
-        unique: list[PasswordEntry] = []
-        for entry in entries:
-            if all(existing is not entry for existing in unique):
-                unique.append(entry)
-        return unique
-
-
-def _domains_for_secret(secret: OtpSecret) -> list[str]:
-    domains: list[str] = []
-    for raw in (secret.issuer,):
-        domain = domain_from_url(raw)
-        if domain and domain not in domains:
-            domains.append(domain)
-    return domains
-
-
-def _status(entries: list[PasswordEntry]) -> str:
-    if not entries:
-        return "none"
-    if len(entries) == 1:
-        return "one"
-    return "many"

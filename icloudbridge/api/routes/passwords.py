@@ -457,13 +457,12 @@ async def preview_ente_otp(
     """
 
     apple_path: Path | None = None
-    ente_path: Path | None = None
     try:
         apple_path = await _save_uploaded_csv(apple_file)
-        ente_path = await _save_uploaded_csv(ente_file)
         entries = ApplePasswordsCSVParser.parse_file(apple_path)
+        # Read in memory so the verification-code secrets never reach disk.
         try:
-            ente_text = ente_path.read_text(encoding="utf-8-sig")
+            ente_text = (await ente_file.read()).decode("utf-8-sig")
         except UnicodeDecodeError as exc:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -491,8 +490,6 @@ async def preview_ente_otp(
     finally:
         if apple_path:
             apple_path.unlink(missing_ok=True)
-        if ente_path:
-            ente_path.unlink(missing_ok=True)
 
 
 @router.get("/download/{token}")

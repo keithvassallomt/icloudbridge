@@ -144,6 +144,29 @@ def test_encoded_colon_in_the_label():
     assert result.secrets[0].account == "ada@example.com"
 
 
+def test_unsupported_algorithm_is_skipped():
+    uri = _uri("Example", "ada", "BPHY57NROF5SEVY7", algorithm="MD5")
+
+    result = EnteAuthParser.parse_text(uri)
+
+    assert result.secrets == []
+    assert result.skipped[0].reason == "unsupported algorithm 'MD5'"
+
+
+def test_default_settings():
+    result = EnteAuthParser.parse_text(
+        "\n".join(
+            [
+                _uri("GitHub", "ada", "BPHY57NROF5SEVY7"),
+                _uri("Bank", "ada", "CKW5UEE2J5IWPYVJ", digits=8),
+                _uri("Work", "ada", "XLND7E3WNYH7BADTCUPQASZX", algorithm="SHA256"),
+            ]
+        )
+    )
+
+    assert [item.uses_default_settings for item in result.secrets] == [True, False, False]
+
+
 def test_invalid_secret_is_skipped():
     uri = "otpauth://totp/Example:ada?secret=not!valid&issuer=Example"
 

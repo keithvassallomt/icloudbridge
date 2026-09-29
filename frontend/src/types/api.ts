@@ -227,6 +227,13 @@ export interface EnteOtpMatch {
   username: string;
   setup_key: string;
   otpauth_uri: string;
+  algorithm: string;
+  digits: number;
+  period: number;
+  // The code uses settings a pasted setup key can't carry, so it needs the QR code.
+  qr_only: boolean;
+  // Ente names an account that isn't this login's username.
+  account_differs: boolean;
 }
 
 export interface EnteOtpAmbiguous {

@@ -7,7 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
-- Verification codes from an Ente Auth plain-text export can be matched to existing Apple Passwords logins on the Passwords page. Each match shows a setup key and a QR code to enter with Set Up Verification Code. Apple's importer does not change a login that already exists, so this is a checklist rather than a CSV import. Encrypted Ente exports need `ente auth decrypt` first.
+- The Passwords page can now work out which of your Apple Passwords logins each Ente Auth verification code belongs to. Apple Passwords doesn't let apps add a code to a login, so you get a checklist with the setup key and QR code for each login, to add yourself. A login that already has a code is left alone, and when a code could fit more than one login, nothing is chosen for you. Thanks to @MehdiMamas for adding this (#16, #31).
 
 ### Fixed
 - Repeating reminders that came from your CalDAV server turned into daily repeats in Apple Reminders. They kept their interval, so "every 2 weeks" became "every 2 days". This happened to reminders created on the server, and to any repeating reminder edited there, even if only its title changed. They now keep their daily, weekly, monthly or yearly repeat. A reminder that already changed to a daily repeat stays that way, so set its repeat again in Apple Reminders (#23).
