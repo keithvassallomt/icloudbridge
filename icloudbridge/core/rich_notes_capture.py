@@ -3,11 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
-import shutil
 import os
+import shutil
 import subprocess
-import tempfile
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -128,13 +128,21 @@ class RichNotesCapture:
             logger.info("Using ENV python: %s", env_python)
             return env_python
 
-        app_support = Path.home() / "Library" / "Application Support" / "iCloudBridge" / "venv" / "bin" / "python3"
+        app_support = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "iCloudBridge"
+            / "venv"
+            / "bin"
+            / "python3"
+        )
         if app_support.is_file():
             logger.info("Using App Support Python: %s", app_support)
             return str(app_support)
 
         logger.error(
-            "No managed python found. Checked ICLOUDBRIDGE_VENV_PYTHON=%s and %s; falling back to %s", 
+            "No managed python found. Checked ICLOUDBRIDGE_VENV_PYTHON=%s and %s; falling back to %s",
             env_python,
             app_support,
             sys.executable,
@@ -154,7 +162,9 @@ class RichNotesCapture:
     def _find_json(output_dir: Path) -> Path:
         candidates = list(output_dir.rglob("json/all_notes_*.json"))
         if not candidates:
-            raise FileNotFoundError(f"Could not find all_notes_*.json under ripper output {output_dir}")
+            raise FileNotFoundError(
+                f"Could not find all_notes_*.json under ripper output {output_dir}"
+            )
         return candidates[0]
 
 
@@ -188,17 +198,14 @@ def build_note_indexes(notes_section: Any) -> dict[str, dict[str, Any]]:
 
 
 def lookup_note_entry(local_uuid: str, indexes: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
-    """Resolve a CoreData UUID/primary key/ICNote id into a ripper entry."""
+    """Resolve a UUID or ICNote ID into a ripper entry."""
     entry = indexes.get("by_uuid", {}).get(local_uuid)
     if entry:
         return entry
 
-    pk = _extract_primary_key(local_uuid)
-    if pk is not None:
-        entry = indexes.get("by_primary", {}).get(pk)
-        if entry:
-            return entry
-
+    # ICNote /pN is ZICCLOUDSYNCINGOBJECT.Z_PK, exposed by the ripper
+    # as note_id (ZICNOTEDATA.ZNOTE). The ripper's primary_key belongs
+    # to ZICNOTEDATA and can identify a different note with the same number.
     note_id = _extract_note_id(local_uuid)
     if note_id is not None:
         entry = indexes.get("by_note_id", {}).get(note_id)
@@ -219,16 +226,6 @@ def extract_note_content(note_entry: dict[str, Any]) -> str:
     else:
         body = html
     return body
-
-
-def _extract_primary_key(coredata_id: str) -> int | None:
-    if "/p" not in coredata_id:
-        return None
-    suffix = coredata_id.rsplit("/p", 1)[-1]
-    try:
-        return int(suffix)
-    except ValueError:
-        return None
 
 
 def _extract_note_id(coredata_id: str) -> int | None:
