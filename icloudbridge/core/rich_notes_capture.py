@@ -203,9 +203,6 @@ def lookup_note_entry(local_uuid: str, indexes: dict[str, dict[str, Any]]) -> di
     if entry:
         return entry
 
-    # ICNote /pN is ZICCLOUDSYNCINGOBJECT.Z_PK, exposed by the ripper
-    # as note_id (ZICNOTEDATA.ZNOTE). The ripper's primary_key belongs
-    # to ZICNOTEDATA and can identify a different note with the same number.
     note_id = _extract_note_id(local_uuid)
     if note_id is not None:
         entry = indexes.get("by_note_id", {}).get(note_id)
