@@ -171,7 +171,6 @@ class RichNotesCapture:
 def build_note_indexes(notes_section: Any) -> dict[str, dict[str, Any]]:
     """Mirror the Ruby ripper's sections into handy lookup tables."""
     by_uuid: dict[str, dict[str, Any]] = {}
-    by_primary: dict[int, dict[str, Any]] = {}
     by_note_id: dict[int, dict[str, Any]] = {}
 
     if isinstance(notes_section, dict):
@@ -182,17 +181,12 @@ def build_note_indexes(notes_section: Any) -> dict[str, dict[str, Any]]:
             if uuid:
                 by_uuid[str(uuid)] = entry
 
-            pk = entry.get("primary_key")
-            if isinstance(pk, int):
-                by_primary[pk] = entry
-
             note_id = entry.get("note_id")
             if isinstance(note_id, int):
                 by_note_id[note_id] = entry
 
     return {
         "by_uuid": by_uuid,
-        "by_primary": by_primary,
         "by_note_id": by_note_id,
     }
 
