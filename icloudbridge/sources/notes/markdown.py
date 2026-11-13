@@ -27,6 +27,8 @@ from icloudbridge.utils.converters import (
     NOTE_FILENAME_SUFFIX,
     NOTE_METADATA_SUFFIX,
     note_filename_stem,
+    note_filename_variant,
+    note_stem_matches_title,
 )
 from icloudbridge.utils.exceptions import SourceUnavailableError
 
@@ -93,6 +95,20 @@ class MarkdownAdapter:
         target = folder_path if folder_path else self.base_path
         target.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Ensured folder exists: {target}")
+
+    def _free_note_path(self, folder: Path, stem: str) -> Path:
+        """First "<stem>.md", "<stem> (2).md", ... that no file uses yet.
+
+        Compared case-insensitively: on APFS "Todo.md" is the same file as
+        "TODO.md", so two notes must not be given names differing only in case.
+        """
+        taken = {entry.name.casefold() for entry in folder.iterdir()} if folder.exists() else set()
+        n = 1
+        while True:
+            candidate = note_filename_variant(stem, n) + NOTE_FILENAME_SUFFIX
+            if candidate.casefold() not in taken:
+                return folder / candidate
+            n += 1
 
     def _metadata_path(self, file_path: Path) -> Path:
         return file_path.parent / f".{file_path.name}{self._metadata_suffix}"
@@ -302,9 +318,8 @@ class MarkdownAdapter:
 
             await self.ensure_folder_exists(target_folder)
 
-            # Sanitize filename
-            safe_filename = note_filename_stem(note_name) + NOTE_FILENAME_SUFFIX
-            file_path = target_folder / safe_filename
+            # Sanitize filename; never overwrite another note's file
+            file_path = self._free_note_path(target_folder, note_filename_stem(note_name))
 
             # Convert HTML to Markdown
             markdown_body = html_to_markdown(body_html, note_name)
@@ -364,7 +379,11 @@ class MarkdownAdapter:
         """
         try:
             # If renaming, use write_note to create new file and delete old
-            if note_name and note_name != file_path.stem:
+            # Compare file names, not raw titles: "a/b" is stored as "a-b.md",
+            # and a "TODO (2).md" belongs to a note titled "TODO". Comparing
+            # the raw title made every update of such a note "rename" it onto
+            # its own path and then delete that path.
+            if note_name and not note_stem_matches_title(file_path.stem, note_name):
                 # Get full nested folder path relative to base_path
                 if file_path.parent != self.base_path:
                     folder_name = str(file_path.parent.relative_to(self.base_path))
