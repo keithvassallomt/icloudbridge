@@ -14,6 +14,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
+from icloudbridge.core.sync_locks import exclusive_sync
 from icloudbridge.api.websocket import send_schedule_run, send_sync_progress
 from icloudbridge.core.config import AppConfig, load_config
 from icloudbridge.core.notifications import FailureNotifier
@@ -490,9 +491,11 @@ class SchedulerManager:
         """Dispatch sync execution for the requested service."""
 
         if service == "notes":
-            return await self._sync_notes(config)
+            async with exclusive_sync("notes", wait=True, dry_run=bool(config.get("dry_run", False))):
+                return await self._sync_notes(config)
         if service == "reminders":
-            return await self._sync_reminders(config)
+            async with exclusive_sync("reminders", wait=True, dry_run=bool(config.get("dry_run", False))):
+                return await self._sync_reminders(config)
         if service == "passwords":
             return await self._sync_passwords(config)
         if service == "photos":

@@ -7,6 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 
+from icloudbridge.core.sync_locks import SyncAlreadyRunning, exclusive_sync
 from icloudbridge.api.dependencies import (
     ConfigDep,
     RemindersDBDep,
@@ -133,6 +134,19 @@ async def list_caldav_calendars(config: ConfigDep):
 
 @router.post("/sync")
 async def sync_reminders(
+    request: RemindersSyncRequest,
+    engine: RemindersSyncEngineDep,
+    config: ConfigDep,
+):
+    """Trigger reminders synchronization (refused with 409 while another writing sync runs)."""
+    try:
+        async with exclusive_sync("reminders", wait=False, dry_run=request.dry_run):
+            return await _sync_reminders(request, engine, config)
+    except SyncAlreadyRunning as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+async def _sync_reminders(
     request: RemindersSyncRequest,
     engine: RemindersSyncEngineDep,
     config: ConfigDep,

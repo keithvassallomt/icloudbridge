@@ -8,6 +8,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 
+from icloudbridge.core.sync_locks import SyncAlreadyRunning, exclusive_sync
 from icloudbridge.api.dependencies import ConfigDep, NotesDBDep, NotesSyncEngineDep
 from icloudbridge.api.models import NotesSyncRequest
 from icloudbridge.utils.db import SyncLogsDB
@@ -126,6 +127,18 @@ async def get_all_folders(engine: NotesSyncEngineDep):
 
 @router.post("/sync")
 async def sync_notes(
+    request: NotesSyncRequest,
+    config: ConfigDep,
+):
+    """Trigger notes synchronization (refused with 409 while another writing sync runs)."""
+    try:
+        async with exclusive_sync("notes", wait=False, dry_run=request.dry_run):
+            return await _sync_notes(request, config)
+    except SyncAlreadyRunning as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+async def _sync_notes(
     request: NotesSyncRequest,
     config: ConfigDep,
 ):
