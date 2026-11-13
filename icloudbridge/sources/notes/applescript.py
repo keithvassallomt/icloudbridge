@@ -108,9 +108,15 @@ end run
 """
 
 # AppleScript to get all notes from a folder (supports nested paths)
+# Lists a folder's notes as "id|||name|||created|||modified|||" records. Each
+# property is read for the whole folder in one Apple Event; reading them note by
+# note (five events per note, plus the full HTML body) kept Notes busy for about
+# an hour on a 1,725-note folder until an event timed out (-1712). Bodies come
+# from the rich snapshot, or GET_NOTE_BODY_SCRIPT for a snapshot miss.
 GET_NOTES_SCRIPT = """
 on run argv
     set folder_path to item 1 of argv
+    with timeout of 1800 seconds
     tell application "Notes"
         -- Handle nested folder paths (e.g., "Work/Projects")
         set path_parts to my split_text(folder_path, "/")
@@ -149,21 +155,27 @@ on run argv
             error "Folder not found: " & folder_path
         end if
 
-        set myNotes to notes of myFolder
-        set output to (id of myFolder) & "~~~FOLDER~~~"
-        repeat with theNote in myNotes
-            set nId to id of theNote
-            set nName to name of theNote
-            set nBody to body of theNote
-            set nCreation to creation date of theNote
-            set nModified to modification date of theNote
-
-            -- Use delimiter that won't appear in note body
-            set noteData to nId & "|||" & nName & "|||" & nCreation & "|||" & nModified & "|||" & nBody
-            set output to output & noteData & "~~~NEXT_NOTE~~~"
-        end repeat
-        return output
+        set folderId to id of myFolder
+        set noteIds to id of every note of myFolder
+        set noteNames to name of every note of myFolder
+        set noteCreated to creation date of every note of myFolder
+        set noteModified to modification date of every note of myFolder
+        -- The lists are read separately; if the folder changed in between,
+        -- their items no longer line up, so fail rather than mismatch them.
+        if (id of every note of myFolder) is not noteIds then
+            error "Folder changed while it was being read: " & folder_path
+        end if
     end tell
+    end timeout
+
+    set noteLines to {}
+    repeat with i from 1 to count of noteIds
+        set end of noteLines to (item i of noteIds) & "|||" & (item i of noteNames) & "|||" & ((item i of noteCreated) as text) & "|||" & ((item i of noteModified) as text) & "|||"
+    end repeat
+    set AppleScript's text item delimiters to "~~~NEXT_NOTE~~~"
+    set joined to noteLines as text
+    set AppleScript's text item delimiters to ""
+    return folderId & "~~~FOLDER~~~" & joined & "~~~NEXT_NOTE~~~"
 end run
 
 on split_text(theText, theDelimiter)
@@ -175,6 +187,14 @@ end split_text
 """
 
 # AppleScript to create a new note (supports nested folder paths)
+GET_NOTE_BODY_SCRIPT = """
+on run argv
+    with timeout of 600 seconds
+        tell application "Notes" to return body of note id (item 1 of argv)
+    end timeout
+end run
+"""
+
 CREATE_NOTE_SCRIPT = """
 on run argv
     set {folder_path, note_name, export_file} to {item 1, item 2, item 3} of argv
@@ -936,7 +956,9 @@ class NotesAdapter:
                             "Rich note body missing for %s; falling back to AppleScript HTML",
                             uuid,
                         )
-                        rich_body = body_html
+                        rich_body = body_html or await self._run_applescript(
+                            GET_NOTE_BODY_SCRIPT, uuid
+                        )
                         attachments = []
 
                     notes.append(
