@@ -2,7 +2,11 @@
 
 import pytest
 
-from icloudbridge.core.rich_notes_capture import build_note_indexes, lookup_note_entry
+from icloudbridge.core.rich_notes_capture import (
+    build_note_indexes,
+    lookup_note_entry,
+    rich_snapshot_can_contain,
+)
 
 
 @pytest.fixture
@@ -59,3 +63,27 @@ def test_exact_identifier_match_takes_precedence(entries):
 @pytest.mark.parametrize("identifier", ["unknown", "x-coredata://store/ICNote/pbad", "999"])
 def test_unknown_identifiers_return_no_match(identifier, entries):
     assert lookup_note_entry(identifier, build_note_indexes(entries)) is None
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ["x-coredata://other-store/IMAPNote/p12", "x-coredata://other-store/EWSNote/p12"],
+)
+def test_other_store_note_ids_do_not_match_by_number(identifier, entries):
+    # IMAP/Exchange notes live outside NoteStore.sqlite; their p12 is a
+    # different object than ICNote p12 and must not borrow its body.
+    assert lookup_note_entry(identifier, build_note_indexes(entries)) is None
+
+
+@pytest.mark.parametrize(
+    ("identifier", "expected"),
+    [
+        ("x-coredata://store/ICNote/p12", True),
+        ("12", True),
+        ("note-a", True),
+        ("x-coredata://store/IMAPNote/p89", False),
+        ("x-coredata://store/EWSNote/p3", False),
+    ],
+)
+def test_rich_snapshot_can_contain(identifier, expected):
+    assert rich_snapshot_can_contain(identifier) is expected

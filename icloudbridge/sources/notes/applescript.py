@@ -15,6 +15,7 @@ from icloudbridge.core.rich_notes_capture import (
     RichNotesCapture,
     extract_note_content,
     lookup_note_entry,
+    rich_snapshot_can_contain,
 )
 
 logger = logging.getLogger(__name__)
@@ -493,6 +494,11 @@ class NotesAdapter:
     def __init__(self) -> None:
         self._rich_indexes: dict[str, dict[str, Any]] | None = None
         self._rich_capture = RichNotesCapture()
+        # Each capture copies the whole Notes container into a workspace that
+        # stays on disk until the sync operation ends (earlier notes may still
+        # reference its attachments). Allow one miss-driven re-capture per
+        # snapshot so misses cannot multiply those copies until the disk fills.
+        self._miss_refresh_used = False
 
     @staticmethod
     async def _run_applescript(script: str, *args: str) -> str:
@@ -781,6 +787,9 @@ class NotesAdapter:
         """Drop the cached ripper output (optionally removing temp files)."""
 
         self._rich_indexes = None
+        # A write invalidated the snapshot, so a later miss may be a note that
+        # only the next capture can see.
+        self._miss_refresh_used = False
         if cleanup_workspace:
             self._rich_capture.cleanup()
 
@@ -860,6 +869,26 @@ class NotesAdapter:
 
         return attachments
 
+    async def _resolve_rich_miss(self, note_uuid: str) -> dict[str, Any] | None:
+        """Look again for a note the current snapshot does not contain.
+
+        Re-captures only for notes the ripper can hold, and at most once per
+        snapshot: after a fresh capture, further misses are notes the ripper
+        cannot render (or that are not on disk yet), so another full copy of
+        the Notes container would not find them either.
+        """
+        if not rich_snapshot_can_contain(note_uuid):
+            logger.debug("%s is not in the local note store; using AppleScript HTML", note_uuid)
+            return None
+        if self._miss_refresh_used:
+            logger.info("Rich snapshot miss for %s; snapshot already refreshed", note_uuid)
+            return None
+
+        logger.info("Rich snapshot miss for %s; refreshing ripper cache", note_uuid)
+        entry = await self._retry_rich_entry(note_uuid)
+        self._miss_refresh_used = True
+        return entry
+
     async def _retry_rich_entry(self, note_uuid: str) -> dict[str, Any] | None:
         """Retry capturing the rich entry for a UUID if the cache missed."""
 
@@ -926,8 +955,7 @@ class NotesAdapter:
                     rich_body = extract_note_content(entry) if entry else None
                     attachments = self._rich_attachments_for_entry(entry)
                     if not rich_body:
-                        logger.info("Rich snapshot miss for %s; refreshing ripper cache", uuid)
-                        entry = await self._retry_rich_entry(uuid)
+                        entry = await self._resolve_rich_miss(uuid)
                         if entry:
                             rich_body = extract_note_content(entry)
                             attachments = self._rich_attachments_for_entry(entry)

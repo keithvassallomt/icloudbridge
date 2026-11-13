@@ -191,11 +191,28 @@ def build_note_indexes(notes_section: Any) -> dict[str, dict[str, Any]]:
     }
 
 
+def rich_snapshot_can_contain(local_uuid: str) -> bool:
+    """Whether the ripper's snapshot can hold this note at all.
+
+    The ripper reads the modern note store (NoteStore.sqlite), whose notes are
+    ``ICNote`` objects. Notes in IMAP or Exchange accounts (``IMAPNote`` etc.)
+    live in a different store, so they are never in the snapshot: looking them
+    up by number would match an unrelated note, and re-capturing the snapshot
+    for them only copies the whole Notes container again.
+    """
+    entity = _coredata_entity(local_uuid)
+    return entity is None or entity == "ICNote"
+
+
 def lookup_note_entry(local_uuid: str, indexes: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
     """Resolve a UUID or ICNote ID into a ripper entry."""
     entry = indexes.get("by_uuid", {}).get(local_uuid)
     if entry:
         return entry
+
+    if not rich_snapshot_can_contain(local_uuid):
+        # Primary keys are per store: IMAPNote/p12 is not ICNote/p12.
+        return None
 
     note_id = _extract_note_id(local_uuid)
     if note_id is not None:
@@ -217,6 +234,15 @@ def extract_note_content(note_entry: dict[str, Any]) -> str:
     else:
         body = html
     return body
+
+
+def _coredata_entity(coredata_id: str) -> str | None:
+    """Return the entity of an ``x-coredata://<store>/<entity>/p<n>`` ID."""
+    if not coredata_id.startswith("x-coredata://"):
+        return None
+    parts = coredata_id.rstrip("/").split("/")
+    # ["x-coredata:", "", "<store>", "<entity>", "p<n>"]
+    return parts[3] if len(parts) == 5 else None
 
 
 def _extract_note_id(coredata_id: str) -> int | None:
