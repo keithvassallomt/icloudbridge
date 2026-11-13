@@ -15,7 +15,12 @@ from icloudbridge.core.rich_notes_capture import (
     extract_note_content,
     lookup_note_entry,
 )
-from icloudbridge.utils.converters import html_to_markdown, normalize_checklists_html
+from icloudbridge.utils.converters import (
+    NOTE_FILENAME_SUFFIX,
+    html_to_markdown,
+    normalize_checklists_html,
+    note_filename_stem,
+)
 from icloudbridge.utils.db import NotesDB
 
 logger = logging.getLogger(__name__)
@@ -250,7 +255,7 @@ class RichNotesExporter:
         for relative_path, note_entry in selected_notes:
             folder = rich_root / relative_path.parent
             folder.mkdir(parents=True, exist_ok=True)
-            target = folder / f"{relative_path.stem}_rich.md"
+            target = folder / (note_filename_stem(f"{relative_path.stem}_rich") + NOTE_FILENAME_SUFFIX)
             html = extract_note_content(note_entry)
             logger.info("Exporting rich note: %s", relative_path)
             logger.debug("Relative path stem: %s", relative_path.stem)

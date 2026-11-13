@@ -24,7 +24,9 @@ from icloudbridge.utils.converters import (
     extract_attachment_references,
     html_to_markdown,
     markdown_to_html,
-    sanitize_filename,
+    NOTE_FILENAME_SUFFIX,
+    NOTE_METADATA_SUFFIX,
+    note_filename_stem,
 )
 from icloudbridge.utils.exceptions import SourceUnavailableError
 
@@ -79,7 +81,7 @@ class MarkdownAdapter:
             base_path: Root folder for markdown notes (e.g., ~/NextCloud/Notes)
         """
         self.base_path = Path(base_path).expanduser().resolve()
-        self._metadata_suffix = ".meta.json"
+        self._metadata_suffix = NOTE_METADATA_SUFFIX
 
     async def ensure_folder_exists(self, folder_path: Path | None = None) -> None:
         """
@@ -301,7 +303,7 @@ class MarkdownAdapter:
             await self.ensure_folder_exists(target_folder)
 
             # Sanitize filename
-            safe_filename = sanitize_filename(note_name) + ".md"
+            safe_filename = note_filename_stem(note_name) + NOTE_FILENAME_SUFFIX
             file_path = target_folder / safe_filename
 
             # Convert HTML to Markdown

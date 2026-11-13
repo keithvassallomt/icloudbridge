@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from html import unescape
@@ -178,7 +179,31 @@ def extract_attachment_references(markdown: str) -> list[str]:
     return attachments
 
 
-def sanitize_filename(filename: str, max_length: int = 255) -> str:
+# Longest name, in UTF-8 bytes, that APFS, HFS+ and ext4 all accept (NAME_MAX).
+FILENAME_MAX_BYTES = 255
+# Note files are "<stem>.md", each with a ".<stem>.md.meta.json" sidecar
+# (MarkdownAdapter). The stem budget leaves room for the longer sidecar name.
+# Every place that maps a note title to a file name must use this budget, or
+# long titles stop matching their files.
+NOTE_FILENAME_SUFFIX = ".md"
+NOTE_METADATA_SUFFIX = ".meta.json"
+NOTE_STEM_MAX_BYTES = FILENAME_MAX_BYTES - len(f".{NOTE_FILENAME_SUFFIX}{NOTE_METADATA_SUFFIX}".encode("utf-8"))
+_MAX_EXTENSION_BYTES = 16
+_HASH_SUFFIX_CHARS = 8
+
+
+def _utf8_prefix(text: str, max_bytes: int) -> str:
+    """Longest prefix of text that fits in max_bytes of UTF-8."""
+    return text.encode("utf-8")[: max(max_bytes, 0)].decode("utf-8", "ignore")
+
+
+def sanitize_filename(filename: str, max_length: int = FILENAME_MAX_BYTES, *, keep_extension: bool = True) -> str:
+    """Make a file name safe, at most max_length bytes of UTF-8.
+
+    A name that is too long is cut on a character boundary and gets "~" plus
+    a short hash of the full name, so long names sharing a prefix still map
+    to different files. Names that fit are returned exactly as before.
+    """
     if not filename:
         return "untitled"
 
@@ -191,16 +216,25 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
     if not sanitized:
         return "untitled"
 
-    if len(sanitized) > max_length:
-        name_parts = sanitized.rsplit(".", 1)
-        if len(name_parts) == 2:
-            name, ext = name_parts
-            available_length = max_length - len(ext) - 1
-            sanitized = f"{name[:available_length]}.{ext}"
-        else:
-            sanitized = sanitized[:max_length]
+    if len(sanitized.encode("utf-8")) <= max_length:
+        return sanitized
 
-    return sanitized
+    digest = hashlib.sha1(sanitized.encode("utf-8")).hexdigest()[:_HASH_SUFFIX_CHARS]
+    name, ext = sanitized, ""
+    if keep_extension:
+        base, dot, candidate = sanitized.rpartition(".")
+        # Only a short, space-free tail is an extension; a dotted title such
+        # as "example.net/page..." must not keep its long tail.
+        if dot and base and candidate and " " not in candidate and len(candidate.encode("utf-8")) <= _MAX_EXTENSION_BYTES:
+            name, ext = base, f".{candidate}"
+    suffix = f"~{digest}{ext}"
+    stem = _utf8_prefix(name, max_length - len(suffix.encode("utf-8"))).rstrip(" .")
+    return f"{stem}{suffix}"
+
+
+def note_filename_stem(note_name: str) -> str:
+    """File stem for a note title, leaving room for the .md suffix."""
+    return sanitize_filename(note_name, NOTE_STEM_MAX_BYTES, keep_extension=False)
 
 
 def _ensure_heading(markdown: str, note_title: str | None) -> str:

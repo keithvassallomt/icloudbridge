@@ -16,6 +16,7 @@ from icloudbridge.sources.notes.markdown import MarkdownAdapter, MarkdownNote
 from icloudbridge.sources.notes.shortcuts import NotesShortcutAdapter
 from icloudbridge.utils.converters import (
     extract_hashtags,
+    note_filename_stem,
     sanitize_filename,
     split_markdown_segments,
     strip_leading_heading,
@@ -322,7 +323,7 @@ class NotesSyncEngine:
             # When the DB is empty but both Apple Notes and Markdown already contain matching notes,
             # pair them by normalized folder/title instead of treating them as brand-new on both sides.
             def _normalize_title(name: str) -> str:
-                return sanitize_filename(name).casefold()
+                return note_filename_stem(name).casefold()
 
             apple_candidates: dict[str, AppleScriptNote] = {}
             markdown_candidates: dict[str, MarkdownNote] = {}
@@ -656,7 +657,7 @@ class NotesSyncEngine:
                     if dry_run:
                         logger.info(f"[DRY RUN] Would create remote: {apple_note.name}")
                         # Create fake path for dry run tracking
-                        remote_path = Path(f"{apple_note.name}.md")
+                        remote_path = Path(note_filename_stem(apple_note.name) + ".md")
                     else:
                         logger.info(f"New local note: {apple_note.name}")
                         remote_path, attachment_slug = await self._push_to_remote(
@@ -740,9 +741,9 @@ class NotesSyncEngine:
 
                     # Check if an Apple note with a matching title already exists
                     # If so, this will be handled by bootstrap reconciliation - skip it here
-                    normalized_md = sanitize_filename(md_note.name).casefold()
+                    normalized_md = note_filename_stem(md_note.name).casefold()
                     apple_title_collision = any(
-                        sanitize_filename(n.name).casefold() == normalized_md for n in apple_notes
+                        note_filename_stem(n.name).casefold() == normalized_md for n in apple_notes
                     )
 
                     if apple_title_collision:
