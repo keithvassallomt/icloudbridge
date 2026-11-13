@@ -146,3 +146,74 @@ def test_thumbnail_resolving_to_a_directory_is_skipped(a_directory, a_file):
         attachments = notes._rich_attachments_for_entry(entry)
 
     assert [a.uuid for a in attachments] == ["OBJ-1"]
+
+
+def _gallery_entry() -> dict:
+    """A scanned-document gallery as the ripper reports it.
+
+    The gallery object itself has no file; each scanned page is a child object
+    carrying the real image, and the gallery's HTML links the page by the
+    child's UUID.
+    """
+    return {
+        "embedded_objects": [
+            {
+                "uuid": "GALLERY-1",
+                "type": "com.apple.notes.gallery",
+                "conforms_to": "gallery",
+                "filename": None,
+                "filepath": None,
+                "backup_location": None,
+                "thumbnails": [],
+                "child_objects": [
+                    {
+                        "uuid": "PAGE-1",
+                        "type": "public.jpeg",
+                        "conforms_to": "public.jpeg",
+                        "filename": "page1.jpg",
+                        "filepath": "Accounts/x/Media/m1/page1.jpg",
+                        "backup_location": "/container/Accounts/x/Media/m1/page1.jpg",
+                        "thumbnails": [],
+                    },
+                    {
+                        "uuid": "PAGE-2",
+                        "type": "public.jpeg",
+                        "conforms_to": "public.jpeg",
+                        "filename": "page2.jpg",
+                        "filepath": "Accounts/x/Media/m2/page2.jpg",
+                        "backup_location": "/container/Accounts/x/Media/m2/page2.jpg",
+                        "thumbnails": [],
+                    },
+                ],
+            }
+        ]
+    }
+
+
+def test_gallery_pages_are_attachments(tmp_path):
+    """Scanned-document pages live in child_objects and must be exported.
+
+    Before the fix only the gallery's preview thumbnails were copied, and the
+    Markdown linked the full-size page at ../files/Accounts/..., which does not
+    exist in the export.
+    """
+    page1 = tmp_path / "page1.jpg"
+    page1.write_bytes(b"page-one")
+    page2 = tmp_path / "page2.jpg"
+    page2.write_bytes(b"page-two")
+    files = {
+        "/container/Accounts/x/Media/m1/page1.jpg": page1,
+        "/container/Accounts/x/Media/m2/page2.jpg": page2,
+    }
+    notes = NotesAdapter()
+
+    with patch.object(
+        notes._rich_capture, "resolve_attachment_path", side_effect=lambda p: files.get(p)
+    ):
+        attachments = notes._rich_attachments_for_entry(_gallery_entry())
+
+    by_uuid = {a.uuid: a for a in attachments}
+    assert set(by_uuid) == {"PAGE-1", "PAGE-2"}
+    assert by_uuid["PAGE-1"].source_path == page1
+    assert by_uuid["PAGE-2"].source_path == page2
+    assert by_uuid["PAGE-1"].is_image()

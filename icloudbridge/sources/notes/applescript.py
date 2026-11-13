@@ -800,10 +800,20 @@ class NotesAdapter:
         if not note_entry:
             return attachments
 
-        embedded = note_entry.get("embedded_objects") or []
-        for obj in embedded:
+        # Containers such as scanned-document galleries carry no file of their
+        # own; each page is a child object holding the real image. Walk
+        # children too, or the export keeps only the previews and links the
+        # full-size page to a ../files/ path that is never copied.
+        embedded: list[Any] = []
+        pending = list(note_entry.get("embedded_objects") or [])
+        while pending:
+            obj = pending.pop(0)
             if not isinstance(obj, dict):
                 continue
+            embedded.append(obj)
+            pending.extend(obj.get("child_objects") or [])
+
+        for obj in embedded:
             attachment_uuid = str(obj.get("uuid")) if obj.get("uuid") else None
             backup_location = obj.get("backup_location") or obj.get("filepath")
             source_path = self._rich_capture.resolve_attachment_path(backup_location)
