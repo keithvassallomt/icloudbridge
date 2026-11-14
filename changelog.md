@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- Password sync no longer changes or deletes logins that already exist. It only adds a login that's new on one side, either to your password manager (Bitwarden / Vaultwarden or Nextcloud Passwords) or to the file you import into Apple Passwords. A login whose password or details differ between the two, one that's missing from one side after it has synced, or one that looks renamed is listed on the Passwords page for you to sort out. Once both sides match, it leaves the list at the next sync. Simulate shows the same list without changing anything. Thanks to @wolffcatskyy for reworking password sync to make it safe (#35).
+- The command line now writes each export for Apple Passwords to a new file, named `apple-import-<date>-<time>-<id>.csv`, instead of replacing `apple-import.csv`. Delete each one after you import it.
+
+### Fixed
+- A login exported for Apple Passwords counted as synced before you had imported the file. If a sync ran before you imported it, the login was deleted from your password manager, as if you had deleted it in Apple Passwords. A login now counts as synced only once it's on both sides. After you update, logins exported earlier but never imported are exported again.
+- Logins in Apple Passwords with no username or no password were skipped, so they never reached your password manager. They now sync.
+- Spaces at the start or end of a password were removed when it was copied to your password manager. After you update, the logins this happened to are listed for review on the Passwords page. Correct the password in your password manager to clear them.
+- Apple Passwords keeps one login per website and username, so importing a second one replaced the first. A login in your password manager that would replace one in Apple Passwords, or another login in the same export, is no longer exported. It's listed for review instead.
+
 ## [0.3.3] - 2026-10-04
 
 ### Fixed
