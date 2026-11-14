@@ -10,6 +10,13 @@ import secrets
 # folder name that failed with ENAMETOOLONG and aborted the folder's sync.
 # The base is ASCII, so characters equal bytes.
 MAX_SLUG_BASE_LENGTH = 64
+ATTACHMENT_FOLDER_PREFIX = ".attachments."
+FILENAME_MAX_BYTES = 255
+
+
+def attachment_slug_fits(slug: str) -> bool:
+    """Whether ".attachments.<slug>" is a valid file name."""
+    return len(f"{ATTACHMENT_FOLDER_PREFIX}{slug}".encode()) <= FILENAME_MAX_BYTES
 
 
 def generate_attachment_slug(source: str | None = None) -> str:

@@ -24,7 +24,7 @@ from icloudbridge.utils.converters import (
 )
 from icloudbridge.utils.db import NotesDB
 from icloudbridge.utils.exceptions import SourceUnavailableError
-from icloudbridge.utils.slugs import generate_attachment_slug
+from icloudbridge.utils.slugs import attachment_slug_fits, generate_attachment_slug
 
 logger = logging.getLogger(__name__)
 
@@ -706,7 +706,7 @@ class NotesSyncEngine:
                                     local_folder_uuid="",
                                     remote_path=remote_path,
                                     timestamp=datetime.now().timestamp(),
-                                    attachment_slug=md_note.metadata.get("attachment_slug", attachment_slug),
+                                    attachment_slug=attachment_slug,
                                 )
                             stats["updated_remote"] += 1
 
@@ -955,18 +955,18 @@ class NotesSyncEngine:
         existing_path: Path | None,
         existing_md_note: MarkdownNote | None,
     ) -> str:
-        if existing_md_note and existing_md_note.metadata.get("attachment_slug"):
-            return existing_md_note.metadata["attachment_slug"]
+        stored = existing_md_note.metadata.get("attachment_slug") if existing_md_note else None
+        if not stored and existing_path:
+            stored = await self.markdown_adapter.get_attachment_slug(existing_path)
+        if not stored:
+            mapping = await self.db.get_mapping(apple_note.uuid)
+            stored = mapping.get("attachment_slug") if mapping else None
 
-        if existing_path:
-            slug = await self.markdown_adapter.get_attachment_slug(existing_path)
-            if slug:
-                return slug
-
-        mapping = await self.db.get_mapping(apple_note.uuid)
-        if mapping and mapping.get("attachment_slug"):
-            return mapping["attachment_slug"]
-
+        if stored and attachment_slug_fits(stored):
+            return stored
+        # Older releases stored slugs from the whole title, which can be too
+        # long to name a folder. No such folder can exist, so a new slug
+        # leaves nothing behind.
         return generate_attachment_slug(apple_note.name)
 
     def _prepare_note_html_with_attachments(
