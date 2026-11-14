@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-14
 
 ### Changed
 - Password sync now works out which side changed since the last sync. It saves that record only once a login is actually on both sides. A login you change or delete on one side is changed or deleted on the other. A login changed on both sides, or changed on one side and deleted on the other, is never overwritten. It's listed on the Passwords page for you to review, with the reason, and Simulate shows the same list without changing anything. Thanks to @wolffcatskyy for reworking password sync to make it safe (#35).
