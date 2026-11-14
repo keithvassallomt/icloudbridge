@@ -280,7 +280,7 @@ async def _import_apple_csv(
             tmp_path = tmp.name
 
         # Import from CSV
-        result = await engine.import_apple_csv(tmp_path)
+        result = await engine.import_apple_csv(Path(tmp_path))
 
         # Clean up temporary file
         Path(tmp_path).unlink()
@@ -334,7 +334,7 @@ async def _import_bitwarden_csv(
             tmp_path = tmp.name
 
         # Import from CSV
-        result = await engine.import_bitwarden_csv(tmp_path)
+        result = await engine.import_bitwarden_csv(Path(tmp_path))
 
         # Clean up temporary file
         Path(tmp_path).unlink()
