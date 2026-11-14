@@ -405,6 +405,12 @@ on run argv
 end run
 """
 
+ATTACHMENT_COUNT_SCRIPT = """
+on run argv
+    tell application "Notes" to return count of attachments of note id (item 1 of argv)
+end run
+"""
+
 
 # AppleScript to delete a note by its UUID (id)
 DELETE_NOTE_BY_ID_SCRIPT = """
@@ -1182,6 +1188,12 @@ class NotesAdapter:
         await self.ensure_notes_running()
         output = await self._run_applescript(NOTE_EXISTS_SCRIPT, note_uuid)
         return output.strip() == "true"
+
+    async def attachment_count(self, note_uuid: str) -> int:
+        """How many attachments (images, files) a note has in Apple Notes."""
+        await self.ensure_notes_running()
+        output = await self._run_applescript(ATTACHMENT_COUNT_SCRIPT, note_uuid)
+        return int(output.strip() or 0)
 
     async def delete_note_by_uuid(self, note_uuid: str) -> bool:
         """Delete a note by its Core Data UUID."""

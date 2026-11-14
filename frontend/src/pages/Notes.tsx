@@ -13,6 +13,7 @@ import {
   ChevronRight,
   ListChecks,
   Lock,
+  Paperclip,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,7 +28,7 @@ import { useSyncStore } from '@/store/sync-store';
 import type { SyncLog, SetupVerificationResponse, NotesAllFoldersResponse, FolderMapping, AppConfig, SyncResponse, PendingNoteInfo } from '@/types/api';
 import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
 
-type SimulationChangeCategory = 'added' | 'updated' | 'deleted' | 'unchanged' | 'locked';
+type SimulationChangeCategory = 'added' | 'updated' | 'deleted' | 'unchanged' | 'locked' | 'attachments';
 
 interface SimulationDetailSection {
   added?: string[];
@@ -35,6 +36,7 @@ interface SimulationDetailSection {
   deleted?: string[];
   unchanged?: string[];
   locked?: string[];
+  attachments?: string[];
 }
 
 interface SimulationFolderStats {
@@ -50,6 +52,8 @@ interface SimulationFolderStats {
   // Password-protected notes left alone, and Markdown copies kept for them.
   locked?: number;
   locked_markdown?: number;
+  // IMAP/Exchange notes with attachments, kept from a Markdown edit.
+  attachments_kept?: number;
   details?: {
     apple?: SimulationDetailSection;
     markdown?: SimulationDetailSection;
@@ -66,13 +70,14 @@ interface SimulationFolderResult {
 
 type SimulationChangeSummary = Record<SimulationChangeCategory, number>;
 
-const CHANGE_ORDER: SimulationChangeCategory[] = ['added', 'updated', 'deleted', 'unchanged', 'locked'];
+const CHANGE_ORDER: SimulationChangeCategory[] = ['added', 'updated', 'deleted', 'unchanged', 'locked', 'attachments'];
 const CHANGE_LABELS: Record<SimulationChangeCategory, string> = {
   added: 'Added',
   updated: 'Updated',
   deleted: 'Deleted',
   unchanged: 'Unchanged',
   locked: 'Locked, left alone',
+  attachments: 'Has attachments, left alone',
 };
 
 const CHANGE_ICONS: Record<SimulationChangeCategory, typeof PlusCircle> = {
@@ -81,6 +86,7 @@ const CHANGE_ICONS: Record<SimulationChangeCategory, typeof PlusCircle> = {
   deleted: MinusCircle,
   unchanged: CheckCircle2,
   locked: Lock,
+  attachments: Paperclip,
 };
 
 const CHANGE_COLORS: Record<SimulationChangeCategory, string> = {
@@ -89,6 +95,7 @@ const CHANGE_COLORS: Record<SimulationChangeCategory, string> = {
   deleted: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/40 dark:bg-rose-400/10 dark:text-rose-200',
   unchanged: 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-400/40 dark:bg-slate-400/10 dark:text-slate-200',
   locked: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-200',
+  attachments: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-200',
 };
 
 const buildSummary = (stats?: SimulationFolderStats) => ({
@@ -98,6 +105,7 @@ const buildSummary = (stats?: SimulationFolderStats) => ({
     deleted: stats?.deleted_local ?? 0,
     unchanged: stats?.unchanged ?? 0,
     locked: stats?.locked ?? 0,
+    attachments: stats?.attachments_kept ?? 0,
   } satisfies SimulationChangeSummary,
   markdown: {
     added: stats?.created_remote ?? 0,
@@ -105,12 +113,17 @@ const buildSummary = (stats?: SimulationFolderStats) => ({
     deleted: stats?.deleted_remote ?? 0,
     unchanged: stats?.unchanged ?? 0,
     locked: stats?.locked_markdown ?? 0,
+    attachments: 0,
   } satisfies SimulationChangeSummary,
 });
 
-// "Locked" only appears for folders that have locked notes.
+// "Locked" and "Has attachments" only appear for folders that have such notes.
 const visibleCategories = (summary: ReturnType<typeof buildSummary>) =>
-  CHANGE_ORDER.filter((key) => key !== 'locked' || summary.apple.locked > 0 || summary.markdown.locked > 0);
+  CHANGE_ORDER.filter((key) => {
+    if (key === 'locked') return summary.apple.locked > 0 || summary.markdown.locked > 0;
+    if (key === 'attachments') return summary.apple.attachments > 0;
+    return true;
+  });
 
 const buildDetails = (stats?: SimulationFolderStats) => ({
   apple: stats?.details?.apple ?? {},

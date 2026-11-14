@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Track at most this many note titles per category to keep simulation payloads reasonable.
 DETAIL_ENTRY_LIMIT = 50
-DETAIL_CATEGORIES = ("added", "updated", "deleted", "unchanged", "locked")
+DETAIL_CATEGORIES = ("added", "updated", "deleted", "unchanged", "locked", "attachments")
 
 
 class NotesSyncEngine:
@@ -259,6 +259,8 @@ class NotesSyncEngine:
             # Password-protected notes left alone, and Markdown copies kept for them.
             "locked": 0,
             "locked_markdown": 0,
+            # IMAP/Exchange notes with attachments, kept from a Markdown edit.
+            "attachments_kept": 0,
         }
         stats["details"] = {
             "apple": {category: [] for category in DETAIL_CATEGORIES},
@@ -285,6 +287,16 @@ class NotesSyncEngine:
             detail_list = stats["details"][section][category]
             if len(detail_list) < DETAIL_ENTRY_LIMIT:
                 detail_list.append(title)
+
+        def keep_note_with_attachments(title: str) -> None:
+            logger.warning(
+                "'%s' has attachments in Apple Notes that iCloudBridge can't copy, because it's in "
+                "an IMAP or Exchange account. Writing your Markdown edit into it would delete them, "
+                "so the note was left alone. Make the edit in Apple Notes instead.",
+                title,
+            )
+            stats["attachments_kept"] += 1
+            record_detail("apple", "attachments", title)
 
         # Folders may have been created since the last folder was synced
         self._shortcut_folder_names.clear()
@@ -649,6 +661,9 @@ class NotesSyncEngine:
                             record_detail("markdown", "updated", apple_note.name)
                         elif sync_mode == "import" or sync_mode == "bidirectional":
                             # Import mode or remote is newer in bidirectional - pull from remote
+                            if await self._would_lose_attachments(uuid):
+                                keep_note_with_attachments(apple_note.name)
+                                continue
                             if dry_run:
                                 logger.info(f"[DRY RUN] Would update local (conflict, remote wins): {apple_note.name}")
                             else:
@@ -718,6 +733,9 @@ class NotesSyncEngine:
                             record_detail("apple", "unchanged", apple_note.name)
                             record_detail("markdown", "unchanged", apple_note.name)
                         else:
+                            if await self._would_lose_attachments(uuid):
+                                keep_note_with_attachments(apple_note.name)
+                                continue
                             if dry_run:
                                 logger.info(f"[DRY RUN] Would update local: {apple_note.name}")
                             else:
@@ -1132,6 +1150,21 @@ class NotesSyncEngine:
                 same_name = [f for f in folders if f.name.rsplit("/", 1)[-1] == name]
                 self._shortcut_folder_names[folder_name] = name if len(same_name) == 1 else None
         return self._shortcut_folder_names[folder_name]
+
+    async def _would_lose_attachments(self, note_uuid: str) -> bool:
+        """Whether writing Markdown into this note would delete attachments the sync can't copy.
+
+        Attachments come from the iCloud notes database, so notes in IMAP or
+        Exchange accounts (a Google account, say) reach Markdown without them,
+        and writing the Markdown back replaces the note's whole body.
+        """
+        if _coredata_entity(note_uuid) in (None, "ICNote"):
+            return False
+        try:
+            return await self.notes_adapter.attachment_count(note_uuid) > 0
+        except Exception as exc:
+            logger.warning("Couldn't check %s for attachments, so leaving it alone: %s", note_uuid, exc)
+            return True
 
     async def _pull_from_remote(
         self,
