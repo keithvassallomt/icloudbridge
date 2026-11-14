@@ -481,14 +481,17 @@ class NotesSyncEngine:
                 else:
                     last_sync_dt = max(apple_mtime, md_mtime)
 
-                await self.db.upsert_mapping(
-                    local_uuid=apple_note.uuid,
-                    local_name=apple_note.name,
-                    local_folder_uuid="",
-                    remote_path=md_note.file_path,
-                    timestamp=last_sync_dt.timestamp(),
-                    attachment_slug=md_note.metadata.get("attachment_slug"),
-                )
+                # Simulate pairs them in memory only: it must not write, and it
+                # can run alongside a real sync.
+                if not dry_run:
+                    await self.db.upsert_mapping(
+                        local_uuid=apple_note.uuid,
+                        local_name=apple_note.name,
+                        local_folder_uuid="",
+                        remote_path=md_note.file_path,
+                        timestamp=last_sync_dt.timestamp(),
+                        attachment_slug=md_note.metadata.get("attachment_slug"),
+                    )
 
                 mapping_row = {
                     "local_uuid": apple_note.uuid,
