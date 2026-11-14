@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ..sources.passwords.apple_csv import ApplePasswordsCSVParser
 from ..sources.passwords.bitwarden_csv import BitwardenCSVParser
+from ..sources.passwords.diagnostics import InvalidInputError
 from ..sources.passwords.models import PasswordEntry
 from ..sources.passwords.providers.base import PasswordProviderBase
 from ..sources.passwords.providers.vaultwarden import VaultwardenProvider
@@ -402,10 +403,15 @@ class PasswordsSyncEngine:
 
     @staticmethod
     def _otp(value):
+        """Normalise a TOTP value to (secret, algorithm, digits, period).
+
+        A bare secret carries no parameters (older Nextcloud entries, Bitwarden
+        secrets typed by hand), so those come back as None and match any value.
+        """
         if not value:
             return None
         if not value.startswith("otpauth://"):
-            return (value.replace(" ", "").upper(), "SHA1", "6", "30")
+            return (value.replace(" ", "").upper(), None, None, None)
         parsed = urlparse(value)
         fields = parse_qs(parsed.query)
         if parsed.netloc != "totp" or not fields.get("secret"):
@@ -418,13 +424,30 @@ class PasswordsSyncEngine:
         )
 
     @staticmethod
+    def _same_otp(first, second) -> bool:
+        a, b = PasswordsSyncEngine._otp(first), PasswordsSyncEngine._otp(second)
+        if not isinstance(a, tuple) or not isinstance(b, tuple):
+            return a == b
+        return all(x is None or y is None or x == y for x, y in zip(a, b, strict=True)) and a[0] == b[0]
+
+    @staticmethod
+    def _notes(value: str | None) -> str:
+        # Apple and the providers differ in line endings and surrounding whitespace.
+        return (value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+
+    @staticmethod
     def _content(entry: PasswordEntry) -> tuple:
         # Metadata is compared in memory only; OTP and notes must not enter the DB.
         return (
             entry.password,
-            entry.notes or "",
-            PasswordsSyncEngine._otp(entry.otp_auth),
+            PasswordsSyncEngine._notes(entry.notes),
             tuple(sorted({entry.normalize_url(url) for url in entry.get_all_urls()})),
+        )
+
+    @classmethod
+    def _same(cls, apple: PasswordEntry, remote: PasswordEntry) -> bool:
+        return cls._content(apple) == cls._content(remote) and cls._same_otp(
+            apple.otp_auth, remote.otp_auth
         )
 
     def _build_password_sync_plan(
@@ -451,7 +474,7 @@ class PasswordsSyncEngine:
         for key in sorted(set(apple_map) | set(provider_map) | set(mappings), key=repr):
             apple, remote, baseline = apple_map.get(key), provider_map.get(key), mappings.get(key)
             if apple is not None and remote is not None:
-                if self._content(apple) == self._content(remote):
+                if self._same(apple, remote):
                     plan["unchanged"].append(key)
                 else:
                     plan["conflicts"].append((key, apple, remote, baseline))
@@ -506,9 +529,9 @@ class PasswordsSyncEngine:
         Vaultwarden batches share a vault read but retain individual create outcomes.
         """
         if not run_push and not run_pull:
-            raise ValueError("At least one sync phase must be enabled")
+            raise InvalidInputError("At least one sync phase must be enabled.")
         if run_push and apple_csv_path is None:
-            raise ValueError("Apple CSV path is required for push phase")
+            raise InvalidInputError("An Apple Passwords CSV export is required to add logins to the provider.")
         start = time.time()
         apple_entries = (
             await asyncio.to_thread(ApplePasswordsCSVParser.parse_file, apple_csv_path)
@@ -548,8 +571,8 @@ class PasswordsSyncEngine:
         )
         reviews = [
             {
-                "title": key[0],
-                "username": key[2],
+                "title": (a or r).title,
+                "username": (a or r).username,
                 "action": "review",
                 "reason": self._review_reason(a, r, b),
             }
@@ -594,9 +617,9 @@ class PasswordsSyncEngine:
                         entry.get_dedup_key()
                     )
             url_indexes.append(index)
-        for entries, opposite in (
-            (apple_entries, url_indexes[1]),
-            (remote_entries, url_indexes[0]),
+        for entries, own, opposite in (
+            (apple_entries, apple_map, url_indexes[1]),
+            (remote_entries, remote_map, url_indexes[0]),
         ):
             for entry in entries:
                 key = entry.get_dedup_key()
@@ -606,7 +629,10 @@ class PasswordsSyncEngine:
                 candidates = set()
                 for url in entry.get_all_urls():
                     candidates.update(opposite.get((entry.normalize_url(url), key[2]), set()))
-                if candidates - {key}:
+                # A candidate still present on this side is a separate login that
+                # shares the site and username (e.g. two accounts on one SSO domain),
+                # not the old name of this one.
+                if candidates - {key} - own.keys():
                     blocked.add(identity)
                     reviews.append(
                         {
@@ -619,22 +645,23 @@ class PasswordsSyncEngine:
 
         # Index identities once; equal pairs can clear old renamed mappings.
         by_title, by_url, by_id = {}, {}, {}
-        for e in apple_entries + remote_entries:
-            key = e.get_dedup_key()
-            if key in matched:
-                continue
-            by_title.setdefault((key[0], key[2]), []).append(e)
-            if key[1]:
-                by_url.setdefault((key[1], key[2]), []).append(e)
-            if e.provider_id:
-                by_id.setdefault(e.provider_id, []).append(e)
+        for own, entries in ((apple_map, apple_entries), (remote_map, remote_entries)):
+            for e in entries:
+                key = e.get_dedup_key()
+                if key in matched:
+                    continue
+                by_title.setdefault((key[0], key[2]), []).append((e, own))
+                if key[1]:
+                    by_url.setdefault((key[1], key[2]), []).append((e, own))
+                if e.provider_id:
+                    by_id.setdefault(e.provider_id, []).append((e, own))
         for key, previous in baseline.items():
-            candidates = (
-                by_title.get((key[0], key[2]), [])
-                + by_url.get((key[1], key[2]), [])
-                + by_id.get(previous.get("provider_id"), [])
-            )
-            for e in candidates:
+            same_object = by_id.get(previous.get("provider_id"), [])
+            similar = by_title.get((key[0], key[2]), []) + by_url.get((key[1], key[2]), [])
+            # If the mapped login still exists on that side, a similar entry next
+            # to it is a separate login, not a rename of the mapped one.
+            candidates = same_object + [(e, own) for e, own in similar if key not in own]
+            for e, _own in candidates:
                 current = e.get_dedup_key()
                 identity = (current[0], current[2])
                 if current != key and identity not in blocked:
@@ -647,34 +674,34 @@ class PasswordsSyncEngine:
                             "reason": "mapped_identity_changed",
                         }
                     )
-        for e in apple_entries + remote_entries:
-            if not e.password:
-                key = e.get_dedup_key()
-                blocked.add((key[0], key[2]))
-                reviews.append(
-                    {
-                        "title": e.title,
-                        "username": e.username,
-                        "action": "review",
-                        "reason": "missing_password",
-                    }
-                )
-
         def allowed(e):
             return (e.title.lower().strip(), e.username.lower().strip()) not in blocked
 
         additions = [e for e in plan["create_provider"] if allowed(e)] if run_push else []
         exports = [e for e in plan["create_apple"] if allowed(e)] if run_pull else []
+        # Apple Passwords keeps one login per website (host) and username, with
+        # usernames compared case-sensitively: importing a second one overwrites
+        # the first. Never export a login that would collide with an Apple login
+        # or with another login in the same export.
+        def sites(e):
+            username = e.username.strip()
+            return {(e.normalize_url(url), username) for url in e.get_all_urls()}
+
+        apple_sites = {site for a in apple_entries for site in sites(a)}
+        export_site_counts = {}
+        for e in exports:
+            for site in sites(e):
+                export_site_counts[site] = export_site_counts.get(site, 0) + 1
         importable = []
         for e in exports:
-            reason = None
-            if not e.username.strip():
-                reason = "apple_import_missing_username"
-            elif not e.get_all_urls():
-                reason = "apple_import_missing_url"
-            if reason:
+            if any(s in apple_sites or export_site_counts[s] > 1 for s in sites(e)):
                 reviews.append(
-                    {"title": e.title, "username": e.username, "action": "review", "reason": reason}
+                    {
+                        "title": e.title,
+                        "username": e.username,
+                        "action": "review",
+                        "reason": "apple_one_login_per_site",
+                    }
                 )
             else:
                 importable.append(e)
@@ -684,7 +711,7 @@ class PasswordsSyncEngine:
             exports = []
             reviews.append({"action": "review", "reason": "fresh_apple_export_required"})
         if exports and not simulate and output_apple_csv is None:
-            raise ValueError("Output path required when exporting Apple CSV")
+            raise InvalidInputError("An output path is required when exporting logins for Apple.")
         created = failed = 0
         folders_created = 0
         if not simulate:
@@ -731,7 +758,7 @@ class PasswordsSyncEngine:
                             {
                                 "title": a.title,
                                 "username": a.username,
-                                "url": a.normalize_url(a.url),
+                                "url": a.key_url(),
                                 "provider_id": r.provider_id,
                                 "provider_type": provider_type,
                                 "last_apple_hash": a.get_password_hash(),
@@ -739,7 +766,7 @@ class PasswordsSyncEngine:
                             }
                         )
                 # Retire tracking omitted by both snapshots or superseded by an
-                # actually observed equal pair with Safari's canonical root URL.
+                # actually observed equal pair with Apple's host-only URL.
                 retired = []
                 for m in mappings:
                     key = (
@@ -751,7 +778,7 @@ class PasswordsSyncEngine:
                         key in matched
                         and allowed(apple_map[key])
                         and (m.get("url") or "")
-                        != (apple_map[key].normalize_url(apple_map[key].url) or "")
+                        != (apple_map[key].key_url() or "")
                     )
                     if alias_replaced or (
                         m.get("confirmed") and key not in apple_map and key not in remote_map
@@ -920,4 +947,3 @@ class PasswordsSyncEngine:
 
         return count_fields(entry1) > count_fields(entry2)
 
-    _TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}

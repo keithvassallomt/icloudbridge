@@ -5,6 +5,7 @@ import logging
 import re
 from pathlib import Path
 
+from .diagnostics import InvalidInputError
 from .models import PasswordEntry
 from .secure_csv import private_csv
 
@@ -51,8 +52,9 @@ class ApplePasswordsCSVParser:
             # Validate headers
             expected_headers = {"Title", "URL", "Username", "Password", "Notes", "OTPAuth"}
             if not expected_headers.issubset(set(reader.fieldnames or [])):
-                raise ValueError(
-                    f"Invalid Apple Passwords CSV format. Expected headers: {expected_headers}"
+                raise InvalidInputError(
+                    "This isn't an Apple Passwords export: expected the columns "
+                    "Title, URL, Username, Password, Notes and OTPAuth."
                 )
 
             for row_num, row in enumerate(reader, start=2):  # Start at 2 (1 is header)

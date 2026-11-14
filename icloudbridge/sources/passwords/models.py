@@ -43,24 +43,25 @@ class PasswordEntry:
 
     @staticmethod
     def normalize_url(url: str | None) -> str | None:
-        """Safari serializes an empty HTTP path as '/'; paths otherwise remain distinct."""
+        """Reduce a website URL to what Apple Passwords keeps: https://host[:port]/.
+
+        Apple stores a website, not a page. Importing https://example.com/login
+        exports back as https://example.com/, so the path, query, fragment and
+        user info are dropped and web URLs are compared by host and port only.
+        Non-web URLs (app links and the like) are compared as given.
+        """
         if not url or not url.strip():
             return None
         value = url.strip()
+        candidate = value if "://" in value else f"https://{value}"
         try:
-            parts = urlsplit(value)
-            if parts.scheme.lower() in {"http", "https"} and parts.netloc:
-                userinfo, separator, hostport = parts.netloc.rpartition("@")
-                authority = (userinfo + separator if separator else "") + hostport.lower()
-                return urlunsplit(
-                    (
-                        parts.scheme.lower(),
-                        authority,
-                        parts.path or "/",
-                        parts.query,
-                        parts.fragment,
-                    )
-                )
+            parts = urlsplit(candidate)
+            if parts.scheme.lower() in {"http", "https"} and parts.hostname:
+                host = parts.hostname.lower()
+                if ":" in host:
+                    host = f"[{host}]"
+                port = f":{parts.port}" if parts.port else ""
+                return urlunsplit(("https", host + port, "/", "", ""))
         except ValueError:
             pass
         return value
@@ -74,9 +75,18 @@ class PasswordEntry:
         """
         return (
             self.title.lower().strip(),
-            self.normalize_url(self.url),
+            self.key_url(),
             self.username.lower().strip(),
         )
+
+    def key_url(self) -> str | None:
+        """The URL that identifies this login, independent of URL order.
+
+        Apple exports a login with several websites as one row per website, in
+        no fixed order, so the first URL is not stable across a round trip.
+        """
+        urls = {self.normalize_url(url) for url in self.get_all_urls()} - {None}
+        return min(urls) if urls else None
 
     def add_url(self, url: str) -> None:
         """Add an additional URL if not already tracked."""

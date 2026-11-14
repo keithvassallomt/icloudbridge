@@ -3,6 +3,7 @@
 import asyncio
 import sys
 import logging
+from datetime import datetime
 from uuid import uuid4
 from pathlib import Path
 from typing import Annotated, Optional
@@ -1993,7 +1994,7 @@ def passwords_delete_nextcloud_credentials(
 def passwords_sync(
     ctx: typer.Context,
     apple_csv: Path = typer.Option(..., help="Apple Passwords CSV export"),
-    output: Path | None = typer.Option(None, "-o", "--output", help="Output path for Apple CSV (default: data_dir/apple-import.csv)"),
+    output: Path | None = typer.Option(None, "-o", "--output", help="Output path for Apple CSV (default: a new data_dir/apple-import-<date>-<time>.csv each run)"),
     bulk: bool = typer.Option(False, "--bulk", help="Compatibility option; reconciliation adds logins individually"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Compare snapshots without changing passwords, exports, or baselines"),
 ) -> None:
@@ -2092,7 +2093,10 @@ def passwords_sync(
     db = PasswordsDB(db_path)
 
     cfg.ensure_data_dir()
-    default_output = cfg.general.data_dir / f"apple-import-{uuid4().hex}.csv"
+    # A new file each run: the writer never overwrites an export the user may not have imported yet.
+    default_output = cfg.general.data_dir / (
+        f"apple-import-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:6]}.csv"
+    )
     output_path = output or default_output
 
     async def run_sync():

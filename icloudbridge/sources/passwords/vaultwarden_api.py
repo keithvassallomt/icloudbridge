@@ -13,6 +13,7 @@ import httpx
 from argon2.low_level import Type, hash_secret_raw
 
 from icloudbridge import __version__
+from .diagnostics import ProviderAuthError
 from .retry import retry_addition
 
 from .bitwarden_crypto import (
@@ -263,11 +264,40 @@ class VaultwardenAPIClient:
             logger.error(f"Response: {e.response.text}")
             if e.response.status_code == 429:
                 self._log_rate_limit_diagnostics(e.response)
-                raise Exception(self._rate_limit_message(e.response)) from e
-            raise Exception(f"Failed to authenticate with VaultWarden: {e}") from e
+                raise ProviderAuthError(self._rate_limit_message(e.response)) from e
+            raise ProviderAuthError(self._auth_failure_message(e.response)) from e
+        except httpx.TransportError as e:
+            logger.error(f"VaultWarden authentication failed: {e}")
+            raise ProviderAuthError(
+                f"Could not reach VaultWarden at {self.identity_base} "
+                f"({type(e).__name__}); check the server URL and network."
+            ) from e
+        except ProviderAuthError:
+            raise
         except Exception as e:
             logger.error(f"VaultWarden authentication failed: {e}")
-            raise Exception(f"Failed to authenticate with VaultWarden: {e}") from e
+            raise ProviderAuthError(
+                f"Failed to authenticate with VaultWarden ({type(e).__name__})."
+            ) from e
+
+    @staticmethod
+    def _auth_failure_message(response: httpx.Response) -> str:
+        """Show the server's own reason (e.g. wrong password), which never echoes secrets."""
+        detail = ""
+        try:
+            body = response.json()
+            detail = (
+                (body.get("ErrorModel") or {}).get("Message")
+                or body.get("error_description")
+                or body.get("message")
+                or body.get("error")
+                or ""
+            )
+        except Exception:
+            pass
+        detail = " ".join(str(detail).split())[:200]
+        message = f"VaultWarden rejected the login (HTTP {response.status_code})"
+        return f"{message}: {detail}" if detail else f"{message}."
 
     async def _derive_password_key(self) -> str:
         """Derive the password key using the KDF parameters from VaultWarden."""

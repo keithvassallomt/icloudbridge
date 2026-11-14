@@ -169,6 +169,13 @@ on both sides. Missing URLs use one consistent empty value, and duplicate legacy
 tracking rows are collapsed. This migration changes tracking only. Apple snapshot
 counts and last-import time update after real syncs; simulations leave them alone.
 
-Provider fields with no password are held as `missing_password`; blank usernames
-are retained. Notes keep their whitespace. Nextcloud custom URL and TOTP fields
-are read back, with full OTP parameters preserved on new writes.
+Logins with no password, no username or no website sync like any other: Apple
+Passwords imports and exports all three. Apple keeps only one login per website and
+username, and importing a second one overwrites the first. It also stores only the
+website's host: `https://example.com/login` comes back as `https://example.com/`, so
+URLs are compared by host and port only. A provider login that
+shares both with an Apple login, or with another login in the same export, is
+therefore held as `apple_one_login_per_site` instead of exported. Notes are compared
+ignoring line endings and leading or trailing whitespace. A bare TOTP secret matches
+an `otpauth://` URI with the same secret. Nextcloud custom URL and TOTP fields are
+read back, with full OTP parameters preserved on new writes.
