@@ -162,6 +162,15 @@ async def sync_notes(
     engine = NotesSyncEngine(markdown_base_path, db_path, prefer_shortcuts=prefer_shortcuts)
     await engine.initialize()
 
+    # A single folder syncs to where the folder mappings put it.
+    if request.folder:
+        try:
+            markdown_folder, folder_mode = await engine.single_folder_destination(
+                request.folder, config.notes.folder_mappings, request.mode
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from None
+
     # Create sync log entry ONLY if not a dry run
     log_id = None
     sync_logs_db = None
@@ -180,14 +189,13 @@ async def sync_notes(
     try:
         # Handle all-folders sync vs single folder sync
         if request.folder:
-            # Single folder sync
             result = await engine.sync_folder(
                 folder_name=request.folder,
-                markdown_subfolder=request.folder,
+                markdown_subfolder=markdown_folder,
                 dry_run=request.dry_run,
                 skip_deletions=request.skip_deletions,
                 deletion_threshold=request.deletion_threshold,
-                sync_mode=request.mode,
+                sync_mode=folder_mode,
             )
         else:
             # All-folders sync

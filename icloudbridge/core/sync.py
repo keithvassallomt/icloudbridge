@@ -1345,6 +1345,51 @@ class NotesSyncEngine:
         logger.info(f"Selective sync complete. Processed {len(results)} folder(s)")
         return results
 
+    async def single_folder_destination(
+        self,
+        folder_name: str,
+        folder_mappings: dict | None,
+        requested_mode: str,
+    ) -> tuple[str, str]:
+        """Where one Apple folder syncs to: (markdown subfolder, mode).
+
+        A mapped folder, or a subfolder of one, goes where the folder mappings put
+        it, in the mapping's mode, exactly as in a full sync. Using the Apple path
+        instead ("iCloud/Recipes") made the sync follow the notes into a second
+        tree, moving their files out of the mapped folder.
+
+        Raises:
+            ValueError: If the mappings exclude the folder.
+        """
+        if not folder_mappings:
+            return folder_name, requested_mode
+        default_account, accounts = await self.notes_adapter.list_accounts()
+        best: tuple[str, dict] | None = None
+        for key, mapping in folder_mappings.items():
+            # Same rule as _sync_mapped_folders: a key without an account is in
+            # the default account.
+            apple_path = key if key.split("/", 1)[0] in accounts else f"{default_account}/{key}"
+            if folder_name == apple_path or folder_name.startswith(f"{apple_path}/"):
+                if best is None or len(apple_path) > len(best[0]):
+                    best = (apple_path, mapping)
+        if best is None:
+            logger.warning(
+                "'%s' isn't in your folder mappings; syncing it to '%s'", folder_name, folder_name
+            )
+            return folder_name, requested_mode
+        apple_path, mapping = best
+        # Config gives FolderMapping objects; sync_with_mappings callers pass dicts.
+        if isinstance(mapping, dict):
+            mapped_folder, mapped_mode = mapping.get("markdown_folder"), mapping.get("mode")
+        else:
+            mapped_folder = getattr(mapping, "markdown_folder", None)
+            mapped_mode = getattr(mapping, "mode", None)
+        if not mapped_folder:
+            raise ValueError(f"'{folder_name}' is excluded in your folder mappings")
+        relative = folder_name[len(apple_path):].lstrip("/")
+        markdown_folder = mapped_folder + (f"/{relative}" if relative else "")
+        return markdown_folder, mapped_mode or "bidirectional"
+
     async def _sync_mapped_folders(
         self,
         folder_mappings: dict,

@@ -644,12 +644,19 @@ def notes_sync(
         else:
             # Auto 1:1 sync or single folder sync
             if folder:
-                folders_to_sync = [folder]
-                console.print(f"[cyan]Syncing folder:[/cyan] {folder}\n")
+                try:
+                    markdown_folder, folder_mode = await sync_engine.single_folder_destination(
+                        folder, cfg.notes.folder_mappings, mode
+                    )
+                except ValueError as exc:
+                    console.print(f"[red]{exc}[/red]")
+                    raise typer.Exit(1) from None
+                folders_to_sync = [(folder, markdown_folder, folder_mode)]
+                console.print(f"[cyan]Syncing folder:[/cyan] {folder} → {markdown_folder} ({folder_mode})\n")
             else:
                 console.print("[cyan]Fetching folders from Apple Notes...[/cyan]")
                 all_folders = await sync_engine.list_folders()
-                folders_to_sync = [f["name"] for f in all_folders]
+                folders_to_sync = [(f["name"], f["name"], mode) for f in all_folders]
                 console.print(f"[green]Found {len(folders_to_sync)} folders[/green]\n")
 
             # Sync each folder
@@ -667,16 +674,16 @@ def notes_sync(
             }
 
             async with sync_engine.rich_capture_scope():
-                for folder_name in folders_to_sync:
+                for folder_name, markdown_folder, folder_mode in folders_to_sync:
                     try:
                         console.print(f"[bold]Syncing folder:[/bold] {folder_name}")
                         stats = await sync_engine.sync_folder(
                             folder_name,
-                            folder_name,
+                            markdown_folder,
                             dry_run=dry_run,
                             skip_deletions=skip_deletions,
                             deletion_threshold=deletion_threshold,
-                            sync_mode=mode,
+                            sync_mode=folder_mode,
                         )
                     except RuntimeError as e:
                         console.print(f"[red]Error syncing {folder_name}: {e}[/red]")

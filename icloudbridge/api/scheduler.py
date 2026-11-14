@@ -532,13 +532,16 @@ class SchedulerManager:
         # Single-folder schedules include a folder in their config JSON
         folder_name = config.get("folder")
         if folder_name:
+            markdown_folder, folder_mode = await engine.single_folder_destination(
+                folder_name, self.config.notes.folder_mappings, sync_mode
+            )
             stats = await engine.sync_folder(
                 folder_name=folder_name,
-                markdown_subfolder=folder_name,
+                markdown_subfolder=markdown_folder,
                 dry_run=dry_run,
                 skip_deletions=skip_deletions,
                 deletion_threshold=deletion_threshold,
-                sync_mode=sync_mode,
+                sync_mode=folder_mode,
             )
             return {
                 **stats,
