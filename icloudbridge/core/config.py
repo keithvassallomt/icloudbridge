@@ -289,6 +289,10 @@ class PasswordsConfig(BaseSettings):
     enabled: bool = True
     provider: str = "vaultwarden"  # "vaultwarden" or "nextcloud"
     passwords_ssl_verify_cert: bool | str = True
+    # Off: a change or deletion on one side is copied to the other.
+    # On: it's listed on the Passwords page for you to review instead.
+    review_changes: bool = False
+    review_deletions: bool = False
 
     # VaultWarden configuration
     vaultwarden_url: str | None = None

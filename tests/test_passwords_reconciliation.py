@@ -61,21 +61,56 @@ def provider(entries=()):
 @pytest.mark.parametrize(
     ("a", "r", "reason"),
     [
-        ("changed-a", "changed-r", "both_changed"),
-        ("changed-a", "synthetic", "apple_changed"),
-        ("synthetic", "changed-r", "provider_changed"),
+        ("changed-a", "changed-r", "changed_on_both_sides"),
+        ("changed-a", "synthetic", "changed_in_apple"),
+        ("synthetic", "changed-r", "changed_in_provider"),
     ],
 )
-async def test_three_way_changes_are_review_only(tmp_path, a, r, reason):
+async def test_changes_are_held_when_reviewing_changes(tmp_path, a, r, reason):
     csv = tmp_path / "apple.csv"
     ApplePasswordsCSVParser.write_file([entry(a)], csv)
     db, remote = database([mapping()]), provider([entry(r)])
-    result = await PasswordsSyncEngine(db).sync(apple_csv_path=csv, provider=remote)
+    result = await PasswordsSyncEngine(db).sync(
+        apple_csv_path=csv, provider=remote, review_changes=True
+    )
     assert result["push"]["conflicts"][0]["reason"] == reason
     remote.create_password.assert_not_awaited()
     remote.update_password.assert_not_awaited()
     remote.delete_password.assert_not_awaited()
     db.upsert_password_mapping.assert_not_awaited()
+
+
+async def test_apple_change_updates_the_provider_by_default(tmp_path):
+    csv = tmp_path / "apple.csv"
+    ApplePasswordsCSVParser.write_file([entry("changed-a")], csv)
+    db, remote = database([mapping()]), provider([entry()])
+    result = await PasswordsSyncEngine(db).sync(apple_csv_path=csv, provider=remote)
+    assert result["push"]["conflicts"] == []
+    remote.update_password.assert_awaited_once()
+    provider_id, updated = remote.update_password.call_args.args
+    assert provider_id == "fake-id" and updated.password == "changed-a"
+    remote.create_password.assert_not_awaited()
+
+
+async def test_provider_change_is_exported_for_apple_by_default(tmp_path):
+    csv, output = tmp_path / "apple.csv", tmp_path / "out.csv"
+    ApplePasswordsCSVParser.write_file([entry()], csv)
+    db, remote = database([mapping()]), provider([entry("changed-r")])
+    result = await PasswordsSyncEngine(db).sync(
+        apple_csv_path=csv, provider=remote, output_apple_csv=output
+    )
+    assert result["pull"]["updated"] == 1 and result["pull"]["new_entries"] == 0
+    assert [x.password for x in ApplePasswordsCSVParser.parse_file(output)] == ["changed-r"]
+    remote.update_password.assert_not_awaited()
+
+
+async def test_change_on_both_sides_is_always_held(tmp_path):
+    csv = tmp_path / "apple.csv"
+    ApplePasswordsCSVParser.write_file([entry("changed-a")], csv)
+    db, remote = database([mapping()]), provider([entry("changed-r")])
+    result = await PasswordsSyncEngine(db).sync(apple_csv_path=csv, provider=remote)
+    assert result["push"]["conflicts"][0]["reason"] == "changed_on_both_sides"
+    remote.update_password.assert_not_awaited()
 
 
 async def test_dry_run_fresh_database_is_read_only(tmp_path):
@@ -114,15 +149,44 @@ async def test_failed_read_fails_closed(tmp_path):
 
 
 @pytest.mark.parametrize("apple_present", [True, False])
-async def test_missing_mapped_side_requires_review(tmp_path, apple_present):
+async def test_deletions_are_held_when_reviewing_deletions(tmp_path, apple_present):
+    csv = tmp_path / "apple.csv"
+    ApplePasswordsCSVParser.write_file([entry()] if apple_present else [], csv)
+    db, remote = database([mapping()]), provider([] if apple_present else [entry()])
+    result = await PasswordsSyncEngine(db).sync(
+        apple_csv_path=csv, provider=remote, review_deletions=True
+    )
+    expected = "deleted_in_provider" if apple_present else "deleted_in_apple"
+    assert result["push"]["conflicts"][0]["reason"] == expected
+    assert result["pull"]["new_entries"] == 0 and result["pull"]["deleted"] == 0
+    remote.delete_password.assert_not_awaited()
+    db.delete_password_mapping.assert_not_awaited()
+
+
+@pytest.mark.parametrize("apple_present", [True, False])
+async def test_deletions_are_copied_by_default(tmp_path, apple_present):
     csv = tmp_path / "apple.csv"
     ApplePasswordsCSVParser.write_file([entry()] if apple_present else [], csv)
     db, remote = database([mapping()]), provider([] if apple_present else [entry()])
     result = await PasswordsSyncEngine(db).sync(apple_csv_path=csv, provider=remote)
-    assert result["push"]["conflicts"][0]["reason"] == "missing_side_review"
-    assert result["pull"]["new_entries"] == 0
+    assert result["push"]["conflicts"] == []
+    if apple_present:
+        # Deleted in the provider: Apple can't be written, so it's listed for the user.
+        assert result["pull"]["deleted"] == 1
+        assert result["pull"]["entries"][0]["action"] == "delete_in_apple"
+        remote.delete_password.assert_not_awaited()
+    else:
+        remote.delete_password.assert_awaited_once_with("fake-id")
+        assert result["push"]["deleted"] == 1
+
+
+async def test_changed_on_one_side_and_deleted_on_the_other_is_held(tmp_path):
+    csv = tmp_path / "apple.csv"
+    ApplePasswordsCSVParser.write_file([], csv)
+    db, remote = database([mapping()]), provider([entry("changed-r")])
+    result = await PasswordsSyncEngine(db).sync(apple_csv_path=csv, provider=remote)
+    assert result["push"]["conflicts"][0]["reason"] == "changed_in_provider_deleted_in_apple"
     remote.delete_password.assert_not_awaited()
-    db.delete_password_mapping.assert_not_awaited()
 
 
 async def test_equal_changed_pair_establishes_observed_baseline(tmp_path):
@@ -217,18 +281,35 @@ def test_password_whitespace_roundtrip(tmp_path, parser):
     assert parser.parse_file(path)[0].password == "  synthetic  "
 
 
-async def test_mapped_url_change_is_not_a_new_login(tmp_path):
+async def test_apple_url_change_updates_the_same_provider_item(tmp_path):
     csv = tmp_path / "apple.csv"
-    renamed = entry()
-    renamed.url = "https://changed.invalid"
-    ApplePasswordsCSVParser.write_file([renamed], csv)
-    remote = provider()
+    moved = entry()
+    moved.url = "https://changed.invalid"
+    ApplePasswordsCSVParser.write_file([moved], csv)
+    remote = provider([entry()])
     result = await PasswordsSyncEngine(database([mapping()])).sync(
         apple_csv_path=csv, provider=remote
     )
-    assert result["push"]["created"] == 0
-    assert "mapped_identity_changed" in {r["reason"] for r in result["push"]["conflicts"]}
+    assert result["push"]["created"] == 0 and result["push"]["conflicts"] == []
     remote.create_password.assert_not_awaited()
+    remote.delete_password.assert_not_awaited()
+    provider_id, updated = remote.update_password.call_args.args
+    assert provider_id == "fake-id" and updated.url == "https://changed.invalid"
+
+
+async def test_apple_url_change_is_held_when_reviewing_changes(tmp_path):
+    csv = tmp_path / "apple.csv"
+    moved = entry()
+    moved.url = "https://changed.invalid"
+    ApplePasswordsCSVParser.write_file([moved], csv)
+    remote = provider([entry()])
+    result = await PasswordsSyncEngine(database([mapping()])).sync(
+        apple_csv_path=csv, provider=remote, review_changes=True
+    )
+    assert result["push"]["created"] == 0
+    assert "renamed_in_apple" in {r["reason"] for r in result["push"]["conflicts"]}
+    remote.create_password.assert_not_awaited()
+    remote.update_password.assert_not_awaited()
 
 
 async def test_invalid_output_fails_before_provider_mutation(tmp_path):

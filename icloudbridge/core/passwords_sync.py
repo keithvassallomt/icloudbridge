@@ -1,8 +1,11 @@
 """Password synchronization engine for Apple Passwords and password providers."""
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
+from dataclasses import replace
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -446,70 +449,310 @@ class PasswordsSyncEngine:
 
     @classmethod
     def _same(cls, apple: PasswordEntry, remote: PasswordEntry) -> bool:
-        return cls._content(apple) == cls._content(remote) and cls._same_otp(
-            apple.otp_auth, remote.otp_auth
+        return (
+            apple.title.strip() == remote.title.strip()
+            and apple.username.strip() == remote.username.strip()
+            and cls._content(apple) == cls._content(remote)
+            and cls._same_otp(apple.otp_auth, remote.otp_auth)
         )
 
-    def _build_password_sync_plan(
-        self, apple_map: dict, provider_map: dict, mappings: dict
-    ) -> dict:
-        """Additive plan. Existing/missing mapped logins always require manual review.
+    @classmethod
+    def _fingerprint(cls, entry: PasswordEntry) -> str:
+        """Hash of everything that syncs for one side, to tell which side changed."""
+        data = [
+            entry.title.strip(),
+            entry.username.strip(),
+            *cls._content(entry),
+            cls._otp(entry.otp_auth),
+        ]
+        return hashlib.sha256(json.dumps(data).encode("utf-8")).hexdigest()
 
-        The existing schema records password hashes, not CSV modification times.
-        Metadata differences are held for review because no metadata baseline exists.
+    @classmethod
+    def _changed(cls, entry: PasswordEntry, mapping: dict, side: str) -> bool | None:
+        """Whether one side changed since the last sync; None when nothing was recorded."""
+        recorded = mapping.get(f"last_{side}_content")
+        if recorded:
+            return cls._fingerprint(entry) != recorded
+        # Mappings saved before fingerprints existed only know the password.
+        legacy = mapping.get(f"last_{side}_hash")
+        if not legacy:
+            return None
+        return entry.get_password_hash() != legacy
+
+    @classmethod
+    def _merge_into_provider(cls, remote: PasswordEntry, apple: PasswordEntry) -> PasswordEntry:
+        """The provider item with Apple's changes applied, keeping what Apple can't represent.
+
+        Apple keeps only a website's host, so the provider's own URLs stay unless the
+        websites actually differ; likewise for notes and verification codes.
         """
+        merged = replace(
+            remote,
+            title=apple.title,
+            username=apple.username,
+            password=apple.password,
+            extra_urls=list(remote.extra_urls),
+        )
+        if cls._notes(apple.notes) != cls._notes(remote.notes):
+            merged.notes = apple.notes
+        if cls._content(apple)[2] != cls._content(remote)[2]:
+            merged.url = apple.url
+            merged.extra_urls = list(apple.extra_urls)
+        if not cls._same_otp(apple.otp_auth, remote.otp_auth):
+            merged.otp_auth = apple.otp_auth
+        return merged
+
+    @staticmethod
+    def _apple_sites(entry: PasswordEntry) -> set:
+        # Apple keeps one login per website (host) and username, usernames compared
+        # case-sensitively, and refuses to import a second one.
+        username = entry.username.strip()
+        return {(entry.normalize_url(url), username) for url in entry.get_all_urls()}
+
+    def _plan(
+        self,
+        apple_entries: list[PasswordEntry],
+        remote_entries: list[PasswordEntry],
+        baseline: dict,
+        *,
+        review_changes: bool,
+        review_deletions: bool,
+    ) -> dict:
+        """Decide what to add, update and delete on each side.
+
+        A change or deletion on one side since the last sync is copied to the other
+        side, unless the matching review option is on. Anything whose direction can't
+        be known (changed on both sides, never synced but different, ambiguous) is held.
+        """
+        apple_map, remote_map = {}, {}
+        duplicates = []
+        for entries, side_map in ((apple_entries, apple_map), (remote_entries, remote_map)):
+            for e in entries:
+                key = e.get_dedup_key()
+                if key in side_map:
+                    duplicates.append(e)
+                side_map[key] = e
         plan = {
             name: []
             for name in (
-                "create_apple",
                 "create_provider",
-                "update_apple",
                 "update_provider",
-                "delete_apple",
                 "delete_provider",
+                "export_apple",
+                "replace_apple",
+                "delete_apple",
                 "unchanged",
-                "conflicts",
+                "reviews",
             )
         }
-        for key in sorted(set(apple_map) | set(provider_map) | set(mappings), key=repr):
-            apple, remote, baseline = apple_map.get(key), provider_map.get(key), mappings.get(key)
-            if apple is not None and remote is not None:
-                if self._same(apple, remote):
-                    plan["unchanged"].append(key)
-                else:
-                    plan["conflicts"].append((key, apple, remote, baseline))
-            elif baseline:
-                if apple is not None or remote is not None:
-                    plan["conflicts"].append((key, apple, remote, baseline))
-            elif apple is not None:
-                plan["create_provider"].append(apple)
-            elif remote is not None:
-                plan["create_apple"].append(remote)
-        return plan
+        handled: set = set()
+        # Exported changes and the Apple logins they replace. Apple refuses to import
+        # over a login it already has, so the old one must be deleted (or edited by hand).
+        replacing: dict = {}
 
-    @staticmethod
-    def _review_reason(apple, remote, baseline) -> str:
-        if apple is None or remote is None:
-            return "missing_side_review"
-        if apple.get_password_hash() == remote.get_password_hash():
-            return "metadata_difference"
-        if (
-            not baseline
-            or not baseline.get("last_apple_hash")
-            or not baseline.get("last_provider_hash")
+        def review(entry: PasswordEntry, reason: str) -> None:
+            handled.add(entry.get_dedup_key())
+            plan["reviews"].append(
+                {
+                    "title": entry.title,
+                    "username": entry.username,
+                    "action": "review",
+                    "reason": reason,
+                }
+            )
+
+        def export(entry: PasswordEntry, replaces: PasswordEntry | None = None) -> None:
+            plan["export_apple"].append(entry)
+            if replaces is not None:
+                replacing[entry.get_dedup_key()] = replaces
+
+        # Two logins with the same title, website and username on one side can't be paired.
+        for e in duplicates:
+            dup_key = e.get_dedup_key()
+            for side_map in (apple_map, remote_map):
+                if dup_key in side_map:
+                    review(side_map[dup_key], "ambiguous_identity")
+
+        # Logins under the same key on both sides.
+        for key in apple_map.keys() & remote_map.keys():
+            if key in handled:
+                continue
+            a, r = apple_map[key], remote_map[key]
+            handled.add(key)
+            if self._same(a, r):
+                plan["unchanged"].append(key)
+                continue
+            m = baseline.get(key)
+            if m is None:
+                review(a, "no_baseline")
+                continue
+            ac, rc = self._changed(a, m, "apple"), self._changed(r, m, "provider")
+            if ac is None or rc is None:
+                review(a, "no_baseline")
+            elif ac and rc:
+                review(a, "changed_on_both_sides")
+            elif ac:
+                if review_changes:
+                    review(a, "changed_in_apple")
+                else:
+                    plan["update_provider"].append((r, self._merge_into_provider(r, a)))
+            elif rc:
+                if review_changes:
+                    review(r, "changed_in_provider")
+                else:
+                    export(r, replaces=a)
+            else:
+                # Synced before fingerprints were recorded, and only details differ.
+                review(a, "metadata_difference")
+
+        # Logins synced before whose key is gone from a side: renamed, moved or deleted.
+        by_id = {e.provider_id: e for e in remote_entries if e.provider_id}
+        apple_by_title: dict = {}
+        apple_by_site: dict = {}
+        for e in apple_entries:
+            k = e.get_dedup_key()
+            apple_by_title.setdefault((k[0], k[2]), []).append(e)
+            for url in e.get_all_urls():
+                apple_by_site.setdefault((e.normalize_url(url), k[2]), []).append(e)
+
+        def unclaimed(e: PasswordEntry) -> bool:
+            k = e.get_dedup_key()
+            return k not in handled and k not in baseline
+
+        for key, m in baseline.items():
+            if key in handled:
+                continue
+            a, r = apple_map.get(key), remote_map.get(key)
+            handled.add(key)
+            r_moved = None
+            if r is None:
+                same_item = by_id.get(m.get("provider_id"))
+                if same_item is not None and unclaimed(same_item):
+                    r_moved = same_item
+            a_moved = None
+            if a is None:
+                similar = {
+                    e.get_dedup_key(): e
+                    for e in apple_by_title.get((key[0], key[2]), [])
+                    + apple_by_site.get((key[1], key[2]), [])
+                    if unclaimed(e)
+                }
+                if len(similar) > 1:
+                    for e in similar.values():
+                        review(e, "possible_renamed_identity")
+                    if r is not None or r_moved is not None:
+                        review(r or r_moved, "possible_renamed_identity")
+                    continue
+                if similar:
+                    a_moved = next(iter(similar.values()))
+            for moved in (a_moved, r_moved):
+                if moved is not None:
+                    handled.add(moved.get_dedup_key())
+            a_now, r_now = a or a_moved, r or r_moved
+            if a_now is None and r_now is None:
+                continue  # gone from both sides; the tracking is retired below
+            ac = (a_moved is not None) or (a is not None and self._changed(a, m, "apple") is not False)
+            rc = (r_moved is not None) or (r is not None and self._changed(r, m, "provider") is not False)
+            if a_now is not None and r_now is not None:
+                if ac and rc:
+                    review(a_now, "changed_on_both_sides")
+                    review(r_now, "changed_on_both_sides")
+                elif ac:
+                    if review_changes:
+                        review(a_now, "renamed_in_apple" if a_moved else "changed_in_apple")
+                    else:
+                        plan["update_provider"].append((r_now, self._merge_into_provider(r_now, a_now)))
+                elif rc:
+                    if review_changes:
+                        review(r_now, "renamed_in_provider" if r_moved else "changed_in_provider")
+                    else:
+                        export(r_now, replaces=a_now)
+                else:
+                    review(a_now, "metadata_difference")
+            elif a_now is not None:  # deleted in the provider
+                if ac:
+                    review(a_now, "changed_in_apple_deleted_in_provider")
+                elif review_deletions:
+                    review(a_now, "deleted_in_provider")
+                else:
+                    plan["delete_apple"].append(a_now)
+            else:  # deleted in Apple
+                if rc:
+                    review(r_now, "changed_in_provider_deleted_in_apple")
+                elif review_deletions:
+                    review(r_now, "deleted_in_apple")
+                else:
+                    plan["delete_provider"].append(r_now)
+
+        # Never-synced logins on one side only. A login on the other side with the same
+        # website and username may be this one under another name, so hold both.
+        url_indexes = []
+        for entries in (apple_entries, remote_entries):
+            index: dict = {}
+            for e in entries:
+                k = e.get_dedup_key()
+                if k in handled or not k[2]:
+                    continue
+                for url in e.get_all_urls():
+                    index.setdefault((e.normalize_url(url), k[2]), set()).add(k)
+            url_indexes.append(index)
+        possible = []
+        for entries, own, opposite in (
+            (apple_entries, apple_map, url_indexes[1]),
+            (remote_entries, remote_map, url_indexes[0]),
         ):
-            return "no_baseline"
-        if baseline["last_apple_hash"] != baseline["last_provider_hash"]:
-            return "divergent_baseline"
-        apple_changed = apple.get_password_hash() != baseline["last_apple_hash"]
-        remote_changed = remote.get_password_hash() != baseline["last_provider_hash"]
-        if apple_changed and remote_changed:
-            return "both_changed"
-        if apple_changed:
-            return "apple_changed"
-        if remote_changed:
-            return "provider_changed"
-        return "divergent_baseline"
+            for e in entries:
+                k = e.get_dedup_key()
+                if k in handled:
+                    continue
+                candidates = set()
+                for url in e.get_all_urls():
+                    candidates.update(opposite.get((e.normalize_url(url), k[2]), set()))
+                if candidates - {k} - own.keys():
+                    possible.append(e)
+        for e in possible:
+            review(e, "possible_renamed_identity")
+        for e in apple_entries:
+            if e.get_dedup_key() not in handled:
+                handled.add(e.get_dedup_key())
+                plan["create_provider"].append(e)
+        for e in remote_entries:
+            if e.get_dedup_key() not in handled:
+                handled.add(e.get_dedup_key())
+                export(e)
+
+        # An export must not replace a different Apple login, or another exported one.
+        deleting = {e.get_dedup_key() for e in plan["delete_apple"]}
+        deleting |= {e.get_dedup_key() for e in replacing.values()}
+        apple_sites = {
+            site
+            for a in apple_entries
+            if a.get_dedup_key() not in deleting
+            for site in self._apple_sites(a)
+        }
+        export_counts: dict = {}
+        for e in plan["export_apple"]:
+            for site in self._apple_sites(e):
+                export_counts[site] = export_counts.get(site, 0) + 1
+        exports = []
+        for e in plan["export_apple"]:
+            if any(s in apple_sites or export_counts[s] > 1 for s in self._apple_sites(e)):
+                review(e, "apple_one_login_per_site")
+            else:
+                exports.append(e)
+                if e.get_dedup_key() in replacing:
+                    plan["replace_apple"].append((e, replacing[e.get_dedup_key()]))
+        plan["export_apple"] = exports
+
+        # A wrong or partial export must not empty the other side: hold mass deletions.
+        for name in ("delete_provider", "delete_apple"):
+            if len(plan[name]) >= 10 and len(plan[name]) > len(baseline) / 2:
+                for e in plan[name]:
+                    review(e, "too_many_deletions")
+                plan[name] = []
+
+        plan["apple_map"], plan["remote_map"] = apple_map, remote_map
+        return plan
 
     async def sync(
         self,
@@ -521,17 +764,23 @@ class PasswordsSyncEngine:
         run_push: bool = True,
         run_pull: bool = True,
         bulk_push: bool = False,
+        review_changes: bool = False,
+        review_deletions: bool = False,
     ) -> dict:
-        """Reconcile one fresh snapshot, adding only unambiguous, unmapped logins.
+        """Two-way sync of one fresh Apple export with the provider.
 
-        Simulation performs reads only. Exporting an Apple CSV is not confirmation
-        of import: save baselines only for pairs actually observed in both snapshots.
-        Vaultwarden batches share a vault read but retain individual create outcomes.
+        Changes and deletions on one side are copied to the other unless
+        ``review_changes`` / ``review_deletions`` hold them for review. Apple can only
+        be written by importing a CSV, so changes for Apple go into the export and
+        deletions are listed for the user to make. Simulation performs reads only.
+        Last-sync baselines are saved only for pairs actually observed equal.
         """
         if not run_push and not run_pull:
             raise InvalidInputError("At least one sync phase must be enabled.")
         if run_push and apple_csv_path is None:
-            raise InvalidInputError("An Apple Passwords CSV export is required to add logins to the provider.")
+            raise InvalidInputError(
+                "An Apple Passwords CSV export is required to add logins to the provider."
+            )
         start = time.time()
         apple_entries = (
             await asyncio.to_thread(ApplePasswordsCSVParser.parse_file, apple_csv_path)
@@ -564,155 +813,40 @@ class PasswordsSyncEngine:
             for m in mappings
             if m.get("confirmed", False)
         }
-        apple_map = {e.get_dedup_key(): e for e in apple_entries}
-        remote_map = {e.get_dedup_key(): e for e in remote_entries}
-        plan = await asyncio.to_thread(
-            self._build_password_sync_plan, apple_map, remote_map, baseline
-        )
-        reviews = [
-            {
-                "title": (a or r).title,
-                "username": (a or r).username,
-                "action": "review",
-                "reason": self._review_reason(a, r, b),
+
+        if apple_csv_path is None:
+            # Without a fresh Apple snapshot nothing about Apple's side is known.
+            empty = {name: [] for name in ("create_provider", "update_provider", "delete_provider",
+                                           "export_apple", "replace_apple", "delete_apple", "unchanged")}
+            plan = {
+                **empty,
+                "reviews": [{"action": "review", "reason": "fresh_apple_export_required"}],
+                "apple_map": {},
+                "remote_map": {},
             }
-            for key, a, r, b in plan["conflicts"]
-        ]
-        # Case folding and URL changes can collide with the existing dedup key.
-        # Do not silently choose among duplicate identities or recreate renamed URLs.
-        identities = {}
-        for side, entries in (("apple", apple_entries), ("provider", remote_entries)):
-            for e in entries:
-                identity = (e.title.lower().strip(), e.username.lower().strip())
-                identities.setdefault(identity, {}).setdefault(side, []).append(e)
-        blocked = set()
-        for identity, sides in identities.items():
-            if any(len(v) > 1 for v in sides.values()) or (
-                len(sides) == 2
-                and sides["apple"][0].get_dedup_key() != sides["provider"][0].get_dedup_key()
-            ):
-                blocked.add(identity)
-                reviews.append(
-                    {
-                        "title": identity[0],
-                        "username": identity[1],
-                        "action": "review",
-                        "reason": "ambiguous_identity",
-                    }
+        else:
+            plan = await asyncio.to_thread(
+                lambda: self._plan(
+                    apple_entries,
+                    remote_entries,
+                    baseline,
+                    review_changes=review_changes,
+                    review_deletions=review_deletions,
                 )
-
-        # An export may rename a login while retaining its URL and username.
-        # Hold possible aliases even before a baseline exists; otherwise the first
-        # sync can propose a duplicate and only recognize it on subsequent runs.
-        matched = set(plan["unchanged"])
-        url_indexes = []
-        for entries in (apple_entries, remote_entries):
-            index = {}
-            for entry in entries:
-                username = entry.username.lower().strip()
-                if not username:
-                    continue
-                for url in entry.get_all_urls():
-                    index.setdefault((entry.normalize_url(url), username), set()).add(
-                        entry.get_dedup_key()
-                    )
-            url_indexes.append(index)
-        for entries, own, opposite in (
-            (apple_entries, apple_map, url_indexes[1]),
-            (remote_entries, remote_map, url_indexes[0]),
-        ):
-            for entry in entries:
-                key = entry.get_dedup_key()
-                identity = (key[0], key[2])
-                if key in matched or identity in blocked:
-                    continue
-                candidates = set()
-                for url in entry.get_all_urls():
-                    candidates.update(opposite.get((entry.normalize_url(url), key[2]), set()))
-                # A candidate still present on this side is a separate login that
-                # shares the site and username (e.g. two accounts on one SSO domain),
-                # not the old name of this one.
-                if candidates - {key} - own.keys():
-                    blocked.add(identity)
-                    reviews.append(
-                        {
-                            "title": entry.title,
-                            "username": entry.username,
-                            "action": "review",
-                            "reason": "possible_renamed_identity",
-                        }
-                    )
-
-        # Index identities once; equal pairs can clear old renamed mappings.
-        by_title, by_url, by_id = {}, {}, {}
-        for own, entries in ((apple_map, apple_entries), (remote_map, remote_entries)):
-            for e in entries:
-                key = e.get_dedup_key()
-                if key in matched:
-                    continue
-                by_title.setdefault((key[0], key[2]), []).append((e, own))
-                if key[1]:
-                    by_url.setdefault((key[1], key[2]), []).append((e, own))
-                if e.provider_id:
-                    by_id.setdefault(e.provider_id, []).append((e, own))
-        for key, previous in baseline.items():
-            same_object = by_id.get(previous.get("provider_id"), [])
-            similar = by_title.get((key[0], key[2]), []) + by_url.get((key[1], key[2]), [])
-            # If the mapped login still exists on that side, a similar entry next
-            # to it is a separate login, not a rename of the mapped one.
-            candidates = same_object + [(e, own) for e, own in similar if key not in own]
-            for e, _own in candidates:
-                current = e.get_dedup_key()
-                identity = (current[0], current[2])
-                if current != key and identity not in blocked:
-                    blocked.add(identity)
-                    reviews.append(
-                        {
-                            "title": e.title,
-                            "username": e.username,
-                            "action": "review",
-                            "reason": "mapped_identity_changed",
-                        }
-                    )
-        def allowed(e):
-            return (e.title.lower().strip(), e.username.lower().strip()) not in blocked
-
-        additions = [e for e in plan["create_provider"] if allowed(e)] if run_push else []
-        exports = [e for e in plan["create_apple"] if allowed(e)] if run_pull else []
-        # Apple Passwords keeps one login per website (host) and username, with
-        # usernames compared case-sensitively: importing a second one overwrites
-        # the first. Never export a login that would collide with an Apple login
-        # or with another login in the same export.
-        def sites(e):
-            username = e.username.strip()
-            return {(e.normalize_url(url), username) for url in e.get_all_urls()}
-
-        apple_sites = {site for a in apple_entries for site in sites(a)}
-        export_site_counts = {}
-        for e in exports:
-            for site in sites(e):
-                export_site_counts[site] = export_site_counts.get(site, 0) + 1
-        importable = []
-        for e in exports:
-            if any(s in apple_sites or export_site_counts[s] > 1 for s in sites(e)):
-                reviews.append(
-                    {
-                        "title": e.title,
-                        "username": e.username,
-                        "action": "review",
-                        "reason": "apple_one_login_per_site",
-                    }
-                )
-            else:
-                importable.append(e)
-        exports = importable
-        # Without a fresh Apple snapshot we cannot establish absence safely.
-        if run_pull and apple_csv_path is None:
-            exports = []
-            reviews.append({"action": "review", "reason": "fresh_apple_export_required"})
+            )
+        reviews = plan["reviews"]
+        apple_map, remote_map = plan["apple_map"], plan["remote_map"]
+        additions = plan["create_provider"] if run_push else []
+        updates = plan["update_provider"] if run_push else []
+        removals = plan["delete_provider"] if run_push else []
+        exports = plan["export_apple"] if run_pull else []
+        replacements = plan["replace_apple"] if run_pull else []
+        apple_deletions = plan["delete_apple"] if run_pull else []
+        changed_exports = {new.get_dedup_key() for new, _old in replacements}
         if exports and not simulate and output_apple_csv is None:
             raise InvalidInputError("An output path is required when exporting logins for Apple.")
-        created = failed = 0
+
+        created = updated = deleted = failed = 0
         folders_created = 0
         if not simulate:
             # Validate/create the export before attempting any remote mutation.
@@ -749,24 +883,45 @@ class PasswordsSyncEngine:
                         logger.warning(
                             "Password addition failed; refresh snapshots before retrying"
                         )
+            for current, merged in updates:
+                try:
+                    if await provider.update_password(current.provider_id, merged):
+                        updated += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+                    logger.warning("Password update failed; refresh snapshots before retrying")
+            for current in removals:
+                try:
+                    if await provider.delete_password(current.provider_id):
+                        deleted += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+                    logger.warning("Password deletion failed; refresh snapshots before retrying")
+
             if apple_csv_path is not None:
                 confirmed = []
                 for key in plan["unchanged"]:
                     a, r = apple_map[key], remote_map[key]
-                    if allowed(a):
-                        confirmed.append(
-                            {
-                                "title": a.title,
-                                "username": a.username,
-                                "url": a.key_url(),
-                                "provider_id": r.provider_id,
-                                "provider_type": provider_type,
-                                "last_apple_hash": a.get_password_hash(),
-                                "last_provider_hash": r.get_password_hash(),
-                            }
-                        )
-                # Retire tracking omitted by both snapshots or superseded by an
-                # actually observed equal pair with Apple's host-only URL.
+                    confirmed.append(
+                        {
+                            "title": a.title,
+                            "username": a.username,
+                            "url": a.key_url(),
+                            "provider_id": r.provider_id,
+                            "provider_type": provider_type,
+                            "last_apple_hash": a.get_password_hash(),
+                            "last_provider_hash": r.get_password_hash(),
+                            "last_apple_content": self._fingerprint(a),
+                            "last_provider_content": self._fingerprint(r),
+                        }
+                    )
+                # Retire tracking for logins gone from both snapshots, and tracking
+                # superseded by an observed equal pair with Apple's host-only URL.
+                unchanged = set(plan["unchanged"])
                 retired = []
                 for m in mappings:
                     key = (
@@ -774,11 +929,8 @@ class PasswordsSyncEngine:
                         PasswordEntry.normalize_url(m["url"]),
                         m["username"].lower().strip(),
                     )
-                    alias_replaced = (
-                        key in matched
-                        and allowed(apple_map[key])
-                        and (m.get("url") or "")
-                        != (apple_map[key].key_url() or "")
+                    alias_replaced = key in unchanged and (m.get("url") or "") != (
+                        apple_map[key].key_url() or ""
                     )
                     if alias_replaced or (
                         m.get("confirmed") and key not in apple_map and key not in remote_map
@@ -790,44 +942,59 @@ class PasswordsSyncEngine:
                     file_path=str(apple_csv_path),
                     entry_count=len(apple_entries),
                 )
+
+        def rows(entries, simulated: str, done: str) -> list[dict]:
+            return [
+                {"title": e.title, "username": e.username, "action": simulated if simulate else done}
+                for e in entries
+            ]
+
+        policy = {"review_changes": review_changes, "review_deletions": review_deletions}
         push = {
             "created": created,
             "planned_created": len(additions),
-            "updated": 0,
-            "deleted": 0,
+            "updated": updated,
+            "planned_updated": len(updates),
+            "deleted": deleted,
+            "planned_deleted": len(removals),
             "failed": failed,
             "errors": [],
             "simulate": simulate,
-            "queued": len(additions),
-            "skipped": len(apple_entries) - len(additions),
+            "queued": len(additions) + len(updates) + len(removals),
+            "skipped": len(plan["unchanged"]),
             "folders_created": folders_created,
             "conflicts": reviews,
-            "entries": [
-                {
-                    "title": e.title,
-                    "username": e.username,
-                    "action": "would_create" if simulate else "addition_attempted",
-                }
-                for e in additions
-            ]
+            "entries": rows(additions, "would_create", "addition_attempted")
+            + rows([merged for _, merged in updates], "would_update", "update")
+            + rows(removals, "would_delete", "delete")
             + reviews,
         }
         pull = {
-            "new_entries": len(exports) if not simulate else 0,
-            "updated": 0,
-            "planned_new_entries": len(exports),
-            "deleted": 0,
+            "new_entries": 0 if simulate else len(exports) - len(replacements),
+            "planned_new_entries": len(exports) - len(replacements),
+            "updated": 0 if simulate else len(replacements),
+            "planned_updated": len(replacements),
+            "deleted": 0 if simulate else len(apple_deletions),
+            "planned_deleted": len(apple_deletions),
             "simulate": simulate,
             "conflicts": reviews,
             "download_path": str(output_apple_csv) if exports and not simulate else None,
-            "entries": [
+            "entries": rows(
+                [e for e in exports if e.get_dedup_key() not in changed_exports],
+                "would_export",
+                "export_for_manual_import",
+            )
+            + [
                 {
-                    "title": e.title,
-                    "username": e.username,
-                    "action": "would_export" if simulate else "export_for_manual_import",
+                    "title": new.title,
+                    "username": new.username,
+                    "action": "would_replace_in_apple" if simulate else "replace_in_apple",
+                    # Apple won't import over this login: delete it first, or edit it by hand.
+                    "replaces": old.title,
                 }
-                for e in exports
+                for new, old in replacements
             ]
+            + rows(apple_deletions, "would_delete_in_apple", "delete_in_apple")
             + reviews,
         }
         return {
@@ -837,7 +1004,7 @@ class PasswordsSyncEngine:
             "simulate": simulate,
             "run_push": run_push,
             "run_pull": run_pull,
-            "policy": "additive_only",
+            "policy": policy,
         }
 
     async def _ensure_provider_folders(

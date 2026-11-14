@@ -1322,6 +1322,41 @@ export default function Settings() {
             />
           </div>
 
+          {formData.passwords_enabled && (
+            <>
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <Label>Review changed items</Label>
+                  <p className="text-xs text-muted-foreground">
+                    When off, a login you change on one side is changed on the other side too. When on, the
+                    Passwords page lists changed logins for you to review instead.
+                  </p>
+                </div>
+                <Switch
+                  checked={formData.passwords_review_changes === true}
+                  onCheckedChange={(checked) =>
+                    setFormData({ ...formData, passwords_review_changes: checked })
+                  }
+                />
+              </div>
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <Label>Review deleted items</Label>
+                  <p className="text-xs text-muted-foreground">
+                    When off, a login you delete on one side is deleted on the other side too. When on, the
+                    Passwords page lists deleted logins for you to review instead.
+                  </p>
+                </div>
+                <Switch
+                  checked={formData.passwords_review_deletions === true}
+                  onCheckedChange={(checked) =>
+                    setFormData({ ...formData, passwords_review_deletions: checked })
+                  }
+                />
+              </div>
+            </>
+          )}
+
           {formData.passwords_enabled && passwordProvider === 'nextcloud' && (
             <>
               <Alert variant="warning" className="border-yellow-500 bg-yellow-50">

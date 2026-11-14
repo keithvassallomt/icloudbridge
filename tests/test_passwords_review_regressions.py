@@ -168,10 +168,29 @@ async def test_rename_on_one_side_is_still_held(tmp_path):
     await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=remote([old]))
     path = tmp_path / "apple-2.csv"
     ApplePasswordsCSVParser.write_file([e("New", "fixture", "https://example.invalid/")], path)
-    result = await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=remote([old]))
+    result = await PasswordsSyncEngine(db).sync(
+        apple_csv_path=path, provider=remote([old]), review_changes=True
+    )
     assert result["push"]["planned_created"] == 0
     assert result["pull"]["planned_new_entries"] == 0
-    assert {r["reason"] for r in result["push"]["conflicts"]} >= {"possible_renamed_identity"}
+    assert {r["reason"] for r in result["push"]["conflicts"]} == {"renamed_in_apple"}
+
+
+async def test_rename_in_apple_renames_the_provider_item_by_default(tmp_path):
+    db = PasswordsDB(tmp_path / "db.sqlite")
+    await db.initialize()
+    old = e("Old", "fixture", "https://example.invalid/")
+    path = tmp_path / "apple.csv"
+    ApplePasswordsCSVParser.write_file([old], path)
+    await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=remote([old]))
+    path = tmp_path / "apple-2.csv"
+    ApplePasswordsCSVParser.write_file([e("New", "fixture", "https://example.invalid/")], path)
+    provider = remote([old])
+    result = await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=provider)
+    assert result["push"]["planned_created"] == 0 and result["push"]["conflicts"] == []
+    provider_id, updated = provider.update_password.call_args.args
+    assert provider_id == "0" and updated.title == "New"
+    provider.delete_password.assert_not_awaited()
 
 
 def test_user_facing_errors_keep_their_message():
@@ -321,11 +340,18 @@ async def test_one_sided_old_identity_stays_held_after_new_pair_matches(tmp_path
     ApplePasswordsCSVParser.write_file([x, e("New")], path)
     p = remote([e("New")])
     for _ in range(2):
-        result = await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=p)
+        result = await PasswordsSyncEngine(db).sync(
+            apple_csv_path=path, provider=p, review_deletions=True
+        )
         assert result["push"]["created"] == 0
-        assert result["push"]["conflicts"][0]["reason"] == "missing_side_review"
+        assert result["push"]["conflicts"][0]["reason"] == "deleted_in_provider"
     p.create_password.assert_not_awaited()
     assert len(await db.get_all_password_mappings()) == 2
+    # By default the old login is listed for deletion in Apple instead.
+    result = await PasswordsSyncEngine(db).sync(
+        apple_csv_path=path, provider=p, output_apple_csv=tmp_path / "out.csv"
+    )
+    assert result["push"]["conflicts"] == [] and result["pull"]["deleted"] == 1
 
 
 async def test_current_vaultwarden_profile_ownership_reaches_cipher_payload():
@@ -488,3 +514,124 @@ async def test_multi_url_login_matches_whatever_order_apple_exports(tmp_path):
         result = await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=remote([provider_entry]))
         assert result["push"]["conflicts"] == []
     assert len(await db.get_all_password_mappings()) == 1
+
+
+async def test_provider_rename_is_a_replacement_in_apple(tmp_path):
+    db = PasswordsDB(tmp_path / "db.sqlite")
+    await db.initialize()
+    old = e("Old", "fixture", "https://example.invalid/")
+    path = tmp_path / "apple.csv"
+    ApplePasswordsCSVParser.write_file([old], path)
+    await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=remote([old]))
+    renamed = e("New", "fixture", "https://example.invalid/")  # same item id "0"
+    result = await PasswordsSyncEngine(db).sync(
+        apple_csv_path=path, provider=remote([renamed]), output_apple_csv=tmp_path / "out.csv"
+    )
+    assert result["push"]["conflicts"] == []
+    assert [x.title for x in ApplePasswordsCSVParser.parse_file(tmp_path / "out.csv")] == ["New"]
+    # Apple refuses to import over "Old" (same website and username), so it must be replaced.
+    assert result["pull"]["updated"] == 1 and result["pull"]["deleted"] == 0
+    assert [(x["title"], x["replaces"]) for x in result["pull"]["entries"]] == [("New", "Old")]
+
+
+async def test_provider_website_change_replaces_the_old_apple_login(tmp_path):
+    db = PasswordsDB(tmp_path / "db.sqlite")
+    await db.initialize()
+    old = e("Example", "fixture", "https://old.invalid/")
+    path = tmp_path / "apple.csv"
+    ApplePasswordsCSVParser.write_file([old], path)
+    await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=remote([old]))
+    moved = e("Example", "fixture", "https://new.invalid/")
+    result = await PasswordsSyncEngine(db).sync(
+        apple_csv_path=path, provider=remote([moved]), output_apple_csv=tmp_path / "out.csv"
+    )
+    assert result["push"]["conflicts"] == []
+    assert [x.url for x in ApplePasswordsCSVParser.parse_file(tmp_path / "out.csv")] == ["https://new.invalid/"]
+    assert [x["replaces"] for x in result["pull"]["entries"] if x["action"] == "replace_in_apple"] == ["Example"]
+
+
+async def test_mass_deletion_is_held(tmp_path):
+    db = PasswordsDB(tmp_path / "db.sqlite")
+    await db.initialize()
+    logins = [e(f"Login {i}", "fixture", f"https://site{i}.invalid/") for i in range(12)]
+    path = tmp_path / "apple.csv"
+    ApplePasswordsCSVParser.write_file(logins, path)
+    await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=remote(logins))
+    # A wrong or truncated export that has only one of the twelve logins.
+    path = tmp_path / "apple-2.csv"
+    ApplePasswordsCSVParser.write_file(logins[:1], path)
+    provider = remote(logins)
+    result = await PasswordsSyncEngine(db).sync(apple_csv_path=path, provider=provider)
+    provider.delete_password.assert_not_awaited()
+    assert {r["reason"] for r in result["push"]["conflicts"]} == {"too_many_deletions"}
+    assert len(result["push"]["conflicts"]) == 11
+
+
+async def test_vaultwarden_update_keeps_everything_it_does_not_sync():
+    import os
+
+    from icloudbridge.sources.passwords.bitwarden_crypto import (
+        decrypt_cipher_string,
+        encrypt_bytes,
+        encrypt_string,
+    )
+    from icloudbridge.sources.passwords.vaultwarden_api import VaultwardenAPIClient
+
+    user_key = os.urandom(64)
+    item_key = os.urandom(64)  # this item is encrypted with its own key, as newer apps do
+
+    def enc(value):
+        return encrypt_string(value, item_key)
+
+    def dec(value):
+        return decrypt_cipher_string(value, item_key).decode()
+
+    current = {
+        "id": "item-1",
+        "type": 1,
+        "key": encrypt_bytes(item_key, user_key),
+        "folderId": "folder-1",
+        "favorite": True,
+        "name": enc("Old title"),
+        "notes": enc("keep me"),
+        "fields": [{"name": enc("Custom"), "value": enc("field"), "type": 0}],
+        "passwordHistory": [{"password": enc("older"), "lastUsedDate": "2026-01-01T00:00:00.000Z"}],
+        "revisionDate": "2026-11-01T00:00:00.000Z",
+        "login": {
+            "username": enc("fixture"),
+            "password": enc("old-password"),
+            "uris": [{"uri": enc("https://example.invalid/login"), "match": 3, "uriChecksum": "kept"}],
+            "fido2Credentials": [{"credentialId": "passkey"}],
+        },
+    }
+    sent = {}
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json=current)
+        sent.update(json.loads(request.content))
+        return httpx.Response(200, json={})
+
+    client = VaultwardenAPIClient("https://fixture.invalid", "fixture@example.invalid", "throwaway")
+    await client._client.aclose()
+    client.access_token = "fixture-token"
+    client._user_key = user_key
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    new = PasswordEntry(
+        title="New title",
+        username="fixture",
+        password="new-password",
+        url="https://example.invalid/login",
+        notes="keep me",
+    )
+    assert await client.update_password("item-1", new)
+    assert dec(sent["name"]) == "New title"
+    assert dec(sent["login"]["password"]) == "new-password"
+    assert sent["key"] == current["key"]
+    assert sent["login"]["fido2Credentials"] == [{"credentialId": "passkey"}]
+    assert sent["fields"] == current["fields"] and sent["favorite"] is True
+    assert sent["folderId"] == "folder-1"
+    assert sent["login"]["uris"] == current["login"]["uris"]  # unchanged website kept as-is
+    assert [dec(h["password"]) for h in sent["passwordHistory"]] == ["old-password", "older"]
+    assert sent["lastKnownRevisionDate"] == "2026-11-01T00:00:00.000Z"
+    await client.close()

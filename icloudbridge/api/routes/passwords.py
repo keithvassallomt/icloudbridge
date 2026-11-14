@@ -184,6 +184,8 @@ async def _run_passwords_sync(
             run_push=run_push,
             run_pull=run_pull,
             bulk_push=bulk_push,
+            review_changes=config.passwords.review_changes,
+            review_deletions=config.passwords.review_deletions,
         )
 
         result, keep_output_file = await _attach_download_metadata(result)

@@ -140,7 +140,11 @@ def decrypt_cipher_string(cipher_string: str, key: bytes) -> bytes:
 def encrypt_string(value: str, key: bytes, *, use_mac: bool = True) -> str:
     if value is None:
         return None  # caller should drop null values
-    plaintext = value.encode("utf-8")
+    return encrypt_bytes(value.encode("utf-8"), key, use_mac=use_mac)
+
+
+def encrypt_bytes(plaintext: bytes, key: bytes, *, use_mac: bool = True) -> str:
+    """Encrypt raw bytes (e.g. an item's own key) into a Bitwarden cipher string."""
     iv = token_bytes(16)
     if use_mac:
         stretched = ensure_stretched(key)

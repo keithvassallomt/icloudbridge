@@ -110,6 +110,8 @@ def _config_response(config) -> ConfigResponse:
         reminders_caldav_ssl_verify_cert=config.reminders.caldav_ssl_verify_cert,
         passwords_provider=config.passwords.provider,
         passwords_ssl_verify_cert=config.passwords.passwords_ssl_verify_cert,
+        passwords_review_changes=config.passwords.review_changes,
+        passwords_review_deletions=config.passwords.review_deletions,
         passwords_vaultwarden_url=config.passwords.vaultwarden_url,
         passwords_vaultwarden_email=config.passwords.vaultwarden_email,
         passwords_nextcloud_url=config.passwords.nextcloud_url,
@@ -266,6 +268,12 @@ async def update_config(update: ConfigUpdateRequest, config: ConfigDep):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(exc),
             )
+    if update.passwords_review_changes is not None:
+        config.passwords.review_changes = update.passwords_review_changes
+        logger.info(f"Updated password change review: {update.passwords_review_changes}")
+    if update.passwords_review_deletions is not None:
+        config.passwords.review_deletions = update.passwords_review_deletions
+        logger.info(f"Updated password deletion review: {update.passwords_review_deletions}")
     if update.passwords_vaultwarden_url is not None:
         config.passwords.vaultwarden_url = update.passwords_vaultwarden_url
     if update.passwords_vaultwarden_email is not None:

@@ -451,13 +451,24 @@ class VaultwardenAPIClient:
                         if uri:
                             urls.append(uri)
 
+                # Organisation items are encrypted with the organisation's key, which
+                # iCloudBridge doesn't have; they were never readable, so leave them out.
+                if cipher.get("organizationId"):
+                    logger.debug("Skipping organisation VaultWarden item %s", cipher.get("id"))
+                    continue
+
                 # Extract fields
                 cipher_id = cipher.get("id")
-                title = self._maybe_decrypt(cipher.get("name"), user_key) or "Untitled"
-                notes = self._maybe_decrypt(cipher.get("notes"), user_key)
-                username = self._maybe_decrypt(login_data.get("username"), user_key) or ""
-                password = self._maybe_decrypt(login_data.get("password"), user_key) or ""
-                totp = self._maybe_decrypt(login_data.get("totp"), user_key)
+                try:
+                    key = self._cipher_key(cipher, user_key)
+                except Exception:
+                    # An item we can't decrypt must not look like a login with these values.
+                    raise RuntimeError("A VaultWarden item's key could not be decrypted") from None
+                title = self._maybe_decrypt(cipher.get("name"), key) or "Untitled"
+                notes = self._maybe_decrypt(cipher.get("notes"), key)
+                username = self._maybe_decrypt(login_data.get("username"), key) or ""
+                password = self._maybe_decrypt(login_data.get("password"), key) or ""
+                totp = self._maybe_decrypt(login_data.get("totp"), key)
 
                 entry = PasswordEntry(
                     title=title,
@@ -471,7 +482,7 @@ class VaultwardenAPIClient:
                 )
 
                 for uri in urls:
-                    entry.add_url(self._maybe_decrypt(uri, user_key) or uri)
+                    entry.add_url(self._maybe_decrypt(uri, key) or uri)
 
                 entries.append(entry)
 
@@ -650,16 +661,40 @@ class VaultwardenAPIClient:
             logger.error(f"Failed to delete cipher {cipher_id}: {e}")
             return False
 
+    # Item fields sent back unchanged when updating, so nothing iCloudBridge doesn't
+    # sync (passkeys, custom fields, history, attachments, favourite) is lost.
+    _KEPT_CIPHER_FIELDS = (
+        "type",
+        "organizationId",
+        "folderId",
+        "favorite",
+        "reprompt",
+        "key",
+        "fields",
+        "secureNote",
+        "card",
+        "identity",
+        "sshKey",
+        "passwordHistory",
+    )
+
+    @staticmethod
+    def _cipher_key(cipher: dict[str, Any], user_key: bytes) -> bytes:
+        """Items may be encrypted with their own key, itself encrypted with the user key."""
+        encrypted = cipher.get("key")
+        if not encrypted:
+            return user_key
+        return decrypt_cipher_string(encrypted, user_key)
+
     async def update_password(
         self, cipher_id: str, entry: PasswordEntry, folder_mapping: dict[str, str] | None = None
     ) -> bool:
         """
-        Update an existing cipher (password entry) in VaultWarden.
+        Change the login fields iCloudBridge syncs on an existing item.
 
-        Args:
-            cipher_id: The cipher ID to update
-            entry: Updated PasswordEntry
-            folder_mapping: Optional folder name to ID mapping
+        The item is read first, and only its name, notes, username, password, websites
+        and verification code are replaced; everything else on it is kept. A replaced
+        password is added to the item's password history, as Bitwarden apps do.
 
         Returns:
             True if successful, False otherwise
@@ -671,14 +706,51 @@ class VaultwardenAPIClient:
 
         try:
             user_key = await self._ensure_user_key()
-            payload = self._build_cipher_payload(entry, folder_mapping, user_key, include_folder_id=True)
-
-            update_url = f"{self.api_base}/api/ciphers/{cipher_id}"
-            response = await self._client.put(
-                update_url, headers=self._get_headers(), json=payload
-            )
+            cipher_url = f"{self.api_base}/api/ciphers/{cipher_id}"
+            response = await self._client.get(cipher_url, headers=self._get_headers())
             response.raise_for_status()
-            logger.info(f"Updated cipher: {cipher_id} ({entry.title})")
+            current = response.json()
+            key = self._cipher_key(current, user_key)
+
+            payload: dict[str, Any] = {
+                name: current[name] for name in self._KEPT_CIPHER_FIELDS if name in current
+            }
+            payload["lastKnownRevisionDate"] = current.get("revisionDate")
+            if self._user_id:
+                payload["encryptedFor"] = self._user_id
+            if folder_mapping and entry.folder and entry.folder in folder_mapping:
+                payload["folderId"] = folder_mapping[entry.folder]
+            payload["name"] = encrypt_string(entry.title, key)
+            payload["notes"] = encrypt_string(entry.notes, key) if entry.notes else None
+
+            login = dict(current.get("login") or {})
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+            old_password = self._maybe_decrypt(login.get("password"), key) or ""
+            if entry.password != old_password:
+                if login.get("password"):
+                    history = [{"password": login["password"], "lastUsedDate": now}]
+                    history += list(payload.get("passwordHistory") or [])
+                    payload["passwordHistory"] = history[:5]
+                login["password"] = encrypt_string(entry.password, key) if entry.password else None
+                login["passwordRevisionDate"] = now
+            login["username"] = encrypt_string(entry.username, key) if entry.username else None
+            login["totp"] = encrypt_string(entry.otp_auth, key) if entry.otp_auth else None
+            # Keep unchanged website entries as they are (match settings, checksums).
+            existing = {}
+            for uri in login.get("uris") or []:
+                plain = self._maybe_decrypt(uri.get("uri"), key)
+                if plain:
+                    existing[plain] = uri
+            uris = [
+                existing.get(url) or {"uri": encrypt_string(url, key), "match": None}
+                for url in entry.get_all_urls()
+            ]
+            login["uris"] = uris or None
+            payload["login"] = login
+
+            response = await self._client.put(cipher_url, headers=self._get_headers(), json=payload)
+            response.raise_for_status()
+            logger.info(f"Updated cipher: {cipher_id}")
             return True
 
         except httpx.HTTPStatusError as e:
@@ -688,7 +760,7 @@ class VaultwardenAPIClient:
             logger.error(f"Response: {e.response.text}")
             return False
         except Exception as e:
-            logger.error(f"Failed to update cipher {cipher_id}: {e}")
+            logger.error(f"Failed to update cipher {cipher_id}: {type(e).__name__}")
             return False
 
     async def list_folders(self) -> list[dict[str, str]]:

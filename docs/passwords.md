@@ -10,8 +10,8 @@ Unlike Notes, Reminders and Photos, Passwords does not support automatic synchro
 
 1. Export your passwords to a CSV file from Apple Passwords. 
 2. Import your passwords export into iCloudBridge. 
-3. iCloudBridge sends any new/updated passwords to your remote location (i.e. Bitwarden, Vaultwarden or Nextcloud Passwords). 
-4. Any new passwords found remotely are imported, and you are given a CSV file to import into Apple Passwords. 
+3. iCloudBridge copies new and changed passwords, and deletions, to your remote location (i.e. Bitwarden, Vaultwarden or Nextcloud Passwords). 
+4. New and changed passwords found remotely go into a CSV file for you to import into Apple Passwords. Apple Passwords doesn't let other apps change or delete passwords, so iCloudBridge tells you which ones to change or delete there yourself. 
 
 > [!NOTE]
 > One-Time Passwords (also known as TOTP, used for two-factor authentication) are supported, but only if you're using Bitwarden or Vaultwarden
@@ -66,6 +66,41 @@ You can also check Bitwarden/Vaultwarden or Nextcloud passwords to confirm that 
 
 ![Passwords new in Vaultwarden](images/docs_passwords_8.png)
 
+### Changes and deletions
+
+When you change or delete a login on one side, a sync does the same on the other side:
+
+- **Changed in Apple Passwords:** the login is updated in your password manager. Bitwarden and Vaultwarden keep the same item, with its passkeys, custom fields, attachments and favourite, and the old password goes into the item's password history.
+- **Deleted in Apple Passwords:** the login is deleted from your password manager. Bitwarden and Vaultwarden move it to the trash, so you can restore it.
+- **Changed in your password manager:** the login is marked **Replace in Apple**. Apple Passwords won't import over a login it already has, so delete the old login in Apple Passwords first, then import the file. If the login has a passkey in Apple Passwords, change it there by hand instead, because deleting the login also deletes the passkey.
+- **Deleted in your password manager:** the login is marked **Delete in Apple**. Delete it in Apple Passwords yourself.
+
+Renaming a login or changing its website counts as a change.
+
+Some logins are always held for you to review, because there's no safe way to choose:
+
+- A login changed on both sides since the last sync. Apple's export doesn't say when a login was changed, so iCloudBridge can't tell which is newer.
+- A login changed on one side and deleted on the other.
+- A login that's on both sides but different the first time iCloudBridge sees it.
+- A login in your password manager that Apple Passwords can't take, because it already has a login for that website and username.
+- Many deletions at once. If more than half of your synced logins (and at least 10) would be deleted on one side, nothing is deleted. This usually means the export is wrong or incomplete.
+
+Held logins are marked **Review** in the results, with the reason. Make both sides match, and the login clears at the next sync.
+
+If you'd rather check every change or deletion yourself, turn on **Review changed items** or **Review deleted items** under Settings → Passwords Sync. Changes or deletions are then listed for review instead of being copied.
+
+> [!IMPORTANT]
+> Always upload a fresh export from Apple Passwords. With an older export, a sync sees your newer changes as undone and copies the older version back.
+
+A few details about how logins are matched:
+
+- Apple Passwords keeps only a website's host: `https://example.com/login` comes back as `https://example.com/`. Websites are compared by host and port only.
+- Apple Passwords keeps one login per website and username, and usernames that differ only in upper and lower case count as different.
+- Notes are compared ignoring line endings and spaces at the start or end.
+- A verification code stored as just its setup key matches the same code stored as an `otpauth://` link.
+
+You can also sync from the command line with `icloudbridge passwords sync --apple-csv export.csv`. Add `--dry-run` to see what would change without changing anything. Each run writes a new import file, `apple-import-<date>-<time>-<id>.csv`. Delete it after you import it.
+
 ### Unidirectional Sync
 
 Besides the bidirectional sync, you can also do an Export (i.e. Apple Passwords to another service) or an Import (Another service to Apple Passwords). 
@@ -115,67 +150,3 @@ Below the list are the codes that aren't in the checklist. Click a heading to se
 ---
 
 [< Previous - Reminder Synchronisation](reminders.md) | [Next - Photo Synchronisation >](photos.md)
-
-## Safe reconciliation and review
-
-Provider sync now uses an **additive-only** policy. Upload a fresh Apple Passwords
-CSV for bidirectional sync or pull-only comparison. Previously mapped logins that
-are missing on either side are held for review, rather than deleted or recreated.
-Existing logins with different passwords, notes, verification codes, or URLs are
-also held for review. Open both password apps to review and resolve the difference,
-then export Apple Passwords again and run another comparison. iCloudBridge never
-chooses a winner using CSV timestamps or local import times.
-
-The review list classifies password changes using each side's last observed sync
-hash: Apple changed, provider changed, both changed, or no trustworthy baseline.
-The database has no metadata baseline, so metadata differences
-are always held for review. Ambiguous identities and mapped title/URL changes are
-held as well. Equal pairs observed again clear review; converged renames retire
-old tracking rows without deleting vault entries. Identity matching remains conservative. Passkeys and unsupported provider fields are outside this comparison.
-
-The CLI also supports `icloudbridge passwords sync --apple-csv export.csv --dry-run`.
-
-Simulation reads the snapshots without creating passwords, folders, exports, or
-sync baselines. `planned_created` and `planned_new_entries` are proposed additions;
-`created` and `new_entries` count actual additions and CSV rows exported. Exporting
-rows for Apple is **not** confirmation that Apple imported them. Baselines are
-saved only for unambiguous equal pairs observed in both snapshots. Conflicts,
-missing entries, and export-only rows do not advance the baseline. Repeated exports
-before a successful Apple import can include the same pending additions.
-
-Vaultwarden additions share one fresh vault read, then create each login with
-individual success accounting. Transient failures retry with bounded backoff and a
-fresh identity check before replaying a create, to avoid duplicates after uncertain
-responses. A failed provider read aborts the run; it is never
-treated as an empty vault. A concurrent Bitwarden login is skipped rather than
-imported as another version. This is not a transaction across both password apps;
-refresh snapshots after any failure before retrying.
-
-CSV exports contain plaintext passwords and verification-code secrets. Keep the
-original and generated CSVs out of shared folders, cloud backups, spreadsheets,
-logs, and version control. New exports and temporary API uploads are created with
-owner-only permissions before writing any content. Existing output files and
-symlinks are refused; choose a new destination. The CLI default uses a unique
-filename for each run. API uploads are removed on exit and
-generated downloads use the existing expiring, single-use download lifecycle.
-Manually created CLI exports must be removed by you after import. Unlinking is not
-a guarantee of secure erasure on SSDs or backups. Last-sync password hashes remain
-sensitive data; this change does not encrypt the existing database or remove
-secrets stored by older versions. New CSV-import tracking does not persist notes
-or OTP secrets, and reconciliation never writes plaintext exports to that table.
-
-On upgrade, legacy mapping rows are unconfirmed until the login is actually seen
-on both sides. Missing URLs use one consistent empty value, and duplicate legacy
-tracking rows are collapsed. This migration changes tracking only. Apple snapshot
-counts and last-import time update after real syncs; simulations leave them alone.
-
-Logins with no password, no username or no website sync like any other: Apple
-Passwords imports and exports all three. Apple keeps only one login per website and
-username, and importing a second one overwrites the first. It also stores only the
-website's host: `https://example.com/login` comes back as `https://example.com/`, so
-URLs are compared by host and port only. A provider login that
-shares both with an Apple login, or with another login in the same export, is
-therefore held as `apple_one_login_per_site` instead of exported. Notes are compared
-ignoring line endings and leading or trailing whitespace. A bare TOTP secret matches
-an `otpauth://` URI with the same secret. Nextcloud custom URL and TOTP fields are
-read back, with full OTP parameters preserved on new writes.

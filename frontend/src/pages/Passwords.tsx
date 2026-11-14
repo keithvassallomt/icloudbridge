@@ -20,11 +20,17 @@ function ActionBadge({ action }: { action?: string }) {
     review: { label: 'Review', className: 'bg-amber-500/20 text-amber-700' },
     would_create: { label: 'Would add', className: 'bg-green-500/20 text-green-700' },
     would_export: { label: 'Would export', className: 'bg-green-500/20 text-green-700' },
+    would_update: { label: 'Would update', className: 'bg-blue-500/20 text-blue-700' },
+    would_delete: { label: 'Would trash', className: 'bg-red-500/20 text-red-700' },
+    would_replace_in_apple: { label: 'Replace in Apple', className: 'bg-blue-500/20 text-blue-700' },
+    replace_in_apple: { label: 'Replace in Apple', className: 'bg-blue-500/20 text-blue-700' },
+    would_delete_in_apple: { label: 'Delete in Apple', className: 'bg-red-500/20 text-red-700' },
+    delete_in_apple: { label: 'Delete in Apple', className: 'bg-red-500/20 text-red-700' },
     addition_attempted: { label: 'Addition attempted', className: 'bg-green-500/20 text-green-700' },
     export_for_manual_import: { label: 'Manual import', className: 'bg-green-500/20 text-green-700' },
     create: { label: 'New', className: 'bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30' },
     update: { label: 'Update', className: 'bg-blue-500/20 text-blue-700 dark:text-blue-400 border-blue-500/30' },
-    delete: { label: 'Delete', className: 'bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/30' },
+    delete: { label: 'Moved to trash', className: 'bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/30' },
   };
 
   const variant = variants[action];
@@ -96,10 +102,17 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
   }
 
   const { stats } = result;
-  const pullCount = result.simulate ? stats.pull?.planned_new_entries ?? 0 : stats.pull?.new_entries ?? 0;
-  const pushCount = result.simulate ? stats.push?.planned_created ?? 0 : stats.push?.created ?? 0;
-  const hasPushStats = stats.push && ((stats.push.entries?.length ?? 0) > 0 || (stats.push.planned_created ?? 0) > 0 || stats.push.created > 0 || stats.push.updated > 0 || stats.push.skipped > 0 || stats.push.failed > 0 || stats.push.deleted > 0);
-  const hasPullStats = stats.pull && ((stats.pull.entries?.length ?? 0) > 0 || (stats.pull.planned_new_entries ?? 0) > 0 || stats.pull.new_entries > 0 || stats.pull.deleted > 0);
+  const sim = result.simulate;
+  const pullCount = sim ? stats.pull?.planned_new_entries ?? 0 : stats.pull?.new_entries ?? 0;
+  const pullUpdated = sim ? stats.pull?.planned_updated ?? 0 : stats.pull?.updated ?? 0;
+  const pullDeleted = sim ? stats.pull?.planned_deleted ?? 0 : stats.pull?.deleted ?? 0;
+  const pushCount = sim ? stats.push?.planned_created ?? 0 : stats.push?.created ?? 0;
+  const pushUpdated = sim ? stats.push?.planned_updated ?? 0 : stats.push?.updated ?? 0;
+  const pushDeleted = sim ? stats.push?.planned_deleted ?? 0 : stats.push?.deleted ?? 0;
+  const reviewCount = stats.push?.conflicts?.length ?? stats.pull?.conflicts?.length ?? 0;
+  const policy = stats.policy;
+  const hasPushStats = stats.push && ((stats.push.entries?.length ?? 0) > 0 || pushCount > 0 || pushUpdated > 0 || pushDeleted > 0 || stats.push.skipped > 0 || stats.push.failed > 0);
+  const hasPullStats = stats.pull && ((stats.pull.entries?.length ?? 0) > 0 || pullCount > 0 || pullUpdated > 0 || pullDeleted > 0);
 
   if (!hasPushStats && !hasPullStats) {
     return (
@@ -120,8 +133,28 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
         <span>{stats.total_time ? `${stats.total_time.toFixed(1)}s` : ''}</span>
       </div>
 
-      <p className="text-sm">Additions only. Existing differences and missing logins require manual review; no passwords are overwritten or deleted.</p>
-      {result.simulate && <p className="text-sm">Would add {stats.push?.planned_created ?? 0} to {providerLabel}; would export {stats.pull?.planned_new_entries ?? 0} for Apple. No files, vault entries, or sync baselines were changed.</p>}
+      {policy && (policy.review_changes || policy.review_deletions) && (
+        <p className="text-sm">
+          {policy.review_changes && policy.review_deletions
+            ? 'Changed and deleted logins'
+            : policy.review_changes
+            ? 'Changed logins'
+            : 'Deleted logins'}{' '}
+          are listed for you to review instead of being copied to the other side (see Settings).
+        </p>
+      )}
+      {sim && (
+        <p className="text-sm">
+          Would add {pushCount}, update {pushUpdated} and move {pushDeleted} to the trash in {providerLabel}; would
+          export {pullCount} new and {pullUpdated} changed logins for Apple
+          {pullDeleted > 0 ? ` and ask you to delete ${pullDeleted} there` : ''}. Nothing was changed.
+        </p>
+      )}
+      {reviewCount > 0 && (
+        <p className="text-sm text-amber-700 dark:text-amber-400">
+          {reviewCount} login{reviewCount !== 1 ? 's' : ''} held for you to review; they're marked Review below.
+        </p>
+      )}
       {hasPullStats && stats.pull && (
         <Collapsible open={pullOpen} onOpenChange={setPullOpen}>
           <div className="rounded-lg border bg-background">
@@ -135,7 +168,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 <span className="font-semibold text-sm">Apple Passwords Import</span>
               </div>
               <div className="text-sm text-muted-foreground">
-                {result.simulate ? 'Would export' : 'New'}: {pullCount} {(stats.pull?.deleted ?? 0) > 0 && `• Deleted: ${stats.pull?.deleted ?? 0}`}
+                {sim ? 'Would export' : 'New'}: {pullCount} {pullUpdated > 0 && `• Replace in Apple: ${pullUpdated}`} {pullDeleted > 0 && `• Delete in Apple: ${pullDeleted}`}
               </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
@@ -146,12 +179,12 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                     <p className="font-semibold text-lg">{pullCount}</p>
                   </div>
                   <div className="rounded-md bg-muted/50 p-2">
-                    <p className="text-muted-foreground text-xs">Updated</p>
-                    <p className="font-semibold text-lg">{stats.pull?.updated ?? 0}</p>
+                    <p className="text-muted-foreground text-xs">Replace in Apple</p>
+                    <p className="font-semibold text-lg">{pullUpdated}</p>
                   </div>
                   <div className="rounded-md bg-destructive/10 p-2">
-                    <p className="text-muted-foreground text-xs">Deleted</p>
-                    <p className="font-semibold text-lg text-destructive">{stats.pull?.deleted ?? 0}</p>
+                    <p className="text-muted-foreground text-xs">Delete in Apple</p>
+                    <p className="font-semibold text-lg text-destructive">{pullDeleted}</p>
                   </div>
                 </div>
                 {stats.pull?.entries && stats.pull.entries.length > 0 && (
@@ -176,6 +209,9 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                                 )}
                               </div>
                               {entry.reason && <span className="text-muted-foreground">{entry.reason.replace(/_/g, " ")}</span>}
+                              {entry.replaces && entry.replaces !== entry.title && (
+                                <span className="text-muted-foreground">replaces “{entry.replaces}”</span>
+                              )}
                               <ActionBadge action={entry.action} />
                             </div>
                           ))}
@@ -184,11 +220,24 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                     </CollapsibleContent>
                   </Collapsible>
                 )}
-                {result.download && (stats.pull?.new_entries ?? 0) > 0 && (
-                  <DownloadLink info={result.download} />
+                {pullDeleted > 0 && (
+                  <p className="text-xs text-destructive">
+                    {sim ? 'Would ask you to delete' : 'Delete'} {pullDeleted} login{pullDeleted !== 1 ? 's' : ''} in
+                    Apple Passwords yourself (marked Delete in Apple above). They were deleted in {providerLabel}, and
+                    Apple doesn't let other apps delete passwords.
+                  </p>
                 )}
-                {pullCount === 0 && (
-                  <p className="text-xs text-muted-foreground">No new entries found.</p>
+                {pullUpdated > 0 && (
+                  <p className="text-xs text-blue-700 dark:text-blue-400">
+                    {pullUpdated} login{pullUpdated !== 1 ? 's' : ''} changed in {providerLabel} (marked Replace in Apple).
+                    Apple Passwords won't import over a login it already has, so first delete the old login in Apple
+                    Passwords, then import the file. If it has a passkey in Apple Passwords, edit it there by hand
+                    instead, because deleting it also deletes the passkey.
+                  </p>
+                )}
+                {result.download && <DownloadLink info={result.download} />}
+                {pullCount === 0 && pullUpdated === 0 && pullDeleted === 0 && (
+                  <p className="text-xs text-muted-foreground">Nothing to export.</p>
                 )}
               </div>
             </CollapsibleContent>
@@ -209,7 +258,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 <span className="font-semibold text-sm">{providerLabel} Import</span>
               </div>
               <div className="text-sm text-muted-foreground">
-                {result.simulate ? 'Would add' : 'New'}: {pushCount} {(stats.push?.updated ?? 0) > 0 && `• Updated: ${stats.push?.updated ?? 0}`} {(stats.push?.deleted ?? 0) > 0 && `• Deleted: ${stats.push?.deleted ?? 0}`}
+                {sim ? 'Would add' : 'New'}: {pushCount} {pushUpdated > 0 && `• Updated: ${pushUpdated}`} {pushDeleted > 0 && `• Trashed: ${pushDeleted}`}
               </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
@@ -221,11 +270,11 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                   </div>
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">Updated</p>
-                    <p className="font-semibold text-lg">{stats.push?.updated ?? 0}</p>
+                    <p className="font-semibold text-lg">{pushUpdated}</p>
                   </div>
                   <div className="rounded-md bg-destructive/10 p-2">
-                    <p className="text-muted-foreground text-xs">Deleted</p>
-                    <p className="font-semibold text-lg text-destructive">{stats.push?.deleted ?? 0}</p>
+                    <p className="text-muted-foreground text-xs">Moved to trash</p>
+                    <p className="font-semibold text-lg text-destructive">{pushDeleted}</p>
                   </div>
                 </div>
                 {stats.push?.entries && stats.push.entries.length > 0 && (

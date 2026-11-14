@@ -756,6 +756,11 @@ class PasswordsDB:
                 await db.execute(
                     "ALTER TABLE password_mapping ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0"
                 )
+            # Fingerprints of everything synced (not just the password), so a change
+            # to notes, websites or a verification code has a known direction.
+            for column in ("last_apple_content", "last_provider_content"):
+                if column not in {row[1] for row in columns}:
+                    await db.execute(f"ALTER TABLE password_mapping ADD COLUMN {column} TEXT")
             await db.execute("""DELETE FROM password_mapping WHERE id NOT IN (
                 SELECT MAX(id) FROM password_mapping GROUP BY title, COALESCE(url, ''), username, provider_type)""")
             await db.execute("UPDATE password_mapping SET url = '' WHERE url IS NULL")
@@ -1091,11 +1096,14 @@ class PasswordsDB:
             await db.executemany(
                 """INSERT INTO password_mapping
                 (title, url, username, provider_id, provider_type, last_sync_timestamp,
-                 last_apple_hash, last_provider_hash, created_at, confirmed)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                 last_apple_hash, last_provider_hash, created_at, confirmed,
+                 last_apple_content, last_provider_content)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(title, url, username, provider_type) DO UPDATE SET
                 provider_id=excluded.provider_id, last_sync_timestamp=excluded.last_sync_timestamp,
                 last_apple_hash=excluded.last_apple_hash, last_provider_hash=excluded.last_provider_hash,
+                last_apple_content=excluded.last_apple_content,
+                last_provider_content=excluded.last_provider_content,
                 confirmed=1""",
                 [
                     (
@@ -1108,6 +1116,8 @@ class PasswordsDB:
                         m["last_apple_hash"],
                         m["last_provider_hash"],
                         now,
+                        m.get("last_apple_content"),
+                        m.get("last_provider_content"),
                     )
                     for m in confirmed
                 ],

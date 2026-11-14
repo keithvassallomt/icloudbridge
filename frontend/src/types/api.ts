@@ -66,6 +66,8 @@ export interface AppConfig {
   passwords_enabled: boolean;
   passwords_provider?: 'vaultwarden' | 'nextcloud';
   passwords_ssl_verify_cert?: boolean | string;
+  passwords_review_changes?: boolean;
+  passwords_review_deletions?: boolean;
   passwords_vaultwarden_url?: string;
   passwords_vaultwarden_email?: string;
   passwords_vaultwarden_password?: string;
@@ -161,12 +163,30 @@ export interface PasswordImportStats {
 export interface PasswordEntryInfo {
   title: string;
   username: string;
-  action?: 'create' | 'update' | 'delete' | 'review' | 'would_create' | 'would_export' | 'addition_attempted' | 'export_for_manual_import';
+  action?:
+    | 'create'
+    | 'update'
+    | 'delete'
+    | 'review'
+    | 'would_create'
+    | 'would_update'
+    | 'would_delete'
+    | 'would_export'
+    | 'would_replace_in_apple'
+    | 'would_delete_in_apple'
+    | 'addition_attempted'
+    | 'export_for_manual_import'
+    | 'replace_in_apple'
+    | 'delete_in_apple';
   reason?: string;
+  // For a change Apple must take as a replacement: the title of the login it replaces.
+  replaces?: string;
 }
 
 export interface PasswordPushStats {
   planned_created?: number;
+  planned_updated?: number;
+  planned_deleted?: number;
   conflicts?: PasswordEntryInfo[];
   queued: number;
   created: number;
@@ -183,6 +203,8 @@ export interface PasswordPushStats {
 
 export interface PasswordPullStats {
   planned_new_entries?: number;
+  planned_updated?: number;
+  planned_deleted?: number;
   conflicts?: PasswordEntryInfo[];
   new_entries: number;
   updated: number;
@@ -207,6 +229,7 @@ export interface PasswordsSyncStats {
   simulate: boolean;
   run_push: boolean;
   run_pull: boolean;
+  policy?: { review_changes: boolean; review_deletions: boolean };
 }
 
 export interface PasswordsSyncResponse {

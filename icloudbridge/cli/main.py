@@ -2116,6 +2116,8 @@ def passwords_sync(
             run_push=True,
             run_pull=True,
             bulk_push=bulk,
+            review_changes=cfg.passwords.review_changes,
+            review_deletions=cfg.passwords.review_deletions,
         )
 
         # Close provider connection
@@ -2137,16 +2139,22 @@ def passwords_sync(
         push_table.add_column("Count", justify="right", style="green")
 
         push_stats = stats["push"]
-        push_table.add_row("Would add" if dry_run else "Created", str(push_stats.get("planned_created" if dry_run else "created", 0)))
-        push_table.add_row("Updated", str(push_stats.get("updated", 0)))
-        push_table.add_row("Skipped (unchanged)", str(push_stats.get("skipped", 0)))
+        verb = "Would " if dry_run else ""
+        prefix = "planned_" if dry_run else ""
+        push_table.add_row(f"{verb}add" if dry_run else "Added", str(push_stats.get(f"{prefix}created", 0)))
+        push_table.add_row(f"{verb}update" if dry_run else "Updated", str(push_stats.get(f"{prefix}updated", 0)))
+        push_table.add_row(
+            f"{verb}move to trash" if dry_run else "Moved to trash",
+            str(push_stats.get(f"{prefix}deleted", 0)),
+        )
+        push_table.add_row("Unchanged", str(push_stats.get("skipped", 0)))
         if push_stats.get("failed", 0) > 0:
             push_table.add_row("Failed", str(push_stats["failed"]), style="red")
 
         console.print(push_table)
         reviews = push_stats.get("conflicts", [])
         if reviews:
-            console.print(f"[yellow]{len(reviews)} items held for manual review; no overwrites or deletions.[/yellow]")
+            console.print(f"[yellow]{len(reviews)} held for you to review on the Passwords page:[/yellow]")
             for review in reviews:
                 console.print(f"  {review.get('title', '')}: {review['reason']}", markup=False)
 
@@ -2155,14 +2163,29 @@ def passwords_sync(
         console.print("=" * 60)
 
         pull_stats = stats["pull"]
+        exported = pull_stats.get(f"{prefix}new_entries", 0) + pull_stats.get(f"{prefix}updated", 0)
+        apple_deletions = [
+            e for e in pull_stats.get("entries", [])
+            if e.get("action") in ("delete_in_apple", "would_delete_in_apple")
+        ]
         if dry_run:
-            console.print(f"Would export {pull_stats.get('planned_new_entries', 0)} logins for Apple.")
+            console.print(
+                f"Would export {pull_stats.get('planned_new_entries', 0)} new and "
+                f"{pull_stats.get('planned_updated', 0)} changed logins for Apple."
+            )
+            if apple_deletions:
+                console.print(f"Would ask you to delete {len(apple_deletions)} in Apple Passwords.")
+            if pull_stats.get("planned_updated", 0):
+                console.print(f"Would ask you to replace {pull_stats['planned_updated']} in Apple Passwords.")
             console.print("Dry run complete. No passwords, export files, or sync baselines changed.")
             return
-        new_entries = pull_stats.get("new_entries", 0)
+        new_entries = exported
 
-        if new_entries > 0:
-            console.print(f"[green]✅ Generated Apple CSV with {new_entries} new entries[/green]")
+        if exported > 0:
+            console.print(
+                f"[green]✅ Generated Apple CSV with {pull_stats.get('new_entries', 0)} new and "
+                f"{pull_stats.get('updated', 0)} changed logins[/green]"
+            )
             console.print(f"   File: {pull_stats.get('download_path')}")
 
             console.print("\n[yellow]⚠️  Manual step required:[/yellow]")
@@ -2171,7 +2194,28 @@ def passwords_sync(
             console.print(f"   3. Select: {pull_stats.get('download_path')}")
             console.print(f"   4. Delete CSV file after import")
         else:
-            console.print(f"[dim]No new passwords from {provider_display}[/dim]")
+            console.print(f"[dim]Nothing to export from {provider_display}[/dim]")
+        replacements = [
+            e for e in pull_stats.get("entries", [])
+            if e.get("action") in ("replace_in_apple", "would_replace_in_apple")
+        ]
+        if replacements:
+            console.print(
+                f"\n[yellow]⚠️  Changed in {provider_display}. Apple Passwords won't import over a login "
+                "it already has: delete each old login in Apple Passwords, then import the file "
+                "(or edit it there by hand, which keeps any passkey):[/yellow]"
+            )
+            for entry in replacements:
+                old = entry.get("replaces") or entry.get("title", "")
+                renamed = f" → {entry.get('title', '')}" if old != entry.get("title") else ""
+                console.print(f"   • {old}{renamed} ({entry.get('username', '')})", markup=False)
+        if apple_deletions:
+            console.print(
+                f"\n[yellow]⚠️  Deleted in {provider_display}; delete these in Apple Passwords "
+                "yourself (Apple doesn't let other apps delete passwords):[/yellow]"
+            )
+            for entry in apple_deletions:
+                console.print(f"   • {entry.get('title', '')} ({entry.get('username', '')})", markup=False)
 
         console.print("\n" + "=" * 60)
         console.print(f"[bold green]✅ Sync complete in {stats['total_time']:.1f}s[/bold green]")

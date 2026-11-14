@@ -110,6 +110,8 @@ class ConfigResponse(BaseModel):
     reminders_caldav_ssl_verify_cert: bool | str | None = None
     passwords_provider: str | None = None
     passwords_ssl_verify_cert: bool | str | None = None
+    passwords_review_changes: bool = False
+    passwords_review_deletions: bool = False
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
     passwords_nextcloud_url: str | None = None
@@ -160,6 +162,8 @@ class ConfigUpdateRequest(BaseModel):
     reminders_calendar_mappings: dict[str, str] | None = None
     reminders_auto_delete_lists: bool | None = None
     passwords_provider: str | None = None
+    passwords_review_changes: bool | None = None
+    passwords_review_deletions: bool | None = None
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
     passwords_vaultwarden_password: str | None = Field(
