@@ -11,7 +11,7 @@ import logging
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, HTTPException, status
 
 from icloudbridge.core.config import AppConfig, load_config
 from icloudbridge.core.passwords_sync import PasswordsSyncEngine
@@ -43,6 +43,17 @@ def get_config() -> AppConfig:
     return load_config(config_path)
 
 
+PHOTOS_TURNED_OFF = "Photos sync is turned off. Turn on Enable Photos Sync in Settings."
+
+
+def setup_needed(message: str) -> HTTPException:
+    """A 400 whose message says what to set up; the web UI shows it as the error.
+
+    A plain exception here became a generic "Internal server error".
+    """
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+
+
 async def get_notes_sync_engine(config: Annotated[AppConfig, Depends(get_config)]) -> NotesSyncEngine:
     """Get an initialized notes sync engine.
 
@@ -57,7 +68,7 @@ async def get_notes_sync_engine(config: Annotated[AppConfig, Depends(get_config)
     markdown_base_path = config.notes.remote_folder
 
     if not markdown_base_path:
-        raise ValueError("Notes remote_folder not configured")
+        raise setup_needed("No notes folder is set. Choose a Notes Folder in Settings.")
 
     engine = NotesSyncEngine(markdown_base_path, db_path)
     await engine.initialize()
@@ -81,7 +92,7 @@ async def get_reminders_sync_engine(
     # Get CalDAV credentials
     caldav_password = config.reminders.get_caldav_password()
     if not caldav_password:
-        raise ValueError("CalDAV password not found in keyring")
+        raise setup_needed("Your CalDAV password isn't saved. Enter it under Reminders Sync in Settings.")
 
     engine = RemindersSyncEngine(
         caldav_url=config.reminders.caldav_url,
@@ -119,7 +130,7 @@ async def get_photos_sync_engine(
     """Get an initialized photo sync engine."""
 
     if not config.photos.enabled:
-        raise ValueError("Photo sync is disabled in configuration")
+        raise setup_needed(PHOTOS_TURNED_OFF)
 
     engine = PhotoSyncEngine(config.photos, config.general.data_dir)
     await engine.initialize()
@@ -138,13 +149,10 @@ async def get_photos_export_engine(
     from pathlib import Path
 
     if not config.photos.enabled:
-        raise ValueError("Photo sync is disabled in configuration")
+        raise setup_needed(PHOTOS_TURNED_OFF)
 
     if config.photos.sync_mode not in ("export", "bidirectional"):
-        raise ValueError(
-            f"Photo export requires sync_mode='export' or 'bidirectional', "
-            f"got '{config.photos.sync_mode}'"
-        )
+        raise setup_needed("Exporting photos needs Photo Sync Mode set to Bidirectional Sync in Settings.")
 
     export_cfg = config.photos.export
 
@@ -156,7 +164,10 @@ async def get_photos_export_engine(
             first_source = next(iter(config.photos.sources.values()))
             export_folder = first_source.path
         else:
-            raise ValueError("No export folder configured and no import sources available")
+            raise setup_needed(
+                "There's no folder to export photos to. Add a photos source folder in Settings; "
+                "photos are exported to the first one."
+            )
 
     export_config = ExportConfig(
         export_folder=Path(export_folder),

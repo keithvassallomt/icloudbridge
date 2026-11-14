@@ -7,6 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, status
 
 from icloudbridge.api.dependencies import (
+    PHOTOS_TURNED_OFF,
     ConfigDep,
     PhotosDBDep,
     PhotosExportEngineDep,
@@ -222,7 +223,7 @@ async def _reset_database(photos_db: PhotosDBDep, config: ConfigDep):
     if not config.photos.enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Photo sync is disabled",
+            detail=PHOTOS_TURNED_OFF,
         )
 
     logger.info("Resetting photos database")
@@ -284,7 +285,7 @@ async def _export_photos(
     if not config.photos.enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Photo sync is disabled",
+            detail=PHOTOS_TURNED_OFF,
         )
 
     if config.photos.sync_mode not in ("export", "bidirectional"):
@@ -468,7 +469,7 @@ async def list_library_albums(config: ConfigDep, photos_db: PhotosDBDep):
     if not config.photos.enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Photo sync is disabled",
+            detail=PHOTOS_TURNED_OFF,
         )
 
     reader = PhotosLibraryReader()
@@ -492,7 +493,7 @@ async def get_library_stats(config: ConfigDep, photos_db: PhotosDBDep):
     if not config.photos.enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Photo sync is disabled",
+            detail=PHOTOS_TURNED_OFF,
         )
 
     reader = PhotosLibraryReader()
@@ -527,7 +528,7 @@ async def _set_export_baseline(config: ConfigDep, photos_db: PhotosDBDep):
     if not config.photos.enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Photo sync is disabled",
+            detail=PHOTOS_TURNED_OFF,
         )
 
     await photos_db.set_export_baseline()
