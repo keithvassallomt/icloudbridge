@@ -34,6 +34,7 @@ app = typer.Typer(
 
 # Create console for rich output
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 @app.callback()
