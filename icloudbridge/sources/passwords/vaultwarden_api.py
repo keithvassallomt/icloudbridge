@@ -13,6 +13,8 @@ import httpx
 from argon2.low_level import Type, hash_secret_raw
 
 from icloudbridge import __version__
+from .diagnostics import ProviderAuthError
+from .retry import retry_addition
 
 from .bitwarden_crypto import (
     encrypt_optional_list,
@@ -118,6 +120,8 @@ class VaultwardenAPIClient:
         )
         self._master_key: bytes | None = None
         self._user_key: bytes | None = None
+        self._user_id: str | None = None
+        self._user_key_id: str | None = None
 
     _truststore_injected = False
 
@@ -260,11 +264,40 @@ class VaultwardenAPIClient:
             logger.error(f"Response: {e.response.text}")
             if e.response.status_code == 429:
                 self._log_rate_limit_diagnostics(e.response)
-                raise Exception(self._rate_limit_message(e.response)) from e
-            raise Exception(f"Failed to authenticate with VaultWarden: {e}") from e
+                raise ProviderAuthError(self._rate_limit_message(e.response)) from e
+            raise ProviderAuthError(self._auth_failure_message(e.response)) from e
+        except httpx.TransportError as e:
+            logger.error(f"VaultWarden authentication failed: {e}")
+            raise ProviderAuthError(
+                f"Could not reach VaultWarden at {self.identity_base} "
+                f"({type(e).__name__}); check the server URL and network."
+            ) from e
+        except ProviderAuthError:
+            raise
         except Exception as e:
             logger.error(f"VaultWarden authentication failed: {e}")
-            raise Exception(f"Failed to authenticate with VaultWarden: {e}") from e
+            raise ProviderAuthError(
+                f"Failed to authenticate with VaultWarden ({type(e).__name__})."
+            ) from e
+
+    @staticmethod
+    def _auth_failure_message(response: httpx.Response) -> str:
+        """Show the server's own reason (e.g. wrong password), which never echoes secrets."""
+        detail = ""
+        try:
+            body = response.json()
+            detail = (
+                (body.get("ErrorModel") or {}).get("Message")
+                or body.get("error_description")
+                or body.get("message")
+                or body.get("error")
+                or ""
+            )
+        except Exception:
+            pass
+        detail = " ".join(str(detail).split())[:200]
+        message = f"VaultWarden rejected the login (HTTP {response.status_code})"
+        return f"{message}: {detail}" if detail else f"{message}."
 
     async def _derive_password_key(self) -> str:
         """Derive the password key using the KDF parameters from VaultWarden."""
@@ -507,12 +540,10 @@ class VaultwardenAPIClient:
 
                 create_entry = True
                 if dedup_key in existing_map:
-                    existing = existing_map[dedup_key]
-                    create_entry = existing.password != entry.password
-                    if not create_entry:
-                        stats["skipped"] += 1
-                        logger.debug(f"Skipped unchanged: {entry.title}")
-                        continue
+                    # Imports are additive: a fresh read may reveal a concurrent edit.
+                    # Never create a second version of an existing login automatically.
+                    stats["skipped"] += 1
+                    continue
 
                 if dry_run:
                     if create_entry:
@@ -529,8 +560,8 @@ class VaultwardenAPIClient:
                     stats["skipped"] += 1
                     logger.debug(f"Skipped (update not implemented): {entry.title}")
 
-            except Exception as e:
-                error_msg = f"Failed to push {entry.title}: {e}"
+            except Exception:
+                error_msg = "Password preparation failed; refresh snapshots before retrying"
                 logger.error(error_msg)
                 stats["failed"] += 1
                 stats["errors"].append(error_msg)
@@ -552,11 +583,15 @@ class VaultwardenAPIClient:
         # Fallback to per-item creation
         for entry, payload in payload_queue:
             try:
-                await self._post_cipher_payload(payload)
-                stats["created"] += 1
+                async def exists(entry=entry):
+                    return any(e.get_dedup_key() == entry.get_dedup_key() for e in await self.pull_passwords())
+                if await retry_addition(lambda payload=payload: self._post_cipher_payload(payload), exists):
+                    stats["created"] += 1
+                else:
+                    stats["skipped"] += 1
                 logger.debug(f"Created: {entry.title}")
-            except Exception as exc:
-                error_msg = f"Failed to push {entry.title}: {exc}"
+            except Exception:
+                error_msg = "Password addition failed; refresh snapshots before retrying"
                 logger.error(error_msg)
                 stats["failed"] += 1
                 stats["errors"].append(error_msg)
@@ -754,6 +789,11 @@ class VaultwardenAPIClient:
             "login": {},
         }
 
+        if self._user_id:
+            cipher_data["encryptedFor"] = self._user_id
+        if self._user_key_id:
+            cipher_data["encryptedByKeyId"] = self._user_key_id
+
         if entry.notes:
             cipher_data["notes"] = encrypt_string(entry.notes, user_key)
 
@@ -834,6 +874,8 @@ class VaultwardenAPIClient:
         response = await self._client.get(profile_url, headers=self._get_headers())
         response.raise_for_status()
         profile = response.json()
+        self._user_id = profile.get("id")
+        self._user_key_id = profile.get("userKeyId")
         encrypted_key = profile.get("key")
         if not encrypted_key:
             raise RuntimeError("Profile missing encryption key")

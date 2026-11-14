@@ -17,6 +17,11 @@ function ActionBadge({ action }: { action?: string }) {
   if (!action) return null;
 
   const variants: Record<string, { label: string; className: string }> = {
+    review: { label: 'Review', className: 'bg-amber-500/20 text-amber-700' },
+    would_create: { label: 'Would add', className: 'bg-green-500/20 text-green-700' },
+    would_export: { label: 'Would export', className: 'bg-green-500/20 text-green-700' },
+    addition_attempted: { label: 'Addition attempted', className: 'bg-green-500/20 text-green-700' },
+    export_for_manual_import: { label: 'Manual import', className: 'bg-green-500/20 text-green-700' },
     create: { label: 'New', className: 'bg-green-500/20 text-green-700 dark:text-green-400 border-green-500/30' },
     update: { label: 'Update', className: 'bg-blue-500/20 text-blue-700 dark:text-blue-400 border-blue-500/30' },
     delete: { label: 'Delete', className: 'bg-red-500/20 text-red-700 dark:text-red-400 border-red-500/30' },
@@ -91,8 +96,10 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
   }
 
   const { stats } = result;
-  const hasPushStats = stats.push && (stats.push.created > 0 || stats.push.updated > 0 || stats.push.skipped > 0 || stats.push.failed > 0 || stats.push.deleted > 0);
-  const hasPullStats = stats.pull && (stats.pull.new_entries > 0 || stats.pull.deleted > 0);
+  const pullCount = result.simulate ? stats.pull?.planned_new_entries ?? 0 : stats.pull?.new_entries ?? 0;
+  const pushCount = result.simulate ? stats.push?.planned_created ?? 0 : stats.push?.created ?? 0;
+  const hasPushStats = stats.push && ((stats.push.entries?.length ?? 0) > 0 || (stats.push.planned_created ?? 0) > 0 || stats.push.created > 0 || stats.push.updated > 0 || stats.push.skipped > 0 || stats.push.failed > 0 || stats.push.deleted > 0);
+  const hasPullStats = stats.pull && ((stats.pull.entries?.length ?? 0) > 0 || (stats.pull.planned_new_entries ?? 0) > 0 || stats.pull.new_entries > 0 || stats.pull.deleted > 0);
 
   if (!hasPushStats && !hasPullStats) {
     return (
@@ -113,6 +120,8 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
         <span>{stats.total_time ? `${stats.total_time.toFixed(1)}s` : ''}</span>
       </div>
 
+      <p className="text-sm">Additions only. Existing differences and missing logins require manual review; no passwords are overwritten or deleted.</p>
+      {result.simulate && <p className="text-sm">Would add {stats.push?.planned_created ?? 0} to {providerLabel}; would export {stats.pull?.planned_new_entries ?? 0} for Apple. No files, vault entries, or sync baselines were changed.</p>}
       {hasPullStats && stats.pull && (
         <Collapsible open={pullOpen} onOpenChange={setPullOpen}>
           <div className="rounded-lg border bg-background">
@@ -126,7 +135,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 <span className="font-semibold text-sm">Apple Passwords Import</span>
               </div>
               <div className="text-sm text-muted-foreground">
-                New: {stats.pull?.new_entries ?? 0} {(stats.pull?.deleted ?? 0) > 0 && `• Deleted: ${stats.pull?.deleted ?? 0}`}
+                {result.simulate ? 'Would export' : 'New'}: {pullCount} {(stats.pull?.deleted ?? 0) > 0 && `• Deleted: ${stats.pull?.deleted ?? 0}`}
               </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
@@ -134,7 +143,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 <div className="grid grid-cols-3 gap-3 text-sm">
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">New</p>
-                    <p className="font-semibold text-lg">{stats.pull?.new_entries ?? 0}</p>
+                    <p className="font-semibold text-lg">{pullCount}</p>
                   </div>
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">Updated</p>
@@ -166,6 +175,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                                   <div className="text-muted-foreground text-[10px] truncate">{entry.username}</div>
                                 )}
                               </div>
+                              {entry.reason && <span className="text-muted-foreground">{entry.reason.replace(/_/g, " ")}</span>}
                               <ActionBadge action={entry.action} />
                             </div>
                           ))}
@@ -177,7 +187,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 {result.download && (stats.pull?.new_entries ?? 0) > 0 && (
                   <DownloadLink info={result.download} />
                 )}
-                {(stats.pull?.new_entries ?? 0) === 0 && (
+                {pullCount === 0 && (
                   <p className="text-xs text-muted-foreground">No new entries found.</p>
                 )}
               </div>
@@ -199,7 +209,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 <span className="font-semibold text-sm">{providerLabel} Import</span>
               </div>
               <div className="text-sm text-muted-foreground">
-                New: {stats.push?.created ?? 0} {(stats.push?.updated ?? 0) > 0 && `• Updated: ${stats.push?.updated ?? 0}`} {(stats.push?.deleted ?? 0) > 0 && `• Deleted: ${stats.push?.deleted ?? 0}`}
+                {result.simulate ? 'Would add' : 'New'}: {pushCount} {(stats.push?.updated ?? 0) > 0 && `• Updated: ${stats.push?.updated ?? 0}`} {(stats.push?.deleted ?? 0) > 0 && `• Deleted: ${stats.push?.deleted ?? 0}`}
               </div>
             </CollapsibleTrigger>
             <CollapsibleContent>
@@ -207,7 +217,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                 <div className="grid grid-cols-3 gap-3 text-sm">
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">New</p>
-                    <p className="font-semibold text-lg">{stats.push?.created ?? 0}</p>
+                    <p className="font-semibold text-lg">{pushCount}</p>
                   </div>
                   <div className="rounded-md bg-muted/50 p-2">
                     <p className="text-muted-foreground text-xs">Updated</p>
@@ -239,6 +249,7 @@ function SyncStatsView({ result, providerLabel }: { result: PasswordsSyncRespons
                                   <div className="text-muted-foreground text-[10px] truncate">{entry.username}</div>
                                 )}
                               </div>
+                              {entry.reason && <span className="text-muted-foreground">{entry.reason.replace(/_/g, " ")}</span>}
                               <ActionBadge action={entry.action} />
                             </div>
                           ))}
@@ -286,6 +297,7 @@ export default function Passwords() {
   const [success, setSuccess] = useState<string | null>(null);
 
   const [bidirectionalFile, setBidirectionalFile] = useState<File | null>(null);
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [exportFile, setExportFile] = useState<File | null>(null);
   const [bidirectionalResult, setBidirectionalResult] = useState<PasswordsSyncResponse | null>(null);
   const [exportResult, setExportResult] = useState<PasswordsSyncResponse | null>(null);
@@ -375,11 +387,15 @@ export default function Passwords() {
   };
 
   const handleImportAction = async () => {
+    if (!importFile) {
+      setError('Upload a fresh Apple CSV to identify missing passwords safely.');
+      return;
+    }
     try {
       setImportLoading(true);
       setError(null);
       setSuccess(null);
-      const response = await apiClient.passwordsImportFromProvider({ bulk: true });
+      const response = await apiClient.passwordsImportFromProvider({ bulk: true, appleFile: importFile });
       setImportResult(response);
       if (response.stats.pull?.new_entries) {
         setSuccess('Import prepared. Download the Apple CSV and import it.');
@@ -584,13 +600,18 @@ export default function Passwords() {
               <div>
                 <h3 className="text-lg font-semibold">Import Passwords</h3>
                 <p className="text-sm text-muted-foreground">
-                  Fetch new passwords from {providerMarketingLabel} and generate an Apple-ready CSV.
+                  Compare a fresh Apple export with {providerMarketingLabel} and export only new logins. Review differences manually in both apps.
                 </p>
               </div>
+              <label className="block text-sm">
+                Fresh Apple Passwords CSV
+                <input type="file" accept=".csv" className="block mt-2"
+                  onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} />
+              </label>
               <Button
                 className="w-full"
                 onClick={handleImportAction}
-                disabled={importLoading}
+                disabled={importLoading || !importFile}
               >
                 {importLoading ? (
                   <RefreshCw className="w-4 h-4 mr-2 animate-spin" />

@@ -5,7 +5,9 @@ import logging
 import re
 from pathlib import Path
 
+from .diagnostics import InvalidInputError
 from .models import PasswordEntry
+from .secure_csv import private_csv
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +46,15 @@ class ApplePasswordsCSVParser:
         duplicates = 0
         errors = 0
 
-        with open(csv_path, "r", encoding="utf-8") as f:
+        with open(csv_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
 
             # Validate headers
             expected_headers = {"Title", "URL", "Username", "Password", "Notes", "OTPAuth"}
             if not expected_headers.issubset(set(reader.fieldnames or [])):
-                raise ValueError(
-                    f"Invalid Apple Passwords CSV format. Expected headers: {expected_headers}"
+                raise InvalidInputError(
+                    "This isn't an Apple Passwords export: expected the columns "
+                    "Title, URL, Username, Password, Notes and OTPAuth."
                 )
 
             for row_num, row in enumerate(reader, start=2):  # Start at 2 (1 is header)
@@ -59,9 +62,9 @@ class ApplePasswordsCSVParser:
                     # Required fields
                     title = row.get("Title", "").strip()
                     username = row.get("Username", "").strip()
-                    password = row.get("Password", "").strip()
+                    password = row.get("Password", "")
 
-                    if not title or not username or not password:
+                    if not title:
                         logger.warning(
                             f"Row {row_num}: Skipping entry with missing required fields"
                         )
@@ -70,7 +73,7 @@ class ApplePasswordsCSVParser:
 
                     # Optional fields
                     url = row.get("URL", "").strip() or None
-                    notes_raw = row.get("Notes", "").strip()
+                    notes_raw = row.get("Notes", "")
                     notes = notes_raw or None
                     otp_auth = row.get("OTPAuth", "").strip() or None
 
@@ -107,7 +110,6 @@ class ApplePasswordsCSVParser:
                         account_index[account_key] = entry
                         entries.append(entry)
 
-
                 except Exception as e:
                     logger.error(f"Row {row_num}: Error parsing entry: {e}")
                     errors += 1
@@ -131,9 +133,7 @@ class ApplePasswordsCSVParser:
         Raises:
             IOError: If file cannot be written
         """
-        import os
-
-        with open(output_path, "w", encoding="utf-8", newline="") as f:
+        with private_csv(output_path) as f:
             writer = csv.DictWriter(
                 f, fieldnames=["Title", "URL", "Username", "Password", "Notes", "OTPAuth"]
             )
@@ -152,8 +152,5 @@ class ApplePasswordsCSVParser:
                             "OTPAuth": entry.otp_auth or "",
                         }
                     )
-
-        # Set secure permissions (owner read/write only)
-        os.chmod(output_path, 0o600)
 
         logger.info(f"Wrote {len(entries)} entries to Apple Passwords CSV: {output_path}")

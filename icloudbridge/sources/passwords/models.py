@@ -2,6 +2,7 @@
 
 import hashlib
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit, urlunsplit
 
 
 @dataclass
@@ -40,18 +41,52 @@ class PasswordEntry:
         """
         return hashlib.sha256(self.password.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def normalize_url(url: str | None) -> str | None:
+        """Reduce a website URL to what Apple Passwords keeps: https://host[:port]/.
+
+        Apple stores a website, not a page. Importing https://example.com/login
+        exports back as https://example.com/, so the path, query, fragment and
+        user info are dropped and web URLs are compared by host and port only.
+        Non-web URLs (app links and the like) are compared as given.
+        """
+        if not url or not url.strip():
+            return None
+        value = url.strip()
+        candidate = value if "://" in value else f"https://{value}"
+        try:
+            parts = urlsplit(candidate)
+            if parts.scheme.lower() in {"http", "https"} and parts.hostname:
+                host = parts.hostname.lower()
+                if ":" in host:
+                    host = f"[{host}]"
+                port = f":{parts.port}" if parts.port else ""
+                return urlunsplit(("https", host + port, "/", "", ""))
+        except ValueError:
+            pass
+        return value
+
     def get_dedup_key(self) -> tuple[str, str | None, str]:
         """
         Get a unique key for deduplication.
 
         Returns:
-            Tuple of (title_lower, url_lower, username_lower)
+            Tuple of (title_lower, normalized_url, username_lower)
         """
         return (
             self.title.lower().strip(),
-            self.url.lower().strip() if self.url else None,
+            self.key_url(),
             self.username.lower().strip(),
         )
+
+    def key_url(self) -> str | None:
+        """The URL that identifies this login, independent of URL order.
+
+        Apple exports a login with several websites as one row per website, in
+        no fixed order, so the first URL is not stable across a round trip.
+        """
+        urls = {self.normalize_url(url) for url in self.get_all_urls()} - {None}
+        return min(urls) if urls else None
 
     def add_url(self, url: str) -> None:
         """Add an additional URL if not already tracked."""

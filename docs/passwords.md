@@ -115,3 +115,67 @@ Below the list are the codes that aren't in the checklist. Click a heading to se
 ---
 
 [< Previous - Reminder Synchronisation](reminders.md) | [Next - Photo Synchronisation >](photos.md)
+
+## Safe reconciliation and review
+
+Provider sync now uses an **additive-only** policy. Upload a fresh Apple Passwords
+CSV for bidirectional sync or pull-only comparison. Previously mapped logins that
+are missing on either side are held for review, rather than deleted or recreated.
+Existing logins with different passwords, notes, verification codes, or URLs are
+also held for review. Open both password apps to review and resolve the difference,
+then export Apple Passwords again and run another comparison. iCloudBridge never
+chooses a winner using CSV timestamps or local import times.
+
+The review list classifies password changes using each side's last observed sync
+hash: Apple changed, provider changed, both changed, or no trustworthy baseline.
+The database has no metadata baseline, so metadata differences
+are always held for review. Ambiguous identities and mapped title/URL changes are
+held as well. Equal pairs observed again clear review; converged renames retire
+old tracking rows without deleting vault entries. Identity matching remains conservative. Passkeys and unsupported provider fields are outside this comparison.
+
+The CLI also supports `icloudbridge passwords sync --apple-csv export.csv --dry-run`.
+
+Simulation reads the snapshots without creating passwords, folders, exports, or
+sync baselines. `planned_created` and `planned_new_entries` are proposed additions;
+`created` and `new_entries` count actual additions and CSV rows exported. Exporting
+rows for Apple is **not** confirmation that Apple imported them. Baselines are
+saved only for unambiguous equal pairs observed in both snapshots. Conflicts,
+missing entries, and export-only rows do not advance the baseline. Repeated exports
+before a successful Apple import can include the same pending additions.
+
+Vaultwarden additions share one fresh vault read, then create each login with
+individual success accounting. Transient failures retry with bounded backoff and a
+fresh identity check before replaying a create, to avoid duplicates after uncertain
+responses. A failed provider read aborts the run; it is never
+treated as an empty vault. A concurrent Bitwarden login is skipped rather than
+imported as another version. This is not a transaction across both password apps;
+refresh snapshots after any failure before retrying.
+
+CSV exports contain plaintext passwords and verification-code secrets. Keep the
+original and generated CSVs out of shared folders, cloud backups, spreadsheets,
+logs, and version control. New exports and temporary API uploads are created with
+owner-only permissions before writing any content. Existing output files and
+symlinks are refused; choose a new destination. The CLI default uses a unique
+filename for each run. API uploads are removed on exit and
+generated downloads use the existing expiring, single-use download lifecycle.
+Manually created CLI exports must be removed by you after import. Unlinking is not
+a guarantee of secure erasure on SSDs or backups. Last-sync password hashes remain
+sensitive data; this change does not encrypt the existing database or remove
+secrets stored by older versions. New CSV-import tracking does not persist notes
+or OTP secrets, and reconciliation never writes plaintext exports to that table.
+
+On upgrade, legacy mapping rows are unconfirmed until the login is actually seen
+on both sides. Missing URLs use one consistent empty value, and duplicate legacy
+tracking rows are collapsed. This migration changes tracking only. Apple snapshot
+counts and last-import time update after real syncs; simulations leave them alone.
+
+Logins with no password, no username or no website sync like any other: Apple
+Passwords imports and exports all three. Apple keeps only one login per website and
+username, and importing a second one overwrites the first. It also stores only the
+website's host: `https://example.com/login` comes back as `https://example.com/`, so
+URLs are compared by host and port only. A provider login that
+shares both with an Apple login, or with another login in the same export, is
+therefore held as `apple_one_login_per_site` instead of exported. Notes are compared
+ignoring line endings and leading or trailing whitespace. A bare TOTP secret matches
+an `otpauth://` URI with the same secret. Nextcloud custom URL and TOTP fields are
+read back, with full OTP parameters preserved on new writes.

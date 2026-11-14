@@ -161,10 +161,13 @@ export interface PasswordImportStats {
 export interface PasswordEntryInfo {
   title: string;
   username: string;
-  action?: 'create' | 'update' | 'delete';
+  action?: 'create' | 'update' | 'delete' | 'review' | 'would_create' | 'would_export' | 'addition_attempted' | 'export_for_manual_import';
+  reason?: string;
 }
 
 export interface PasswordPushStats {
+  planned_created?: number;
+  conflicts?: PasswordEntryInfo[];
   queued: number;
   created: number;
   updated: number;
@@ -179,6 +182,8 @@ export interface PasswordPushStats {
 }
 
 export interface PasswordPullStats {
+  planned_new_entries?: number;
+  conflicts?: PasswordEntryInfo[];
   new_entries: number;
   updated: number;
   deleted: number;

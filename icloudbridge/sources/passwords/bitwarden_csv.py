@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 
 from .models import PasswordEntry
+from .secure_csv import private_csv
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class BitwardenCSVParser:
         errors = 0
         seen_keys = set()
 
-        with open(csv_path, "r", encoding="utf-8") as f:
+        with open(csv_path, encoding="utf-8") as f:
             reader = csv.DictReader(f)
 
             # Validate headers
@@ -63,15 +64,13 @@ class BitwardenCSVParser:
                     # Only process login entries
                     entry_type = row.get("type", "").strip()
                     if entry_type != "login":
-                        logger.debug(
-                            f"Row {row_num}: Skipping non-login entry type: {entry_type}"
-                        )
+                        logger.debug(f"Row {row_num}: Skipping non-login entry type: {entry_type}")
                         continue
 
                     # Required fields
                     title = row.get("name", "").strip()
                     username = row.get("login_username", "").strip()
-                    password = row.get("login_password", "").strip()
+                    password = row.get("login_password", "")
 
                     if not title or not username or not password:
                         logger.warning(
@@ -136,9 +135,7 @@ class BitwardenCSVParser:
         Raises:
             IOError: If file cannot be written
         """
-        import os
-
-        with open(output_path, "w", encoding="utf-8", newline="") as f:
+        with private_csv(output_path) as f:
             writer = csv.DictWriter(
                 f,
                 fieldnames=[
@@ -181,8 +178,5 @@ class BitwardenCSVParser:
                         "login_totp": entry.otp_auth or "",
                     }
                 )
-
-        # Set secure permissions (owner read/write only)
-        os.chmod(output_path, 0o600)
 
         logger.info(f"Wrote {len(entries)} entries to Bitwarden CSV: {output_path}")

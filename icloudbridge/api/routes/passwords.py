@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import tempfile
 import uuid
 from datetime import datetime
@@ -15,6 +16,7 @@ from icloudbridge.api.downloads import download_manager
 from icloudbridge.api.models import NextcloudCredentialRequest, VaultwardenCredentialRequest
 from icloudbridge.core.otp_matcher import build_preview
 from icloudbridge.sources.passwords.apple_csv import ApplePasswordsCSVParser
+from icloudbridge.sources.passwords.diagnostics import log_failure, safe_failure
 from icloudbridge.sources.passwords.ente_auth import EnteAuthParser
 from icloudbridge.sources.passwords.providers import NextcloudPasswordsProvider, VaultwardenProvider
 from icloudbridge.sources.passwords.vaultwarden_api import VaultwardenAPIClient
@@ -37,7 +39,13 @@ async def _save_uploaded_csv(upload: UploadFile) -> Path:
     suffix = Path(upload.filename or "").suffix or ".csv"
     temp_path = Path(tempfile.gettempdir()) / f"icloudbridge-passwords-{uuid.uuid4().hex}{suffix}"
     data = await upload.read()
-    temp_path.write_bytes(data)
+    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
+    except BaseException:
+        temp_path.unlink(missing_ok=True)
+        raise
     return temp_path
 
 
@@ -63,7 +71,10 @@ async def _build_password_provider(config: ConfigDep):
                 detail="Nextcloud credentials not found. Please configure them first.",
             )
 
-        provider = NextcloudPasswordsProvider(url, username, credentials["app_password"])
+        provider = NextcloudPasswordsProvider(
+            url, username, credentials["app_password"],
+            ssl_verify_cert=config.passwords.passwords_ssl_verify_cert,
+        )
     else:
         email = config.passwords.vaultwarden_email
         url = config.passwords.vaultwarden_url
@@ -146,9 +157,9 @@ async def _run_passwords_sync(
     sync_logs_db: SyncLogsDB | None = None
 
     try:
-        if run_push:
-            if not uploaded_file:
-                raise HTTPException(status_code=400, detail="Apple Passwords CSV is required")
+        if run_push and not uploaded_file:
+            raise HTTPException(status_code=400, detail="Apple Passwords CSV is required")
+        if uploaded_file:
             apple_csv_path = await _save_uploaded_csv(uploaded_file)
 
         if run_pull and not simulate:
@@ -210,13 +221,13 @@ async def _run_passwords_sync(
                 log_id=log_id,
                 status="failed",
                 duration_seconds=0,
-                error_message=str(exc),
+                error_message=safe_failure(exc),
             )
-        logger.error("Passwords sync failed: %s", exc)
+        log_failure(logger, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Sync failed: {exc}",
-        )
+            detail=safe_failure(exc),
+        ) from None
     finally:
         if apple_csv_path:
             apple_csv_path.unlink(missing_ok=True)
@@ -426,6 +437,7 @@ async def export_passwords(
 
 @router.post("/sync/import")
 async def import_passwords(
+    file: UploadFile | None = File(None),
     engine: PasswordsSyncEngineDep = None,
     config: ConfigDep = None,
     simulate: bool = False,
@@ -435,7 +447,7 @@ async def import_passwords(
     return await _run_passwords_sync(
         engine=engine,
         config=config,
-        uploaded_file=None,
+        uploaded_file=file,
         simulate=simulate,
         run_push=False,
         run_pull=True,

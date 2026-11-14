@@ -151,6 +151,19 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
                             except Exception:
                                 pass
 
+                fields = pwd.get("customFields") or []
+                if isinstance(fields, str):
+                    fields = json.loads(fields)
+                if isinstance(fields, dict):
+                    fields = list(fields.values())
+                extra_urls = [
+                    field.get("value")
+                    for field in fields
+                    if field.get("type") == "url" and field.get("value")
+                ]
+                otp_auth = next(
+                    (field.get("value") for field in fields if field.get("label") == "TOTP"), None
+                )
                 result.append(
                     {
                         "id": pwd.get("id"),
@@ -160,6 +173,8 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
                         "folder": folder_uuid,
                         "folder_label": folder_label,
                         "notes": pwd.get("notes", ""),
+                        "extra_urls": extra_urls,
+                        "otp_auth": otp_auth,
                         "password": pwd.get("password", ""),  # May be encrypted
                     }
                 )
@@ -243,13 +258,11 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
         custom_fields: list[dict[str, str]] = []
 
         for index, extra_url in enumerate(extra_urls, start=2):
-            custom_fields.append(
-                {"label": f"Website {index}", "value": extra_url, "type": "url"}
-            )
+            custom_fields.append({"label": f"Website {index}", "value": extra_url, "type": "url"})
 
-        if entry.otp_auth and "secret=" in entry.otp_auth:
-            secret = entry.otp_auth.split("secret=")[1].split("&")[0]
-            custom_fields.append({"label": "TOTP", "value": secret, "type": "secret"})
+        if entry.otp_auth:
+            # Keep algorithm/digits/period; a bare secret remains supported on reads.
+            custom_fields.append({"label": "TOTP", "value": entry.otp_auth, "type": "secret"})
 
         if custom_fields:
             payload["customFields"] = json.dumps(custom_fields)
@@ -326,13 +339,11 @@ class NextcloudPasswordsProvider(PasswordProviderBase):
         custom_fields: list[dict[str, str]] = []
 
         for index, extra_url in enumerate(extra_urls, start=2):
-            custom_fields.append(
-                {"label": f"Website {index}", "value": extra_url, "type": "url"}
-            )
+            custom_fields.append({"label": f"Website {index}", "value": extra_url, "type": "url"})
 
-        if entry.otp_auth and "secret=" in entry.otp_auth:
-            secret = entry.otp_auth.split("secret=")[1].split("&")[0]
-            custom_fields.append({"label": "TOTP", "value": secret, "type": "secret"})
+        if entry.otp_auth:
+            # Keep algorithm/digits/period; a bare secret remains supported on reads.
+            custom_fields.append({"label": "TOTP", "value": entry.otp_auth, "type": "secret"})
 
         if custom_fields:
             payload["customFields"] = json.dumps(custom_fields)

@@ -3,6 +3,8 @@
 import asyncio
 import sys
 import logging
+from datetime import datetime
+from uuid import uuid4
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -12,6 +14,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from icloudbridge import __version__
+from icloudbridge.sources.passwords.diagnostics import log_failure, safe_failure
 from icloudbridge.core.config import load_config
 from icloudbridge.core.photos_export_engine import ExportConfig, PhotoExportEngine
 from icloudbridge.core.photos_sync import PhotoSyncEngine
@@ -1991,10 +1994,11 @@ def passwords_delete_nextcloud_credentials(
 def passwords_sync(
     ctx: typer.Context,
     apple_csv: Path = typer.Option(..., help="Apple Passwords CSV export"),
-    output: Path | None = typer.Option(None, "-o", "--output", help="Output path for Apple CSV (default: data_dir/apple-import.csv)"),
-    bulk: bool = typer.Option(False, "--bulk", help="Use bulk import if supported by provider"),
+    output: Path | None = typer.Option(None, "-o", "--output", help="Output path for Apple CSV (default: a new data_dir/apple-import-<date>-<time>.csv each run)"),
+    bulk: bool = typer.Option(False, "--bulk", help="Compatibility option; reconciliation adds logins individually"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Compare snapshots without changing passwords, exports, or baselines"),
 ) -> None:
-    """Full auto-sync: Apple → Provider (push) and Provider → Apple (pull)."""
+    """Additive reconciliation with manual review for existing differences."""
     import asyncio
 
     from ..core.passwords_sync import PasswordsSyncEngine
@@ -2089,7 +2093,10 @@ def passwords_sync(
     db = PasswordsDB(db_path)
 
     cfg.ensure_data_dir()
-    default_output = cfg.general.data_dir / "apple-import.csv"
+    # A new file each run: the writer never overwrites an export the user may not have imported yet.
+    default_output = cfg.general.data_dir / (
+        f"apple-import-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:6]}.csv"
+    )
     output_path = output or default_output
 
     async def run_sync():
@@ -2105,7 +2112,7 @@ def passwords_sync(
             apple_csv_path=apple_csv,
             provider=provider,
             output_apple_csv=output_path,
-            simulate=False,
+            simulate=dry_run,
             run_push=True,
             run_pull=True,
             bulk_push=bulk,
@@ -2130,19 +2137,28 @@ def passwords_sync(
         push_table.add_column("Count", justify="right", style="green")
 
         push_stats = stats["push"]
-        push_table.add_row("Created", str(push_stats.get("created", 0)))
+        push_table.add_row("Would add" if dry_run else "Created", str(push_stats.get("planned_created" if dry_run else "created", 0)))
         push_table.add_row("Updated", str(push_stats.get("updated", 0)))
         push_table.add_row("Skipped (unchanged)", str(push_stats.get("skipped", 0)))
         if push_stats.get("failed", 0) > 0:
             push_table.add_row("Failed", str(push_stats["failed"]), style="red")
 
         console.print(push_table)
+        reviews = push_stats.get("conflicts", [])
+        if reviews:
+            console.print(f"[yellow]{len(reviews)} items held for manual review; no overwrites or deletions.[/yellow]")
+            for review in reviews:
+                console.print(f"  {review.get('title', '')}: {review['reason']}", markup=False)
 
         console.print("\n" + "=" * 60)
         console.print(f"📥 [bold]{provider_display} → Apple (Pull)[/bold]")
         console.print("=" * 60)
 
         pull_stats = stats["pull"]
+        if dry_run:
+            console.print(f"Would export {pull_stats.get('planned_new_entries', 0)} logins for Apple.")
+            console.print("Dry run complete. No passwords, export files, or sync baselines changed.")
+            return
         new_entries = pull_stats.get("new_entries", 0)
 
         if new_entries > 0:
@@ -2170,9 +2186,9 @@ def passwords_sync(
         if new_entries > 0:
             console.print(f"   → rm {pull_stats.get('download_path')}")
 
-    except Exception as e:
-        console.print(f"[red]❌ Sync failed: {e}[/red]")
-        logging.exception("Sync failed")
+    except Exception as exc:
+        console.print(f"[red]{safe_failure(exc)}[/red]")
+        log_failure(logging.getLogger(__name__), exc)
         raise typer.Exit(1)
 
 

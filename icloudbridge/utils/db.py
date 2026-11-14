@@ -750,6 +750,16 @@ class PasswordsDB:
                 """
             )
 
+            # Legacy exports were not proof of Apple import. Confirm only fresh pairs.
+            columns = await (await db.execute("PRAGMA table_info(password_mapping)")).fetchall()
+            if "confirmed" not in {row[1] for row in columns}:
+                await db.execute(
+                    "ALTER TABLE password_mapping ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 0"
+                )
+            await db.execute("""DELETE FROM password_mapping WHERE id NOT IN (
+                SELECT MAX(id) FROM password_mapping GROUP BY title, COALESCE(url, ''), username, provider_type)""")
+            await db.execute("UPDATE password_mapping SET url = '' WHERE url IS NULL")
+
             # Create indexes for faster lookups
             await db.execute(
                 """
@@ -901,9 +911,7 @@ class PasswordsDB:
                 rows = await cursor.fetchall()
                 return [dict(row) for row in rows]
 
-    async def get_entry_by_key(
-        self, title: str, url: str | None, username: str
-    ) -> dict | None:
+    async def get_entry_by_key(self, title: str, url: str | None, username: str) -> dict | None:
         """
         Get a password entry by its unique key.
 
@@ -990,9 +998,7 @@ class PasswordsDB:
         """
         async with aiosqlite.connect(self.db_path) as db:
             # Total entries
-            async with db.execute(
-                "SELECT COUNT(*) FROM password_entry"
-            ) as cursor:
+            async with db.execute("SELECT COUNT(*) FROM password_entry") as cursor:
                 total = (await cursor.fetchone())[0]
 
             # By source
@@ -1046,18 +1052,19 @@ class PasswordsDB:
                 """
                 INSERT INTO password_mapping
                 (title, url, username, provider_id, provider_type,
-                 last_sync_timestamp, last_apple_hash, last_provider_hash, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 last_sync_timestamp, last_apple_hash, last_provider_hash, created_at, confirmed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 ON CONFLICT(title, url, username, provider_type)
                 DO UPDATE SET
                     provider_id = excluded.provider_id,
                     last_sync_timestamp = excluded.last_sync_timestamp,
                     last_apple_hash = excluded.last_apple_hash,
-                    last_provider_hash = excluded.last_provider_hash
+                    last_provider_hash = excluded.last_provider_hash,
+                    confirmed = 1
                 """,
                 (
                     title,
-                    url,
+                    url or "",
                     username,
                     provider_id,
                     provider_type,
@@ -1072,9 +1079,65 @@ class PasswordsDB:
             row_id = (await cursor.fetchone())[0]
             return row_id
 
-    async def get_all_password_mappings(
-        self, provider_type: str | None = None
-    ) -> list[dict]:
+    async def confirm_password_snapshot(
+        self, confirmed: list[dict], retired: list[dict], entries: list
+    ) -> None:
+        """Commit fresh observed baselines and hash-only Apple stats in one transaction."""
+        now = datetime.now().timestamp()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.executemany(
+                "DELETE FROM password_mapping WHERE id = ?", [(m["id"],) for m in retired]
+            )
+            await db.executemany(
+                """INSERT INTO password_mapping
+                (title, url, username, provider_id, provider_type, last_sync_timestamp,
+                 last_apple_hash, last_provider_hash, created_at, confirmed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(title, url, username, provider_type) DO UPDATE SET
+                provider_id=excluded.provider_id, last_sync_timestamp=excluded.last_sync_timestamp,
+                last_apple_hash=excluded.last_apple_hash, last_provider_hash=excluded.last_provider_hash,
+                confirmed=1""",
+                [
+                    (
+                        m["title"],
+                        m.get("url") or "",
+                        m["username"],
+                        m["provider_id"],
+                        m["provider_type"],
+                        now,
+                        m["last_apple_hash"],
+                        m["last_provider_hash"],
+                        now,
+                    )
+                    for m in confirmed
+                ],
+            )
+            # Replace the Apple tracking snapshot, not any provider vault data.
+            await db.execute("DELETE FROM password_entry WHERE source = 'apple'")
+            await db.executemany(
+                """INSERT INTO password_entry
+                (title,url,username,password_hash,folder,source,created_at,updated_at,last_synced_at)
+                VALUES (?,?,?,?,?,'apple',?,?,?)
+                ON CONFLICT(title,url,username) DO UPDATE SET password_hash=excluded.password_hash,
+                folder=excluded.folder,source='apple',notes=NULL,otp_auth=NULL,
+                updated_at=excluded.updated_at,last_synced_at=excluded.last_synced_at""",
+                [
+                    (
+                        e.title,
+                        e.url or "",
+                        e.username,
+                        e.get_password_hash(),
+                        e.folder,
+                        now,
+                        now,
+                        now,
+                    )
+                    for e in entries
+                ],
+            )
+            await db.commit()
+
+    async def get_all_password_mappings(self, provider_type: str | None = None) -> list[dict]:
         """
         Get all password mappings, optionally filtered by provider type.
 
@@ -1096,9 +1159,7 @@ class PasswordsDB:
                 ) as cursor:
                     rows = await cursor.fetchall()
             else:
-                async with db.execute(
-                    "SELECT * FROM password_mapping"
-                ) as cursor:
+                async with db.execute("SELECT * FROM password_mapping") as cursor:
                     rows = await cursor.fetchall()
 
             return [dict(row) for row in rows]
@@ -1125,7 +1186,7 @@ class PasswordsDB:
                 SELECT * FROM password_mapping
                 WHERE title = ? AND url IS ? AND username = ? AND provider_type = ?
                 """,
-                (title, url, username, provider_type),
+                (title, url or "", username, provider_type),
             ) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
@@ -1148,12 +1209,10 @@ class PasswordsDB:
                 DELETE FROM password_mapping
                 WHERE title = ? AND url IS ? AND username = ? AND provider_type = ?
                 """,
-                (title, url, username, provider_type),
+                (title, url or "", username, provider_type),
             )
             await db.commit()
-            logger.debug(
-                f"Deleted password mapping: {title} ({username}) for {provider_type}"
-            )
+            logger.debug(f"Deleted password mapping: {title} ({username}) for {provider_type}")
 
     async def close(self) -> None:
         """Close database connection if open."""
