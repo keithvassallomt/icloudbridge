@@ -24,13 +24,46 @@ class RichRipperError(subprocess.CalledProcessError):
     handlers keep catching it.
     """
 
-    def __init__(self, returncode: int, cmd: list[str], output_tail: str) -> None:
+    def __init__(
+        self, returncode: int, cmd: list[str], output_tail: str, hint: str | None = None
+    ) -> None:
         super().__init__(returncode, cmd)
         self.output_tail = output_tail
+        self.hint = hint
 
     def __str__(self) -> str:
         detail = f"\n{self.output_tail}" if self.output_tail else ""
-        return f"Notes ripper failed (exit {self.returncode}):{detail}"
+        hint = f"\n{self.hint}" if self.hint else ""
+        return f"Notes ripper failed (exit {self.returncode}):{hint}{detail}"
+
+
+# Output that means Ruby couldn't load the ripper's gems: typically after
+# `brew upgrade ruby`, when gems built for the old Ruby no longer load.
+_GEM_FAILURE_MARKERS = (
+    "LoadError",
+    "cannot load such file",
+    "Could not find",
+    "GemNotFound",
+    "MissingSpecError",
+    "bad interpreter",
+    "incompatible library version",
+    "Library not loaded",
+)
+
+
+def _runtime_hint(output: str, env: dict[str, str]) -> str | None:
+    if not any(marker in output for marker in _GEM_FAILURE_MARKERS):
+        return None
+    if env.get("ICLOUDBRIDGE_BUNDLE_PATH"):
+        return (
+            "Ruby couldn't load the notes ripper's gems, usually because Homebrew upgraded Ruby. "
+            "iCloudBridge reinstalls them within 10 minutes of noticing; quitting and reopening "
+            "iCloudBridge does it straight away."
+        )
+    return (
+        "Ruby couldn't load the notes ripper's gems, usually after `brew upgrade ruby`. "
+        f"Reinstall them with: BUNDLE_GEMFILE={env.get('BUNDLE_GEMFILE')} bundle install"
+    )
 
 
 def _bundler_version_args() -> list[str]:
@@ -166,7 +199,10 @@ def run_rich_ripper(
         )
         if result.returncode != 0:
             sys.stderr.write(result.stdout or "")
-            raise RichRipperError(result.returncode, cmd, _tail(result.stdout or ""))
+            output = result.stdout or ""
+            raise RichRipperError(
+                result.returncode, cmd, _tail(output), _runtime_hint(output, env)
+            )
         return
 
     process = subprocess.Popen(
@@ -189,7 +225,8 @@ def run_rich_ripper(
     )
     retcode = process.wait()
     if retcode != 0:
-        raise RichRipperError(retcode, cmd, "\n".join(tail))
+        output = "\n".join(tail)
+        raise RichRipperError(retcode, cmd, output, _runtime_hint(output, env))
 
 
 def _tail(output: str) -> str:

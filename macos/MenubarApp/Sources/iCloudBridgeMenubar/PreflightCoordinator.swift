@@ -62,6 +62,7 @@ final class PreflightCoordinator {
                 repeats: true
             ) { [weak self] _ in
                 self?.checkInterpreterHealth()
+                self?.checkRubyRuntime()
             }
         }
 
@@ -70,6 +71,17 @@ final class PreflightCoordinator {
         } else {
             DispatchQueue.main.async { schedule() }
         }
+    }
+
+    /// Reinstall the notes ripper's gems when Homebrew upgrades Ruby under them.
+    private func checkRubyRuntime() {
+        let state = runtimeInstaller.rubyState
+        guard state.succeeded, !state.isRunning,
+              runtimeInstaller.rubyRuntimeIsStale(),
+              let resources = Bundle.main.resourceURL
+        else { return }
+        NSLog("Homebrew Ruby changed; reinstalling the notes ripper's gems")
+        runtimeInstaller.ensureRuby(from: resources.appendingPathComponent("ruby_deps", isDirectory: true))
     }
 
     private func checkInterpreterHealth() {

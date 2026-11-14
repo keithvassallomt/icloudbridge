@@ -1,6 +1,9 @@
 source "https://rubygems.org"
 
-# Gems removed from Ruby stdlib in 3.4/4.0 - must be explicitly included
+# Gems removed from Ruby stdlib in 3.4/4.0 - must be explicitly included.
+# openssl is deliberately not listed: Ruby's own copy is built against the same
+# OpenSSL as Ruby itself. Pinning a version made Bundler compile it against
+# whatever OpenSSL Homebrew has, which broke when Homebrew moved to OpenSSL 4.
 gem 'base64'       # Removed in Ruby 3.4
 gem 'bigdecimal'   # Removed in Ruby 3.4
 gem 'cgi', "~> 0.3"
@@ -10,7 +13,6 @@ gem 'fileutils', "~> 1.4"
 gem 'json'         # Removed in Ruby 3.4
 gem 'logger'       # Removed in Ruby 4.0
 gem 'nkf'          # Removed in Ruby 3.4 (provides kconv, used by CFPropertyList)
-gem 'openssl', ">= 3.2"
 gem 'optparse'     # Removed in Ruby 3.4
 gem 'pathname'     # Removed in Ruby 3.4
 gem 'rake', "~> 13.2"

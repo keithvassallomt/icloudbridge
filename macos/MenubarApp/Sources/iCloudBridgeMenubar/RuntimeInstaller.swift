@@ -259,8 +259,7 @@ final class RuntimeInstaller {
         // but a smoke-test failure leaves a perfectly good tree behind, and
         // deleting tens of thousands of files just to reinstall the same gems
         // turns every retry into a multi-minute native rebuild.
-        let layoutKey = [RubyRuntime.schemaVersion, rubyRuntimeBase.path, resolvedInterpreter(brewRuby)]
-            .joined(separator: "|")
+        let layoutKey = rubyLayoutKey()
         let existingLayout = try? String(contentsOf: RubyRuntime.layoutFile)
         if existingLayout != layoutKey, fm.fileExists(atPath: gemHome.path) {
             updateRuby(progress: 0.1, message: "Cleaning previous Ruby runtime", running: true, succeeded: false)
@@ -313,6 +312,26 @@ final class RuntimeInstaller {
         try? cacheKey.write(to: marker, atomically: true, encoding: .utf8)
         removeLegacyGemTree(log: rubyLog)
         updateRuby(progress: 1.0, message: "Ruby bundle ready", running: false, succeeded: true, log: rubyLog)
+    }
+
+    /// Where the gem tree lives and which Ruby built it.
+    private func rubyLayoutKey() -> String {
+        [RubyRuntime.schemaVersion, rubyRuntimeBase.path, resolvedInterpreter(brewRuby)]
+            .joined(separator: "|")
+    }
+
+    /// Whether Homebrew has replaced the Ruby the notes ripper's gems were built with.
+    ///
+    /// `brew upgrade ruby` points /opt/homebrew/opt/ruby at a new Cellar version.
+    /// After a minor upgrade (4.0 to 4.1, say) the gems built for the old one no
+    /// longer load, so rich notes fail until they are reinstalled. The launch-time
+    /// check catches this, but the app can run for weeks between launches. Cheap
+    /// enough for a timer: it resolves a symlink and reads one small file.
+    func rubyRuntimeIsStale() -> Bool {
+        guard fm.isExecutableFile(atPath: brewRuby.path),
+              let recorded = try? String(contentsOf: RubyRuntime.layoutFile)
+        else { return false }
+        return recorded != rubyLayoutKey()
     }
 
     /// Drop the pre-v2 gem tree once the new runtime has proven itself.
