@@ -155,12 +155,18 @@ on run argv
         repeat with theNote in myNotes
             set nId to id of theNote
             set nName to name of theNote
-            set nBody to body of theNote
+            -- A locked note's content is encrypted; don't try to read it.
+            set nLocked to password protected of theNote
+            if nLocked then
+                set nBody to ""
+            else
+                set nBody to body of theNote
+            end if
             set nCreation to creation date of theNote
             set nModified to modification date of theNote
 
             -- Use delimiter that won't appear in note body
-            set noteData to nId & "|||" & nName & "|||" & nCreation & "|||" & nModified & "|||" & nBody
+            set noteData to nId & "|||" & nName & "|||" & nCreation & "|||" & nModified & "|||" & nLocked & "|||" & nBody
             set output to output & noteData & "~~~NEXT_NOTE~~~"
         end repeat
         return output
@@ -392,6 +398,14 @@ end run
 """
 
 
+# AppleScript: does a note with this ID exist anywhere in Notes?
+NOTE_EXISTS_SCRIPT = """
+on run argv
+    tell application "Notes" to return exists note id (item 1 of argv)
+end run
+"""
+
+
 # AppleScript to delete a note by its UUID (id)
 DELETE_NOTE_BY_ID_SCRIPT = """
 on run argv
@@ -443,6 +457,8 @@ class AppleScriptNote:
     body_html: str
     folder_uuid: str | None = None
     attachments: list[AppleNoteAttachment] = field(default_factory=list)
+    # Password protected: the content is encrypted and can't be read or written.
+    locked: bool = False
 
 
 @dataclass
@@ -945,12 +961,25 @@ class NotesAdapter:
                 if not note_str.strip():
                     continue
 
-                # Parse: "uuid|||name|||created|||modified|||body"
-                parts = note_str.split("|||", 4)  # Split into max 5 parts
-                if len(parts) == 5:
-                    uuid, name, created_str, modified_str, body_html = parts
+                # Parse: "uuid|||name|||created|||modified|||locked|||body"
+                parts = note_str.split("|||", 5)  # Split into max 6 parts
+                if len(parts) == 6:
+                    uuid, name, created_str, modified_str, locked_str, body_html = parts
 
                     uuid = uuid.strip()
+                    if locked_str.strip() == "true":
+                        # The ripper only sees "{Contents not decrypted}" for these.
+                        notes.append(
+                            AppleScriptNote(
+                                uuid=uuid,
+                                name=name.strip(),
+                                created_date=self._parse_apple_date(created_str.strip()),
+                                modified_date=self._parse_apple_date(modified_str.strip()),
+                                body_html="",
+                                locked=True,
+                            )
+                        )
+                        continue
                     entry = self._rich_entry_for_uuid(uuid)
                     rich_body = extract_note_content(entry) if entry else None
                     attachments = self._rich_attachments_for_entry(entry)
@@ -1147,6 +1176,12 @@ class NotesAdapter:
         if not output:
             return []
         return [uid.strip() for uid in output.split("|||") if uid.strip()]
+
+    async def note_exists(self, note_uuid: str) -> bool:
+        """Whether a note with this ID exists in any account or folder."""
+        await self.ensure_notes_running()
+        output = await self._run_applescript(NOTE_EXISTS_SCRIPT, note_uuid)
+        return output.strip() == "true"
 
     async def delete_note_by_uuid(self, note_uuid: str) -> bool:
         """Delete a note by its Core Data UUID."""

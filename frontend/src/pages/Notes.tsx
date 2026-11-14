@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   ChevronRight,
   ListChecks,
+  Lock,
 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -26,13 +27,14 @@ import { useSyncStore } from '@/store/sync-store';
 import type { SyncLog, SetupVerificationResponse, NotesAllFoldersResponse, FolderMapping, AppConfig, SyncResponse, PendingNoteInfo } from '@/types/api';
 import ServiceDisabledNotice from '@/components/ServiceDisabledNotice';
 
-type SimulationChangeCategory = 'added' | 'updated' | 'deleted' | 'unchanged';
+type SimulationChangeCategory = 'added' | 'updated' | 'deleted' | 'unchanged' | 'locked';
 
 interface SimulationDetailSection {
   added?: string[];
   updated?: string[];
   deleted?: string[];
   unchanged?: string[];
+  locked?: string[];
 }
 
 interface SimulationFolderStats {
@@ -45,6 +47,9 @@ interface SimulationFolderStats {
   unchanged?: number;
   would_delete_local?: number;
   would_delete_remote?: number;
+  // Password-protected notes left alone, and Markdown copies kept for them.
+  locked?: number;
+  locked_markdown?: number;
   details?: {
     apple?: SimulationDetailSection;
     markdown?: SimulationDetailSection;
@@ -61,12 +66,13 @@ interface SimulationFolderResult {
 
 type SimulationChangeSummary = Record<SimulationChangeCategory, number>;
 
-const CHANGE_ORDER: SimulationChangeCategory[] = ['added', 'updated', 'deleted', 'unchanged'];
+const CHANGE_ORDER: SimulationChangeCategory[] = ['added', 'updated', 'deleted', 'unchanged', 'locked'];
 const CHANGE_LABELS: Record<SimulationChangeCategory, string> = {
   added: 'Added',
   updated: 'Updated',
   deleted: 'Deleted',
   unchanged: 'Unchanged',
+  locked: 'Locked, left alone',
 };
 
 const CHANGE_ICONS: Record<SimulationChangeCategory, typeof PlusCircle> = {
@@ -74,6 +80,7 @@ const CHANGE_ICONS: Record<SimulationChangeCategory, typeof PlusCircle> = {
   updated: RefreshCw,
   deleted: MinusCircle,
   unchanged: CheckCircle2,
+  locked: Lock,
 };
 
 const CHANGE_COLORS: Record<SimulationChangeCategory, string> = {
@@ -81,6 +88,7 @@ const CHANGE_COLORS: Record<SimulationChangeCategory, string> = {
   updated: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-400/40 dark:bg-blue-400/10 dark:text-blue-200',
   deleted: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-400/40 dark:bg-rose-400/10 dark:text-rose-200',
   unchanged: 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-400/40 dark:bg-slate-400/10 dark:text-slate-200',
+  locked: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/40 dark:bg-amber-400/10 dark:text-amber-200',
 };
 
 const buildSummary = (stats?: SimulationFolderStats) => ({
@@ -89,14 +97,20 @@ const buildSummary = (stats?: SimulationFolderStats) => ({
     updated: stats?.updated_local ?? 0,
     deleted: stats?.deleted_local ?? 0,
     unchanged: stats?.unchanged ?? 0,
+    locked: stats?.locked ?? 0,
   } satisfies SimulationChangeSummary,
   markdown: {
     added: stats?.created_remote ?? 0,
     updated: stats?.updated_remote ?? 0,
     deleted: stats?.deleted_remote ?? 0,
     unchanged: stats?.unchanged ?? 0,
+    locked: stats?.locked_markdown ?? 0,
   } satisfies SimulationChangeSummary,
 });
+
+// "Locked" only appears for folders that have locked notes.
+const visibleCategories = (summary: ReturnType<typeof buildSummary>) =>
+  CHANGE_ORDER.filter((key) => key !== 'locked' || summary.apple.locked > 0 || summary.markdown.locked > 0);
 
 const buildDetails = (stats?: SimulationFolderStats) => ({
   apple: stats?.details?.apple ?? {},
@@ -202,7 +216,7 @@ const FolderResultsTable = ({
                     <>
                       <td className="p-4 align-top">
                         <div className="grid grid-cols-2 gap-2">
-                          {CHANGE_ORDER.map((key) => {
+                          {visibleCategories(summaries).map((key) => {
                             const Icon = CHANGE_ICONS[key];
                             return (
                               <div key={key} className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold ${CHANGE_COLORS[key]}`}>
@@ -216,7 +230,7 @@ const FolderResultsTable = ({
                       </td>
                       <td className="p-4 align-top">
                         <div className="grid grid-cols-2 gap-2">
-                          {CHANGE_ORDER.map((key) => {
+                          {visibleCategories(summaries).map((key) => {
                             const Icon = CHANGE_ICONS[key];
                             return (
                               <div key={key} className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-semibold ${CHANGE_COLORS[key]}`}>
@@ -255,7 +269,7 @@ const FolderResultsTable = ({
                                   {title}
                                 </div>
                                 <div className="space-y-3 text-sm">
-                                  {CHANGE_ORDER.map((category) => {
+                                  {visibleCategories(summaries).map((category) => {
                                     const IconBadge = CHANGE_ICONS[category];
                                     const list = sectionDetails?.[category] ?? [];
                                     const count = sectionSummary[category];

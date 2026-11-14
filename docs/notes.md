@@ -14,8 +14,8 @@ In **Auto** mode, folders in Apple Notes are automatically mapped to folders in 
 
 In **Manual** mode, you can specify exactly which folders in Apple Notes map to which folders in your destination location. This gives you more control over where your notes are stored. You can also leave folders unmapped, and these will not be synced. 
 
-> [!TIP]
-> If you have a folder with password-protected notes, you'll probably want to exclude this folder from synchronisation, as these notes cannot be decrypted by iCloudBridge.
+> [!NOTE]
+> iCloudBridge can't read or change locked (password-protected) notes, so it leaves them alone. A locked note isn't copied to your destination. If it was synced before you locked it, its copy stays as it is until you unlock the note, and any changes you make to that copy in the meantime go into the note once it's unlocked. The sync results list locked notes under **Locked, left alone**.
 
 ### Auto Mode
 In **Auto** mode, you can see a list of which folders from Apple Notes will be mapped with which folders in your destination location. 

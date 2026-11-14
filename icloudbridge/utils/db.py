@@ -162,6 +162,16 @@ class NotesDB:
             await db.commit()
             logger.debug(f"Upserted mapping: {local_uuid} -> {remote_path}")
 
+    async def repoint_mapping(self, old_uuid: str, new_uuid: str) -> None:
+        """Move a note's mapping to the new ID Apple Notes gave the same note."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE note_mapping SET local_uuid = ? WHERE local_uuid = ?",
+                (new_uuid, old_uuid),
+            )
+            await db.commit()
+            logger.debug(f"Repointed mapping: {old_uuid} -> {new_uuid}")
+
     async def delete_mapping(self, local_uuid: str) -> None:
         """
         Delete a note mapping.

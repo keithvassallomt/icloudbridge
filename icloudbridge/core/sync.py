@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Track at most this many note titles per category to keep simulation payloads reasonable.
 DETAIL_ENTRY_LIMIT = 50
-DETAIL_CATEGORIES = ("added", "updated", "deleted", "unchanged")
+DETAIL_CATEGORIES = ("added", "updated", "deleted", "unchanged", "locked")
 
 
 class NotesSyncEngine:
@@ -233,6 +233,9 @@ class NotesSyncEngine:
             "would_delete_local": 0,  # For dry_run
             "would_delete_remote": 0,  # For dry_run
             "pending_local_notes": [],
+            # Password-protected notes left alone, and Markdown copies kept for them.
+            "locked": 0,
+            "locked_markdown": 0,
         }
         stats["details"] = {
             "apple": {category: [] for category in DETAIL_CATEGORIES},
@@ -277,6 +280,10 @@ class NotesSyncEngine:
                 await self.notes_adapter.refresh_rich_cache()
             apple_notes = await self.notes_adapter.get_notes(folder_name)
             logger.info(f"Found {len(apple_notes)} notes in Apple Notes")
+            # A locked note's content is encrypted, so it can't be read or written.
+            # Leave it, and any Markdown copy of it, exactly as they are.
+            locked_notes = [note for note in apple_notes if note.locked]
+            apple_notes = [note for note in apple_notes if not note.locked]
 
             # Step 2: Fetch all markdown files from destination
             logger.debug(f"Fetching markdown files from: {markdown_subfolder or 'base folder'}")
@@ -313,6 +320,79 @@ class NotesSyncEngine:
                 ):
                     mappings_by_uuid[m["local_uuid"]] = m
             mappings_by_remote_path = {m["remote_path"]: m for m in all_mappings}
+
+            # Notes gives a note a new ID when you lock it (and may when you unlock
+            # it); the old ID vanishes without passing through Recently Deleted.
+            # Follow the note to its new ID by title, rather than deleting its
+            # Markdown copy and starting again.
+            present_uuids = {note.uuid for note in apple_notes + locked_notes}
+            vanished: dict[str, list[tuple[str, dict]]] = {}
+            for path_str, md_note in remote_notes_by_path.items():
+                mapping = mappings_by_remote_path.get(path_str)
+                if mapping and mapping["local_uuid"] not in present_uuids:
+                    title = sanitize_filename(mapping.get("local_name") or md_note.name).casefold()
+                    vanished.setdefault(title, []).append((path_str, mapping))
+            if vanished:
+                appeared: dict[str, list[AppleScriptNote]] = {}
+                for note in apple_notes + locked_notes:
+                    if note.uuid not in mappings_by_uuid:
+                        appeared.setdefault(sanitize_filename(note.name).casefold(), []).append(note)
+                for title, candidates in vanished.items():
+                    newcomers = appeared.get(title, [])
+                    if len(candidates) != 1 or len(newcomers) != 1:
+                        continue
+                    path_str, mapping = candidates[0]
+                    note = newcomers[0]
+                    old_uuid = mapping["local_uuid"]
+                    try:
+                        if await self.notes_adapter.note_exists(old_uuid):
+                            continue  # moved to another folder, not replaced
+                    except Exception as exc:
+                        logger.warning("Couldn't check whether note %s still exists: %s", old_uuid, exc)
+                        continue
+                    if await note_in_recently_deleted(old_uuid):
+                        continue  # deleted, then a new note with the same title was made
+                    logger.info(
+                        "Note '%s' has a new ID in Apple Notes (locked or unlocked); "
+                        "keeping it paired with %s",
+                        note.name,
+                        path_str,
+                    )
+                    if not dry_run:
+                        await self.db.repoint_mapping(old_uuid, note.uuid)
+                    moved = {**mapping, "local_uuid": note.uuid}
+                    mappings_by_remote_path[path_str] = moved
+                    mappings_by_uuid.pop(old_uuid, None)
+                    mappings_by_uuid[note.uuid] = moved
+
+            # Markdown copies held back for locked notes; they are present, not vanished.
+            locked_kept_paths: set[str] = set()
+            if locked_notes:
+                locked_uuids = {note.uuid for note in locked_notes}
+                locked_titles = {sanitize_filename(note.name).casefold() for note in locked_notes}
+                kept_paths = locked_kept_paths
+                for path_str, md_note in remote_notes_by_path.items():
+                    mapping = mappings_by_remote_path.get(path_str)
+                    if mapping is not None:
+                        if mapping["local_uuid"] in locked_uuids:
+                            kept_paths.add(path_str)
+                    elif sanitize_filename(md_note.name).casefold() in locked_titles:
+                        # Not synced yet, but probably this note's copy: don't turn
+                        # it into a second, unlocked note in Apple Notes.
+                        kept_paths.add(path_str)
+                for path_str in kept_paths:
+                    record_detail("markdown", "locked", remote_notes_by_path.pop(path_str).name)
+                for note in locked_notes:
+                    record_detail("apple", "locked", note.name)
+                stats["locked"] = len(locked_notes)
+                stats["locked_markdown"] = len(kept_paths)
+                logger.info(
+                    "Skipped %d locked note(s) in %s and kept %d Markdown copy(ies) as they are: "
+                    "iCloudBridge can't read or write password-protected notes",
+                    len(locked_notes),
+                    folder_name,
+                    len(kept_paths),
+                )
 
             # Track which notes/files we've processed (used by bootstrap reconciliation + main loops)
             processed_local_uuids: set[str] = set()
@@ -400,7 +480,7 @@ class NotesSyncEngine:
             # The markdown side reading as empty while every note it held is
             # still mapped means we could not read it (revoked file access, a
             # volume that remounted under us), not that the files were removed.
-            if not skip_deletions and not remote_notes_by_path:
+            if not skip_deletions and not remote_notes_by_path and not locked_kept_paths:
                 expected_folder = str(
                     self.markdown_adapter.base_path / markdown_subfolder
                     if markdown_subfolder

@@ -15,7 +15,7 @@ DATE = "Monday, 18 February 2023 at 14:24:28"
 
 
 def notes_output(*uuids: str) -> str:
-    notes = [f"{uuid}|||Note {i}|||{DATE}|||{DATE}|||<div>body {i}</div>" for i, uuid in enumerate(uuids)]
+    notes = [f"{uuid}|||Note {i}|||{DATE}|||{DATE}|||false|||<div>body {i}</div>" for i, uuid in enumerate(uuids)]
     return "x-coredata://S/ICFolder/p1~~~FOLDER~~~" + "~~~NEXT_NOTE~~~".join(notes)
 
 
@@ -77,3 +77,14 @@ async def test_a_write_allows_a_new_miss_refresh(adapter):
     await adapter.get_notes("iCloud/Notes")
 
     assert adapter.refreshes == before + 3, "new snapshot plus one retry after an invalidating write"
+
+
+async def test_locked_notes_are_flagged_without_reading_the_snapshot(adapter):
+    locked = "x-coredata://S/ICNote/p9"
+    adapter.output = (
+        "x-coredata://S/ICFolder/p1~~~FOLDER~~~"
+        f"{locked}|||Secret|||{DATE}|||{DATE}|||true|||"
+    )
+    notes = await adapter.get_notes("Notes")
+    assert [(n.name, n.locked, n.body_html) for n in notes] == [("Secret", True, "")]
+    assert adapter.refreshes == 1, "only the initial snapshot; a locked note is not a miss"

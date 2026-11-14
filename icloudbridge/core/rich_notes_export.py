@@ -224,6 +224,10 @@ class RichNotesExporter:
             note_entry = lookup_note_entry(uuid, indexes)
             if not note_entry:
                 continue
+            if note_entry.get("is_password_protected"):
+                # Encrypted: the ripper only has "{Contents not decrypted}" for it.
+                logger.info("Skipping locked note in RichNotes export: %s", mapping["remote_path"])
+                continue
             remote_path = Path(mapping["remote_path"])
             try:
                 relative = remote_path.relative_to(self.remote_folder)

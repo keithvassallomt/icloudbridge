@@ -53,6 +53,9 @@ class FakeNotesAdapter:
     async def get_recently_deleted_notes(self) -> list[AppleScriptNote]:
         return list(self.trash)
 
+    async def note_exists(self, uuid: str) -> bool:
+        return uuid in self.notes
+
     async def get_notes(self, folder: str) -> list[AppleScriptNote]:
         return [self.notes[uuid] for uuid in self.folders[folder] if uuid in self.notes]
 
