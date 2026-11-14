@@ -83,6 +83,9 @@ class NotesSyncEngine:
         self._temp_attachment_files: set[Path] = set()
         # True while a rich_capture_scope is open; see that method.
         self._rich_capture_scoped = False
+        # The folder mappings this run syncs by, set by sync_with_mappings and
+        # single_folder_destination. None: every folder is synced.
+        self.folder_mappings: dict | None = None
 
     async def initialize(self) -> None:
         """
@@ -828,6 +831,43 @@ class NotesSyncEngine:
                                 md_note.name,
                             )
                             continue
+
+                        # Not deleted: moved to another folder in Apple Notes.
+                        location = await self.notes_adapter.locate_note(note_uuid)
+                        if location is not None:
+                            moved_to, apple_modified = location
+                            if moved_to == folder_name or await self._folder_is_synced(moved_to):
+                                # That folder's sync moves the copy, with any
+                                # Markdown edits in it. Deleting it here lost them.
+                                logger.info(
+                                    "'%s' was moved to '%s' in Apple Notes; its Markdown copy "
+                                    "moves when that folder syncs",
+                                    md_note.name,
+                                    moved_to,
+                                )
+                                continue
+                            # Moved to a folder that isn't synced, so the note leaves
+                            # the sync and its copy goes. Markdown edits made since the
+                            # last sync go into the note first.
+                            last_sync = datetime.fromtimestamp(mapping["last_sync_timestamp"])
+                            if md_note.modified_date > max(last_sync, apple_modified):
+                                if dry_run:
+                                    logger.info(
+                                        "[DRY RUN] Would write Markdown edits into '%s' (moved to '%s')",
+                                        md_note.name,
+                                        moved_to,
+                                    )
+                                else:
+                                    prepared = await self.markdown_adapter.get_note_for_apple_notes(
+                                        md_note.file_path
+                                    )
+                                    await self.notes_adapter.update_note_by_id(note_uuid, prepared.html_content)
+                                    logger.info(
+                                        "'%s' was moved to '%s', which isn't synced; wrote its Markdown "
+                                        "edits into it before removing the copy",
+                                        md_note.name,
+                                        moved_to,
+                                    )
                         if dry_run:
                             logger.info(f"[DRY RUN] Would delete markdown: {md_note.name}")
                             stats["would_delete_remote"] += 1
@@ -1395,6 +1435,7 @@ class NotesSyncEngine:
             results = await engine.sync_with_mappings(mappings)
         """
         logger.info(f"Starting selective sync with {len(folder_mappings)} folder mapping(s)")
+        self.folder_mappings = folder_mappings
         results: dict[str, dict[str, int]] = {}
 
         async with self.rich_capture_scope():
@@ -1425,10 +1466,27 @@ class NotesSyncEngine:
         Raises:
             ValueError: If the mappings exclude the folder.
         """
+        self.folder_mappings = folder_mappings or None
         if not folder_mappings:
             return folder_name, requested_mode
+        best = await self._mapping_for(folder_name, folder_mappings)
+        if best is None:
+            logger.warning(
+                "'%s' isn't in your folder mappings; syncing it to '%s'", folder_name, folder_name
+            )
+            return folder_name, requested_mode
+        apple_path, mapping = best
+        mapped_folder, mapped_mode = self._mapping_target(mapping)
+        if not mapped_folder:
+            raise ValueError(f"'{folder_name}' is excluded in your folder mappings")
+        relative = folder_name[len(apple_path):].lstrip("/")
+        markdown_folder = mapped_folder + (f"/{relative}" if relative else "")
+        return markdown_folder, mapped_mode or "bidirectional"
+
+    async def _mapping_for(self, folder_name: str, folder_mappings: dict) -> tuple[str, object] | None:
+        """The mapping covering an Apple folder (the longest matching key), as (its path, mapping)."""
         default_account, accounts = await self.notes_adapter.list_accounts()
-        best: tuple[str, dict] | None = None
+        best = None
         for key, mapping in folder_mappings.items():
             # Same rule as _sync_mapped_folders: a key without an account is in
             # the default account.
@@ -1436,23 +1494,21 @@ class NotesSyncEngine:
             if folder_name == apple_path or folder_name.startswith(f"{apple_path}/"):
                 if best is None or len(apple_path) > len(best[0]):
                     best = (apple_path, mapping)
-        if best is None:
-            logger.warning(
-                "'%s' isn't in your folder mappings; syncing it to '%s'", folder_name, folder_name
-            )
-            return folder_name, requested_mode
-        apple_path, mapping = best
+        return best
+
+    @staticmethod
+    def _mapping_target(mapping) -> tuple[str | None, str | None]:
         # Config gives FolderMapping objects; sync_with_mappings callers pass dicts.
         if isinstance(mapping, dict):
-            mapped_folder, mapped_mode = mapping.get("markdown_folder"), mapping.get("mode")
-        else:
-            mapped_folder = getattr(mapping, "markdown_folder", None)
-            mapped_mode = getattr(mapping, "mode", None)
-        if not mapped_folder:
-            raise ValueError(f"'{folder_name}' is excluded in your folder mappings")
-        relative = folder_name[len(apple_path):].lstrip("/")
-        markdown_folder = mapped_folder + (f"/{relative}" if relative else "")
-        return markdown_folder, mapped_mode or "bidirectional"
+            return mapping.get("markdown_folder"), mapping.get("mode")
+        return getattr(mapping, "markdown_folder", None), getattr(mapping, "mode", None)
+
+    async def _folder_is_synced(self, folder_name: str) -> bool:
+        """Whether this run's folder mappings sync an Apple folder (all do without mappings)."""
+        if not self.folder_mappings:
+            return True
+        best = await self._mapping_for(folder_name, self.folder_mappings)
+        return best is not None and bool(self._mapping_target(best[1])[0])
 
     async def _sync_mapped_folders(
         self,

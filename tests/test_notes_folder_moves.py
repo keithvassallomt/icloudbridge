@@ -77,6 +77,12 @@ class FakeNotesAdapter:
         self.folders[folder_name].append(uuid)
         return uuid, SYNCED
 
+    async def locate_note(self, uuid: str):
+        for folder, uuids in self.folders.items():
+            if uuid in uuids and uuid in self.notes:
+                return folder, self.notes[uuid].modified_date
+        return None
+
     async def find_notes_by_name(self, folder: str, name: str) -> list[str]:
         # Notes compares names without regard to case.
         return [u for u in self.folders[folder] if u in self.notes and self.notes[u].name.casefold() == name.casefold()]

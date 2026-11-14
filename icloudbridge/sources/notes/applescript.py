@@ -343,6 +343,20 @@ end run
 """
 
 
+# The folder a note is in now, and its modification date, or "" if it no
+# longer exists. Moving a note doesn't change its modification date.
+LOCATE_NOTE_SCRIPT = """
+on run argv
+    tell application "Notes"
+        if not (exists note id (item 1 of argv)) then return ""
+        set theNote to note id (item 1 of argv)
+        set theFolder to container of theNote
+        return (id of theFolder) & "|||" & ((modification date of theNote) as text)
+    end tell
+end run
+"""
+
+
 # AppleScript to delete a note (supports nested folder paths)
 DELETE_NOTE_SCRIPT = """
 on run argv
@@ -1268,6 +1282,23 @@ class NotesAdapter:
             raise RuntimeError(f"Failed to update note '{note_name or note_uuid}': {e}") from e
         finally:
             Path(temp_path).unlink(missing_ok=True)
+
+    async def locate_note(self, note_uuid: str) -> tuple[str, datetime] | None:
+        """Where a note is now: its folder path ("iCloud/Work") and modification date.
+
+        None if the note no longer exists. A folder that isn't listed (which
+        shouldn't happen) is returned by its id, so it never matches a mapping.
+        """
+        await self.ensure_notes_running()
+        output = (await self._run_applescript(LOCATE_NOTE_SCRIPT, note_uuid)).strip()
+        if not output:
+            return None
+        folder_id, _, modified = output.partition("|||")
+        folder_path = next(
+            (f.name for f in await self.list_folders(include_unsyncable=True) if f.uuid == folder_id),
+            folder_id,
+        )
+        return folder_path, self._parse_apple_date(modified)
 
     async def find_notes_by_name(self, folder_name: str, note_name: str) -> list[str]:
         """Return UUIDs of all notes in a folder with the given name."""
