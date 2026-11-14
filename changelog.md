@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Logins in Apple Passwords with no username or no password were skipped, so they never reached your password manager. They now sync.
 - Spaces at the start or end of a password were removed when it was copied to your password manager. After you update, the logins this happened to are listed for review on the Passwords page. Correct the password in your password manager to clear them.
 - Apple Passwords keeps one login per website and username, and won't import a second one. A login in your password manager that Apple Passwords would refuse is no longer exported. It's listed for review instead.
+- Syncing notes from an IMAP or Exchange account, such as Google, made two extra copies of your entire Notes library for every note in it. The copies stayed on disk until the sync finished, so a large folder could fill your disk and make every later folder fail. A sync now makes at most one extra copy. These notes could also end up with the contents of an unrelated iCloud note. Thanks to @valmayaki for finding and fixing this (#36).
 
 ## [0.3.3] - 2026-10-04
 
