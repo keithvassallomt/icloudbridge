@@ -109,9 +109,15 @@ end run
 """
 
 # AppleScript to get all notes from a folder (supports nested paths)
+# Lists a folder's notes as "id|||name|||created|||modified|||locked|||" records. Each
+# property is read for the whole folder in one Apple Event; reading them note by
+# note (five events per note, plus the full HTML body) kept Notes busy for about
+# an hour on a 1,725-note folder until an event timed out (-1712). Bodies come
+# from the rich snapshot, or GET_NOTE_BODIES_SCRIPT for snapshot misses.
 GET_NOTES_SCRIPT = """
 on run argv
     set folder_path to item 1 of argv
+    with timeout of 1800 seconds
     tell application "Notes"
         -- Handle nested folder paths (e.g., "Work/Projects")
         set path_parts to my split_text(folder_path, "/")
@@ -150,27 +156,29 @@ on run argv
             error "Folder not found: " & folder_path
         end if
 
-        set myNotes to notes of myFolder
-        set output to (id of myFolder) & "~~~FOLDER~~~"
-        repeat with theNote in myNotes
-            set nId to id of theNote
-            set nName to name of theNote
-            -- A locked note's content is encrypted; don't try to read it.
-            set nLocked to password protected of theNote
-            if nLocked then
-                set nBody to ""
-            else
-                set nBody to body of theNote
-            end if
-            set nCreation to creation date of theNote
-            set nModified to modification date of theNote
-
-            -- Use delimiter that won't appear in note body
-            set noteData to nId & "|||" & nName & "|||" & nCreation & "|||" & nModified & "|||" & nLocked & "|||" & nBody
-            set output to output & noteData & "~~~NEXT_NOTE~~~"
-        end repeat
-        return output
+        set folderId to id of myFolder
+        set noteIds to id of every note of myFolder
+        set noteNames to name of every note of myFolder
+        set noteCreated to creation date of every note of myFolder
+        set noteModified to modification date of every note of myFolder
+        -- A locked note's content is encrypted; its body is never read.
+        set noteLocked to password protected of every note of myFolder
+        -- The lists are read separately; if the folder changed in between,
+        -- their items no longer line up, so fail rather than mismatch them.
+        if (id of every note of myFolder) is not noteIds then
+            error "Folder changed while it was being read: " & folder_path
+        end if
     end tell
+    end timeout
+
+    set noteLines to {}
+    repeat with i from 1 to count of noteIds
+        set end of noteLines to (item i of noteIds) & "|||" & (item i of noteNames) & "|||" & ((item i of noteCreated) as text) & "|||" & ((item i of noteModified) as text) & "|||" & ((item i of noteLocked) as text) & "|||"
+    end repeat
+    set AppleScript's text item delimiters to "~~~NEXT_NOTE~~~"
+    set joined to noteLines as text
+    set AppleScript's text item delimiters to ""
+    return folderId & "~~~FOLDER~~~" & joined & "~~~NEXT_NOTE~~~"
 end run
 
 on split_text(theText, theDelimiter)
@@ -179,6 +187,27 @@ on split_text(theText, theDelimiter)
     set AppleScript's text item delimiters to ""
     return theTextItems
 end split_text
+"""
+
+# Bodies of the given notes, by id, joined with ~~~NEXT_NOTE~~~. Only notes the
+# rich snapshot has no entry for need this: all notes in IMAP and Exchange
+# accounts, and every note when the ripper fails. One run reads many notes, so a
+# large mail-account folder doesn't start one process per note.
+GET_NOTE_BODIES_SCRIPT = """
+on run argv
+    set bodies to {}
+    with timeout of 1800 seconds
+        tell application "Notes"
+            repeat with noteId in argv
+                set end of bodies to body of note id (noteId as text)
+            end repeat
+        end tell
+    end timeout
+    set AppleScript's text item delimiters to "~~~NEXT_NOTE~~~"
+    set joined to bodies as text
+    set AppleScript's text item delimiters to ""
+    return joined
+end run
 """
 
 # AppleScript to create a new note (supports nested folder paths)
@@ -936,6 +965,23 @@ class NotesAdapter:
 
         return None
 
+    NOTE_BODY_BATCH = 200
+
+    async def _note_bodies(self, note_uuids: list[str]) -> list[str]:
+        """Read the AppleScript bodies of these notes, a batch per osascript run."""
+        bodies: list[str] = []
+        for start in range(0, len(note_uuids), self.NOTE_BODY_BATCH):
+            batch = note_uuids[start : start + self.NOTE_BODY_BATCH]
+            output = await self._run_applescript(GET_NOTE_BODIES_SCRIPT, *batch)
+            batch_bodies = output.split("~~~NEXT_NOTE~~~")
+            if len(batch_bodies) != len(batch):
+                # A body containing the delimiter would shift every body after it.
+                raise RuntimeError(
+                    f"expected {len(batch)} note bodies from Notes, got {len(batch_bodies)}"
+                )
+            bodies.extend(batch_bodies)
+        return bodies
+
     async def get_notes(self, folder_name: str) -> list[AppleScriptNote]:
         """
         Get all notes from a specific folder.
@@ -970,6 +1016,7 @@ class NotesAdapter:
                 return []
 
             notes = []
+            needs_body: list[int] = []
             # Split by note delimiter
             note_strings = output.split("~~~NEXT_NOTE~~~")
 
@@ -1011,6 +1058,9 @@ class NotesAdapter:
                         )
                         rich_body = body_html
                         attachments = []
+                        if not rich_body:
+                            # The listing doesn't read bodies; fetch these together below.
+                            needs_body.append(len(notes))
 
                     notes.append(
                         AppleScriptNote(
@@ -1022,6 +1072,11 @@ class NotesAdapter:
                             attachments=attachments,
                         )
                     )
+
+            if needs_body:
+                bodies = await self._note_bodies([notes[i].uuid for i in needs_body])
+                for i, body in zip(needs_body, bodies):
+                    notes[i].body_html = body
 
             logger.info(f"Found {len(notes)} notes in folder: {folder_name}")
             return notes
