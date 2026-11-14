@@ -16,10 +16,11 @@ from icloudbridge.core.rich_notes_capture import (
     lookup_note_entry,
 )
 from icloudbridge.utils.converters import (
+    FILENAME_MAX_BYTES,
     NOTE_FILENAME_SUFFIX,
     html_to_markdown,
     normalize_checklists_html,
-    note_filename_stem,
+    sanitize_filename,
 )
 from icloudbridge.utils.db import NotesDB
 
@@ -259,7 +260,14 @@ class RichNotesExporter:
         for relative_path, note_entry in selected_notes:
             folder = rich_root / relative_path.parent
             folder.mkdir(parents=True, exist_ok=True)
-            target = folder / (note_filename_stem(f"{relative_path.stem}_rich") + NOTE_FILENAME_SUFFIX)
+            name = f"{relative_path.stem}_rich{NOTE_FILENAME_SUFFIX}"
+            if len(name.encode()) > FILENAME_MAX_BYTES:
+                # Only names from before 0.4.0 can be this long. Shorten the stem,
+                # keeping the "_rich" suffix (note_filename_stem would turn the
+                # underscore into a space).
+                budget = FILENAME_MAX_BYTES - len(f"_rich{NOTE_FILENAME_SUFFIX}".encode())
+                name = f"{sanitize_filename(relative_path.stem, budget, keep_extension=False)}_rich{NOTE_FILENAME_SUFFIX}"
+            target = folder / name
             html = extract_note_content(note_entry)
             logger.info("Exporting rich note: %s", relative_path)
             logger.debug("Relative path stem: %s", relative_path.stem)

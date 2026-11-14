@@ -350,13 +350,13 @@ class NotesSyncEngine:
             for path_str, md_note in remote_notes_by_path.items():
                 mapping = mappings_by_remote_path.get(path_str)
                 if mapping and mapping["local_uuid"] not in present_uuids:
-                    title = sanitize_filename(mapping.get("local_name") or md_note.name).casefold()
+                    title = note_filename_stem(mapping.get("local_name") or md_note.name).casefold()
                     vanished.setdefault(title, []).append((path_str, mapping))
             if vanished:
                 appeared: dict[str, list[AppleScriptNote]] = {}
                 for note in apple_notes + locked_notes:
                     if note.uuid not in mappings_by_uuid:
-                        appeared.setdefault(sanitize_filename(note.name).casefold(), []).append(note)
+                        appeared.setdefault(note_filename_stem(note.name).casefold(), []).append(note)
                 for title, candidates in vanished.items():
                     newcomers = appeared.get(title, [])
                     if len(candidates) != 1 or len(newcomers) != 1:
@@ -389,14 +389,14 @@ class NotesSyncEngine:
             locked_kept_paths: set[str] = set()
             if locked_notes:
                 locked_uuids = {note.uuid for note in locked_notes}
-                locked_titles = {sanitize_filename(note.name).casefold() for note in locked_notes}
+                locked_titles = {note_filename_stem(note.name).casefold() for note in locked_notes}
                 kept_paths = locked_kept_paths
                 for path_str, md_note in remote_notes_by_path.items():
                     mapping = mappings_by_remote_path.get(path_str)
                     if mapping is not None:
                         if mapping["local_uuid"] in locked_uuids:
                             kept_paths.add(path_str)
-                    elif sanitize_filename(md_note.name).casefold() in locked_titles:
+                    elif note_filename_stem(md_note.name).casefold() in locked_titles:
                         # Not synced yet, but probably this note's copy: don't turn
                         # it into a second, unlocked note in Apple Notes.
                         kept_paths.add(path_str)

@@ -6,6 +6,7 @@ be added later by following the same interface pattern.
 """
 
 import base64
+import errno
 import json
 import logging
 import mimetypes
@@ -99,8 +100,11 @@ class MarkdownAdapter:
 
     def _read_metadata_file(self, file_path: Path) -> dict[str, str]:
         metadata_file = self._metadata_path(file_path)
-        if not metadata_file.exists():
-            return {}
+        try:
+            if not metadata_file.exists():
+                return {}
+        except OSError:
+            return {}  # e.g. a name too long to exist
         try:
             data = json.loads(metadata_file.read_text(encoding="utf-8"))
             if isinstance(data, dict):
@@ -113,13 +117,62 @@ class MarkdownAdapter:
     def _write_metadata_file(self, file_path: Path, metadata: dict[str, str]) -> None:
         metadata_file = self._metadata_path(file_path)
         if not metadata:
-            metadata_file.unlink(missing_ok=True)
+            self._remove_metadata_file(file_path)
             return
         metadata_file.parent.mkdir(parents=True, exist_ok=True)
-        metadata_file.write_text(json.dumps(metadata, separators=(",", ":"), sort_keys=True), encoding="utf-8")
+        try:
+            metadata_file.write_text(
+                json.dumps(metadata, separators=(",", ":"), sort_keys=True), encoding="utf-8"
+            )
+        except OSError as exc:
+            if exc.errno != errno.ENAMETOOLONG:
+                raise
+            # A file named before names were shortened (0.3.3 and earlier) can be
+            # too long for a sidecar. It's renamed the next time the note changes.
+            logger.warning("Skipping metadata for %s: file name too long", file_path.name)
 
     def _remove_metadata_file(self, file_path: Path) -> None:
-        self._metadata_path(file_path).unlink(missing_ok=True)
+        try:
+            self._metadata_path(file_path).unlink(missing_ok=True)
+        except OSError as exc:
+            if exc.errno != errno.ENAMETOOLONG:
+                raise  # a sidecar with a name that long can't exist
+
+    @staticmethod
+    def _same_file(first: Path, second: Path) -> bool:
+        # Case-insensitive volumes, and accents written different ways, can give
+        # one file two names.
+        try:
+            return first.exists() and second.exists() and os.path.samefile(first, second)
+        except OSError:
+            return False
+
+    @staticmethod
+    def _title_metadata(note_name: str | None, metadata: dict[str, str] | None) -> dict[str, str]:
+        # Keep the real title when the file name can't hold it (characters a file
+        # name can't contain, or a name shortened to fit), so pushing the note
+        # back to Apple Notes doesn't rename it to the file name.
+        effective = dict(metadata or {})
+        if note_name and note_filename_stem(note_name) != note_name:
+            effective["title"] = note_name
+        else:
+            effective.pop("title", None)
+        return effective
+
+    @staticmethod
+    def _note_title(file_path: Path, metadata: dict[str, str], body: str) -> str:
+        """The note's title: the file name, unless it is a shortened or sanitized one."""
+        stem = file_path.stem
+        candidates = [metadata.get("title")]
+        for line in body.splitlines():
+            if line.strip():
+                if line.startswith("# "):
+                    candidates.append(line[2:].strip())
+                break
+        for title in candidates:
+            if title and title != stem and note_filename_stem(title) == stem:
+                return title
+        return stem
 
     def _extract_inline_metadata(self, content: str) -> tuple[dict[str, str], str]:
         prefix = "<!-- icloudbridge-metadata "
@@ -244,8 +297,8 @@ class MarkdownAdapter:
             created_date = datetime.fromtimestamp(stat.st_ctime)
             modified_date = datetime.fromtimestamp(stat.st_mtime)
 
-            # Extract note name from filename
-            note_name = file_path.stem  # Filename without .md extension
+            # The file name, or the full title when the name had to be shortened
+            note_name = self._note_title(file_path, merged_metadata, body)
 
             # Extract attachment references
             attachments = extract_attachment_references(body)
@@ -310,7 +363,7 @@ class MarkdownAdapter:
             markdown_body = html_to_markdown(body_html, note_name)
             markdown_body = self._normalize_preview_markdown(markdown_body)
             markdown_content = self._normalize_shortcut_checkmarks(markdown_body)
-            effective_metadata = metadata or {}
+            effective_metadata = self._title_metadata(note_name, metadata)
 
             if attachments:
                 self._sync_attachments(target_folder, attachments)
@@ -363,8 +416,11 @@ class MarkdownAdapter:
             RuntimeError: If update fails
         """
         try:
-            # If renaming, use write_note to create new file and delete old
-            if note_name and note_name != file_path.stem:
+            # A rename only if the title maps to a different file. A shortened or
+            # sanitized name, or one differing only in case or accent encoding,
+            # is this same file: "renaming" it would delete what was just written.
+            target = file_path.parent / (note_filename_stem(note_name) + NOTE_FILENAME_SUFFIX) if note_name else None
+            if target is not None and target != file_path and not self._same_file(target, file_path):
                 # Get full nested folder path relative to base_path
                 if file_path.parent != self.base_path:
                     folder_name = str(file_path.parent.relative_to(self.base_path))
@@ -379,14 +435,15 @@ class MarkdownAdapter:
                     metadata,
                 )
                 # Delete old file
-                await self.delete_note(file_path)
+                if not self._same_file(new_path, file_path):
+                    await self.delete_note(file_path)
                 return new_path
 
             # Otherwise, overwrite in place
             markdown_body = html_to_markdown(body_html, note_name or file_path.stem)
             markdown_body = self._normalize_preview_markdown(markdown_body)
             markdown_content = self._normalize_shortcut_checkmarks(markdown_body)
-            effective_metadata = metadata or {}
+            effective_metadata = self._title_metadata(note_name, metadata)
 
             if attachments:
                 self._sync_attachments(file_path.parent, attachments)
