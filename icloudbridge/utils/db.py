@@ -162,6 +162,16 @@ class NotesDB:
             await db.commit()
             logger.debug(f"Upserted mapping: {local_uuid} -> {remote_path}")
 
+    async def move_mapping_path(self, old_path: str, new_path: str) -> None:
+        """Point a note's mapping at the file's new location."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                "UPDATE note_mapping SET remote_path = ? WHERE remote_path = ?",
+                (new_path, old_path),
+            )
+            await db.commit()
+            logger.debug(f"Moved mapping path: {old_path} -> {new_path}")
+
     async def repoint_mapping(self, old_uuid: str, new_uuid: str) -> None:
         """Move a note's mapping to the new ID Apple Notes gave the same note."""
         async with aiosqlite.connect(self.db_path) as db:

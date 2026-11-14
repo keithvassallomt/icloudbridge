@@ -117,27 +117,46 @@ class NotesSyncEngine:
             notes_folder = self.markdown_adapter.base_path / "Notes"
             await self.markdown_adapter.ensure_folder_exists(notes_folder)
 
-            # Move each root note to "Notes" subfolder
+            # Move each root note to "Notes" subfolder, with its attachments, and
+            # keep its mapping pointing at it. A mapping left at the old path would
+            # make a later two-way sync think the file was deleted, and delete the
+            # Apple note with it.
             migrated_count = 0
             for note_path in root_notes:
+                dest_path = notes_folder / note_path.name
+                if dest_path.exists():
+                    logger.warning(
+                        "Leaving '%s' in the root: 'Notes' already has a note with that name",
+                        note_path.name,
+                    )
+                    continue
                 try:
-                    # Construct destination path
-                    dest_path = notes_folder / note_path.name
-
-                    # Move the file
-                    note_path.rename(dest_path)
-                    logger.info(f"Migrated '{note_path.name}' to Notes folder")
-
-                    # Update database mapping if exists
-                    mapping = await self.db.get_mapping_by_remote_path(str(note_path))
-                    if mapping:
-                        await self.db.update_mapping(
-                            mapping["local_uuid"],
-                            str(dest_path),
-                            mapping["last_synced"],
+                    slug = await self.markdown_adapter.get_attachment_slug(note_path)
+                    attachments = note_path.parent / f".attachments.{slug}" if slug else None
+                    if attachments is not None and not attachments.is_dir():
+                        attachments = None
+                    dest_attachments = notes_folder / attachments.name if attachments else None
+                    if dest_attachments is not None and dest_attachments.exists():
+                        logger.warning(
+                            "Leaving '%s' in the root: 'Notes' already has its attachments folder",
+                            note_path.name,
                         )
-                        logger.debug(f"Updated database mapping for '{note_path.name}'")
+                        continue
+                    mapping = await self.db.get_mapping_by_remote_path(str(note_path))
 
+                    note_path.rename(dest_path)
+                    try:
+                        if attachments is not None:
+                            attachments.rename(dest_attachments)
+                        if mapping:
+                            await self.db.move_mapping_path(str(note_path), str(dest_path))
+                    except Exception:
+                        # Undo, so the file, its attachments and its mapping agree.
+                        if dest_attachments is not None and dest_attachments.exists():
+                            dest_attachments.rename(attachments)
+                        dest_path.rename(note_path)
+                        raise
+                    logger.info(f"Migrated '{note_path.name}' to Notes folder")
                     migrated_count += 1
 
                 except Exception as e:
