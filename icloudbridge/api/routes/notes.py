@@ -8,9 +8,9 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 
-from icloudbridge.core.sync_locks import SyncAlreadyRunning, exclusive_sync
 from icloudbridge.api.dependencies import ConfigDep, NotesDBDep, NotesSyncEngineDep
 from icloudbridge.api.models import NotesSyncRequest
+from icloudbridge.api.sync_guard import sync_guard
 from icloudbridge.utils.db import SyncLogsDB
 
 logger = logging.getLogger(__name__)
@@ -130,12 +130,9 @@ async def sync_notes(
     request: NotesSyncRequest,
     config: ConfigDep,
 ):
-    """Trigger notes synchronization (refused with 409 while another writing sync runs)."""
-    try:
-        async with exclusive_sync("notes", wait=False, dry_run=request.dry_run):
-            return await _sync_notes(request, config)
-    except SyncAlreadyRunning as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    """Trigger notes synchronization (refused with 409 while another notes sync runs)."""
+    async with sync_guard("notes", config, dry_run=request.dry_run):
+        return await _sync_notes(request, config)
 
 
 async def _sync_notes(
@@ -518,6 +515,12 @@ async def get_history(
 
 @router.post("/reset")
 async def reset_database(notes_db: NotesDBDep, engine: NotesSyncEngineDep, config: ConfigDep):
+    """Reset the notes sync state. Refused with 409 while another notes sync runs."""
+    async with sync_guard("notes", config):
+        return await _reset_database(notes_db, engine, config)
+
+
+async def _reset_database(notes_db: NotesDBDep, engine: NotesSyncEngineDep, config: ConfigDep):
     """Reset notes sync database and history.
 
     Clears all note mappings from the database and deletes sync history.

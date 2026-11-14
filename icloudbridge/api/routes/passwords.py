@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 
 from icloudbridge.api.dependencies import ConfigDep, PasswordsDBDep, PasswordsSyncEngineDep
 from icloudbridge.api.downloads import download_manager
+from icloudbridge.api.sync_guard import sync_guard
 from icloudbridge.api.models import NextcloudCredentialRequest, VaultwardenCredentialRequest
 from icloudbridge.core.otp_matcher import build_preview
 from icloudbridge.sources.passwords.apple_csv import ApplePasswordsCSVParser
@@ -138,7 +139,13 @@ async def _attach_download_metadata(result: dict) -> tuple[dict, bool]:
     return result, True
 
 
-async def _run_passwords_sync(
+async def _run_passwords_sync(*, config: ConfigDep, simulate: bool, **kwargs):
+    """Run a passwords sync under the passwords sync lock (409 while another one runs)."""
+    async with sync_guard("passwords", config, dry_run=simulate):
+        return await _run_passwords_sync_unlocked(config=config, simulate=simulate, **kwargs)
+
+
+async def _run_passwords_sync_unlocked(
     *,
     engine: PasswordsSyncEngineDep,
     config: ConfigDep,
@@ -246,6 +253,16 @@ async def _run_passwords_sync(
 async def import_apple_csv(
     file: UploadFile = File(...),
     engine: PasswordsSyncEngineDep = None,
+    config: ConfigDep = None,
+):
+    """Import an Apple Passwords CSV. Refused with 409 while another passwords sync runs."""
+    async with sync_guard("passwords", config):
+        return await _import_apple_csv(file=file, engine=engine)
+
+
+async def _import_apple_csv(
+    file: UploadFile = File(...),
+    engine: PasswordsSyncEngineDep = None,
 ):
     """Import passwords from Apple Passwords CSV export.
 
@@ -288,6 +305,16 @@ async def import_apple_csv(
 
 @router.post("/import/bitwarden")
 async def import_bitwarden_csv(
+    file: UploadFile = File(...),
+    engine: PasswordsSyncEngineDep = None,
+    config: ConfigDep = None,
+):
+    """Import a Bitwarden CSV. Refused with 409 while another passwords sync runs."""
+    async with sync_guard("passwords", config):
+        return await _import_bitwarden_csv(file=file, engine=engine)
+
+
+async def _import_bitwarden_csv(
     file: UploadFile = File(...),
     engine: PasswordsSyncEngineDep = None,
 ):
@@ -706,6 +733,12 @@ async def get_history(
 
 @router.post("/reset")
 async def reset_database(passwords_db: PasswordsDBDep, config: ConfigDep):
+    """Reset the passwords sync state. Refused with 409 while another passwords sync runs."""
+    async with sync_guard("passwords", config):
+        return await _reset_database(passwords_db, config)
+
+
+async def _reset_database(passwords_db: PasswordsDBDep, config: ConfigDep):
     """Reset passwords sync database, history, and keychain credentials.
 
     Clears all password entries from the database, deletes sync history,

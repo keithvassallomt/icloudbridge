@@ -21,6 +21,7 @@ from icloudbridge.core.photos_sync import PhotoSyncEngine
 from icloudbridge.core.reminders_sync import RemindersSyncEngine
 from icloudbridge.core.rich_notes_export import RichNotesExporter
 from icloudbridge.core.sync import NotesSyncEngine
+from icloudbridge.core.sync_locks import SyncAlreadyRunning, exclusive_sync
 from icloudbridge.utils.logging import setup_logging
 from icloudbridge.utils.photos_db import PhotosDB
 from icloudbridge.utils.settings_db import get_config_path, set_config_path
@@ -35,6 +36,25 @@ app = typer.Typer(
 # Create console for rich output
 console = Console()
 logger = logging.getLogger(__name__)
+
+
+def run_exclusive(service: str, cfg, work, *, dry_run: bool = False):
+    """Run a command's async work under the service's sync lock.
+
+    The app (a manual or scheduled sync) holds the same lock, so a command
+    that would run alongside one of its syncs stops with a message instead.
+    """
+
+    async def locked():
+        async with exclusive_sync(service, cfg.general.data_dir, wait=False, dry_run=dry_run):
+            return await work()
+
+    try:
+        return asyncio.run(locked())
+    except SyncAlreadyRunning as exc:
+        console.print(f"[red]{exc}[/red]")
+        # SystemExit, not typer.Exit: commands wrap this call in `except Exception`.
+        raise SystemExit(1) from None
 
 
 @app.callback()
@@ -213,7 +233,9 @@ def photos(
         raise typer.Exit(1)
 
     engine = PhotoSyncEngine(cfg.photos, cfg.general.data_dir)
-    stats = asyncio.run(engine.sync(sources=source or None, dry_run=dry_run, initial_scan=initial_scan))
+    stats = run_exclusive(
+        "photos", cfg, lambda: engine.sync(sources=source or None, dry_run=dry_run, initial_scan=initial_scan), dry_run=dry_run
+    )
 
     table = Table(title="Photo Sync Results")
     table.add_column("Metric", style="cyan")
@@ -326,7 +348,7 @@ def photos_export(
         finally:
             await engine.cleanup()
 
-    stats = asyncio.run(run_export())
+    stats = run_exclusive("photos", cfg, run_export, dry_run=dry_run)
 
     if stats is None:
         # set-baseline-only mode
@@ -796,7 +818,7 @@ def notes_sync(
 
     # Run async sync
     try:
-        asyncio.run(run_sync())
+        run_exclusive("notes", cfg, run_sync, dry_run=dry_run)
     except Exception as e:
         console.print(f"[red]Sync failed: {e}[/red]")
         logging.exception("Sync operation failed")
@@ -943,7 +965,7 @@ def notes_reset(
 
     # Run async reset
     try:
-        asyncio.run(run_reset())
+        run_exclusive("notes", cfg, run_reset)
     except Exception as e:
         console.print(f"[red]Failed to reset database: {e}[/red]")
         logging.exception("Reset operation failed")
@@ -1149,7 +1171,7 @@ def reminders_sync(
             console.print(f"[red]Sync failed: {e}[/red]")
             raise typer.Exit(1)
 
-    asyncio.run(run_sync())
+    run_exclusive("reminders", cfg, run_sync, dry_run=dry_run)
 
 
 @reminders_app.command("list")
@@ -1272,7 +1294,7 @@ def reminders_reset(
         await sync_engine.reset_database()
         console.print("[green]✓ Database reset complete[/green]")
 
-    asyncio.run(reset_db())
+    run_exclusive("reminders", cfg, reset_db)
 
     cfg.reminders.reset_list_settings()
     config_path = cfg.general.config_file or cfg.default_config_path
@@ -1456,7 +1478,7 @@ def passwords_import_apple(
         return await engine.import_apple_csv(csv_file)
 
     try:
-        stats = asyncio.run(run_import())
+        stats = run_exclusive("passwords", cfg, run_import)
 
         # Display results
         table = Table(title="Import Results")
@@ -1587,7 +1609,7 @@ def passwords_import_bitwarden(
         return await engine.import_bitwarden_csv(csv_file)
 
     try:
-        stats = asyncio.run(run_import())
+        stats = run_exclusive("passwords", cfg, run_import)
 
         # Display results
         table = Table(title="Import Results")
@@ -2134,7 +2156,7 @@ def passwords_sync(
         return result
 
     try:
-        stats = asyncio.run(run_sync())
+        stats = run_exclusive("passwords", cfg, run_sync, dry_run=dry_run)
 
         # Display results
         provider_display = provider_name.title()
@@ -2272,7 +2294,7 @@ def passwords_reset(
         await db.clear_all_entries()
 
     try:
-        asyncio.run(reset())
+        run_exclusive("passwords", cfg, reset)
         console.print("[green]✅ Password database reset complete[/green]")
     except Exception as e:
         console.print(f"[red]Error resetting database: {e}[/red]")

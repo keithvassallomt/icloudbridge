@@ -13,6 +13,7 @@ from icloudbridge.api.dependencies import (
     PhotosSyncEngineDep,
 )
 from icloudbridge.api.models import PhotoExportRequest, PhotoSyncRequest
+from icloudbridge.api.sync_guard import sync_guard
 from icloudbridge.api.websocket import send_sync_progress
 from icloudbridge.utils.db import SyncLogsDB
 
@@ -23,6 +24,16 @@ router = APIRouter()
 
 @router.post("/sync")
 async def sync_photos(
+    request: PhotoSyncRequest,
+    config: ConfigDep,
+    engine: PhotosSyncEngineDep,
+):
+    """Import new photos into Apple Photos. Refused with 409 while another photos sync runs."""
+    async with sync_guard("photos", config, dry_run=request.dry_run):
+        return await _sync_photos(request, config, engine)
+
+
+async def _sync_photos(
     request: PhotoSyncRequest,
     config: ConfigDep,
     engine: PhotosSyncEngineDep,
@@ -200,6 +211,12 @@ async def get_history(
 
 @router.post("/reset")
 async def reset_database(photos_db: PhotosDBDep, config: ConfigDep):
+    """Reset the photos sync state. Refused with 409 while another photos sync runs."""
+    async with sync_guard("photos", config):
+        return await _reset_database(photos_db, config)
+
+
+async def _reset_database(photos_db: PhotosDBDep, config: ConfigDep):
     """Reset photo sync state by clearing the database."""
 
     if not config.photos.enabled:
@@ -238,6 +255,16 @@ async def reset_database(photos_db: PhotosDBDep, config: ConfigDep):
 
 @router.post("/export")
 async def export_photos(
+    request: PhotoExportRequest,
+    config: ConfigDep,
+    photos_db: PhotosDBDep,
+):
+    """Export photos from Apple Photos. Refused with 409 while another photos sync runs."""
+    async with sync_guard("photos", config, dry_run=request.dry_run):
+        return await _export_photos(request, config, photos_db)
+
+
+async def _export_photos(
     request: PhotoExportRequest,
     config: ConfigDep,
     photos_db: PhotosDBDep,
@@ -487,6 +514,12 @@ async def get_library_stats(config: ConfigDep, photos_db: PhotosDBDep):
 
 @router.post("/export/set-baseline")
 async def set_export_baseline(config: ConfigDep, photos_db: PhotosDBDep):
+    """Set the photos export baseline. Refused with 409 while another photos sync runs."""
+    async with sync_guard("photos", config):
+        return await _set_export_baseline(config, photos_db)
+
+
+async def _set_export_baseline(config: ConfigDep, photos_db: PhotosDBDep):
     """Set the export baseline to now.
 
     Photos before this date won't be exported (unless full_library=True).

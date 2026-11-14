@@ -490,18 +490,24 @@ class SchedulerManager:
     async def _run_service_sync(self, service: str, config: dict) -> dict:
         """Dispatch sync execution for the requested service."""
 
-        if service == "notes":
-            async with exclusive_sync("notes", wait=True, dry_run=bool(config.get("dry_run", False))):
-                return await self._sync_notes(config)
-        if service == "reminders":
-            async with exclusive_sync("reminders", wait=True, dry_run=bool(config.get("dry_run", False))):
-                return await self._sync_reminders(config)
-        if service == "passwords":
-            return await self._sync_passwords(config)
-        if service == "photos":
-            return await self._sync_photos(config)
-
-        raise ValueError(f"Unknown service: {service}")
+        runners = {
+            "notes": self._sync_notes,
+            "reminders": self._sync_reminders,
+            "passwords": self._sync_passwords,
+            "photos": self._sync_photos,
+        }
+        runner = runners.get(service)
+        if runner is None:
+            raise ValueError(f"Unknown service: {service}")
+        # Wait for any other sync of this service (a manual one, or the command
+        # line) to finish rather than running alongside it.
+        async with exclusive_sync(
+            service,
+            self.config.general.data_dir,
+            wait=True,
+            dry_run=bool(config.get("dry_run", False)),
+        ):
+            return await runner(config)
 
     async def _sync_notes(self, config: dict) -> dict:
         """Execute notes sync (single folder or full mapping/auto mode)."""

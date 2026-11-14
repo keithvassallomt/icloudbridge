@@ -7,7 +7,6 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, status
 
-from icloudbridge.core.sync_locks import SyncAlreadyRunning, exclusive_sync
 from icloudbridge.api.dependencies import (
     ConfigDep,
     RemindersDBDep,
@@ -15,6 +14,7 @@ from icloudbridge.api.dependencies import (
     get_config,
 )
 from icloudbridge.api.models import RemindersSyncRequest
+from icloudbridge.api.sync_guard import sync_guard
 from icloudbridge.utils.credentials import CredentialStore
 from icloudbridge.utils.datetime_utils import safe_fromtimestamp
 from icloudbridge.utils.db import SyncLogsDB
@@ -138,12 +138,9 @@ async def sync_reminders(
     engine: RemindersSyncEngineDep,
     config: ConfigDep,
 ):
-    """Trigger reminders synchronization (refused with 409 while another writing sync runs)."""
-    try:
-        async with exclusive_sync("reminders", wait=False, dry_run=request.dry_run):
-            return await _sync_reminders(request, engine, config)
-    except SyncAlreadyRunning as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    """Trigger reminders synchronization (refused with 409 while another reminders sync runs)."""
+    async with sync_guard("reminders", config, dry_run=request.dry_run):
+        return await _sync_reminders(request, engine, config)
 
 
 async def _sync_reminders(
@@ -558,6 +555,12 @@ async def restore_deleted_list(pair_id: int, reminders_db: RemindersDBDep):
 
 @router.post("/reset")
 async def reset_database(engine: RemindersSyncEngineDep, config: ConfigDep):
+    """Reset the reminders sync state. Refused with 409 while another reminders sync runs."""
+    async with sync_guard("reminders", config):
+        return await _reset_database(engine, config)
+
+
+async def _reset_database(engine: RemindersSyncEngineDep, config: ConfigDep):
     """Reset reminders sync database, list settings, history, and keychain password.
 
     Clears all reminder mappings from the database, restores the sync mode

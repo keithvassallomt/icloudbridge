@@ -37,6 +37,7 @@ def test_a_failed_folder_is_reported_and_the_next_one_syncs(tmp_path, monkeypatc
     monkeypatch.setattr(NotesSyncEngine, "rich_capture_scope", rich_capture_scope)
     monkeypatch.setattr(NotesSyncEngine, "sync_folder", sync_folder)
     config = SimpleNamespace(
+        general=SimpleNamespace(data_dir=tmp_path),
         notes=SimpleNamespace(enabled=True, remote_folder=tmp_path / "md", folder_mappings={},
                               use_shortcuts_for_push=False),
         notes_db_path=tmp_path / "notes.db",
