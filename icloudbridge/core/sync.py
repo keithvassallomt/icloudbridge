@@ -11,6 +11,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from icloudbridge.core.rich_notes_capture import _coredata_entity
 from icloudbridge.sources.notes.applescript import AppleScriptNote, NotesAdapter
 from icloudbridge.sources.notes.markdown import MarkdownAdapter, MarkdownNote
 from icloudbridge.sources.notes.shortcuts import NotesShortcutAdapter
@@ -76,6 +77,8 @@ class NotesSyncEngine:
         self.shortcuts = NotesShortcutAdapter(self.shortcut_calls)
         self.use_shortcut_pipeline = prefer_shortcuts
         self._shortcut_folder_names: dict[str, str | None] = {}
+        # Folders in IMAP and Exchange accounts, which are always written with AppleScript.
+        self._mail_account_folders: set[str] = set()
         self.db = NotesDB(db_path)
         self._temp_attachment_files: set[Path] = set()
         # True while a rich_capture_scope is open; see that method.
@@ -1117,8 +1120,17 @@ class NotesSyncEngine:
         if folder_name not in self._shortcut_folder_names:
             name = folder_name.rsplit("/", 1)[-1]
             folders = await self.notes_adapter.list_folders(include_unsyncable=True)
-            same_name = [f for f in folders if f.name.rsplit("/", 1)[-1] == name]
-            self._shortcut_folder_names[folder_name] = name if len(same_name) == 1 else None
+            target = next((f for f in folders if f.name == folder_name), None)
+            entity = _coredata_entity(target.uuid) if target is not None else None
+            if entity is not None and entity != "ICFolder":
+                # An IMAP or Exchange folder (a Google account, say). Shortcuts list
+                # each of these twice and stop on a "which one?" prompt, and their
+                # notes can't hold checklists anyway.
+                self._mail_account_folders.add(folder_name)
+                self._shortcut_folder_names[folder_name] = None
+            else:
+                same_name = [f for f in folders if f.name.rsplit("/", 1)[-1] == name]
+                self._shortcut_folder_names[folder_name] = name if len(same_name) == 1 else None
         return self._shortcut_folder_names[folder_name]
 
     async def _pull_from_remote(
@@ -1144,6 +1156,21 @@ class NotesSyncEngine:
 
         use_shortcuts = prepared_note.has_checklist or self.use_shortcut_pipeline
         shortcut_folder = await self._shortcut_folder_name(folder_name) if use_shortcuts else None
+        if use_shortcuts and shortcut_folder is None and folder_name in self._mail_account_folders:
+            if prepared_note.has_checklist:
+                logger.warning(
+                    "'%s' is in a mail account (IMAP or Exchange), whose notes can't hold "
+                    "checklists; writing '%s' with AppleScript, so its checklist arrives as text",
+                    folder_name,
+                    md_note.name,
+                )
+            else:
+                logger.info(
+                    "'%s' is in a mail account (IMAP or Exchange); writing '%s' with AppleScript",
+                    folder_name,
+                    md_note.name,
+                )
+            use_shortcuts = False
         if use_shortcuts and shortcut_folder is None:
             if prepared_note.has_checklist:
                 raise RuntimeError(

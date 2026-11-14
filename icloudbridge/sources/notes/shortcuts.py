@@ -110,6 +110,27 @@ class NotesShortcutAdapter:
             payload,
         )
 
+    # A shortcut that asks a question (a "which one?" prompt, say) waits for an
+    # answer forever; a scheduled sync must not wait with it.
+    SHORTCUT_TIMEOUT_SECONDS = 120
+
+    @classmethod
+    def _run_shortcut(cls, cmd: list[str], input: str | None = None) -> subprocess.CompletedProcess:
+        try:
+            return subprocess.run(
+                cmd,
+                input=input,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=cls.SHORTCUT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Shortcut {cmd[2]} didn't finish within {cls.SHORTCUT_TIMEOUT_SECONDS} seconds. "
+                "It may be waiting for an answer in a Shortcuts window; cancel it there."
+            ) from None
+
     @staticmethod
     def _normalize_folder(folder: str) -> str:
         parts = folder.split("/", 1)
@@ -125,13 +146,7 @@ class NotesShortcutAdapter:
         if tags:
             data += ";;" + ",".join(tags)
         cmd = ["shortcuts", "run", self.UPSERT_SHORTCUT]
-        result = subprocess.run(
-            cmd,
-            input=data,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        result = self._run_shortcut(cmd, input=data)
         if result.returncode != 0:
             raise RuntimeError(
                 f"Shortcut {self.UPSERT_SHORTCUT} failed: {result.stderr or result.stdout}"
@@ -172,7 +187,7 @@ class NotesShortcutAdapter:
                 "--output-type",
                 "public.rtf",
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            result = self._run_shortcut(cmd)
             if result.returncode != 0:
                 raise RuntimeError(
                     f"Shortcut {shortcut_name} failed: {result.stderr or result.stdout}"

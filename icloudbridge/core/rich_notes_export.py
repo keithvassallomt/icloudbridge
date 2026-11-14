@@ -5,8 +5,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
+import subprocess
 import sys
+from html import unescape
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +18,7 @@ from icloudbridge.core.rich_notes_capture import (
     extract_note_content,
     lookup_note_entry,
 )
+from icloudbridge.scripts.rich_notes import run_rich_ripper
 from icloudbridge.utils.converters import (
     FILENAME_MAX_BYTES,
     NOTE_FILENAME_SUFFIX,
