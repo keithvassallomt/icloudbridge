@@ -1,6 +1,7 @@
 """Notes folder handling: moves, Smart Folders (issue #18) and folders created from markdown."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 
 import pytest
@@ -37,6 +38,7 @@ class FakeNotesAdapter:
         self.trash: list[AppleScriptNote] = []
         self.deleted: list[str] = []
         self.created: list[str] = []
+        self.updated: list[str] = []
 
     def is_ignored_folder(self, name: str) -> bool:
         return name == "Recently Deleted"
@@ -74,6 +76,20 @@ class FakeNotesAdapter:
         self.notes[uuid] = make_note(uuid, note_title)
         self.folders[folder_name].append(uuid)
         return uuid, SYNCED
+
+    async def find_notes_by_name(self, folder: str, name: str) -> list[str]:
+        # Notes compares names without regard to case.
+        return [u for u in self.folders[folder] if u in self.notes and self.notes[u].name.casefold() == name.casefold()]
+
+    async def delete_note_by_uuid(self, uuid: str) -> bool:
+        self.deleted.append(self.notes[uuid].name)
+        self.trash.append(self.notes.pop(uuid))
+        return True
+
+    async def update_note_by_id(self, uuid: str, body_html: str, note_name: str | None = None):
+        self.updated.append(self.notes[uuid].name)
+        self.notes[uuid] = replace(self.notes[uuid], body_html=body_html, modified_date=SYNCED)
+        return SYNCED
 
     async def delete_note(self, folder: str, name: str) -> bool:
         uuid = next(u for u in self.folders[folder] if u in self.notes and self.notes[u].name == name)

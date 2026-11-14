@@ -17,10 +17,9 @@ ICLOUD_ID = "x-coredata://9A3E2C11/ICNote/p310"
 async def synced_engine(tmp_path, monkeypatch, uuid, attachments):
     engine, fake = await make_engine(tmp_path, {"Google/Notes": [uuid]})
     fake.notes[uuid] = make_note(uuid, "Photo note")
-    fake.updated = []
     fake.counted = []
 
-    async def update_note(folder_name, note_name, body_html):
+    async def update_note_by_id(note_uuid, body_html, note_name=None):
         fake.updated.append(note_name)
 
     async def attachment_count(note_uuid):
@@ -29,7 +28,7 @@ async def synced_engine(tmp_path, monkeypatch, uuid, attachments):
             raise RuntimeError("Notes got an error")
         return attachments
 
-    monkeypatch.setattr(fake, "update_note", update_note, raising=False)
+    monkeypatch.setattr(fake, "update_note_by_id", update_note_by_id)
     monkeypatch.setattr(fake, "attachment_count", attachment_count, raising=False)
     await engine.sync_folder("Google/Notes", markdown_subfolder="Google/Notes")
     return engine, fake

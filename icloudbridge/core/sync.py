@@ -626,7 +626,9 @@ class NotesSyncEngine:
                             record_detail("apple", "deleted", apple_note.name)
                         else:
                             logger.info(f"Remote file deleted, deleting note: {apple_note.name}")
-                            await self.notes_adapter.delete_note(folder_name, apple_note.name)
+                            # By id: deleting by title would delete the first note
+                            # with that title, which may be another note.
+                            await self.notes_adapter.delete_note_by_uuid(uuid)
                             await self.db.delete_mapping(uuid)
                             stats["deleted_local"] += 1
                             record_detail("apple", "deleted", apple_note.name)
@@ -1221,6 +1223,27 @@ class NotesSyncEngine:
             )
             use_shortcuts = False
 
+        same_title: list[str] = []
+        if use_shortcuts:
+            same_title = await self.notes_adapter.find_notes_by_name(folder_name, md_note.name)
+            if any(uuid != existing_note_uuid for uuid in same_title):
+                # Shortcuts find a note by its title. With another note of the same
+                # title in the folder they would write to, or delete, the wrong one.
+                if prepared_note.has_checklist:
+                    logger.warning(
+                        "Another note in '%s' is also titled '%s'; writing it with AppleScript, so "
+                        "its checklist arrives as text. Rename one of the notes to keep checklists.",
+                        folder_name,
+                        md_note.name,
+                    )
+                else:
+                    logger.info(
+                        "Another note in '%s' is also titled '%s'; writing it with AppleScript",
+                        folder_name,
+                        md_note.name,
+                    )
+                use_shortcuts = False
+
         if use_shortcuts:
             logger.debug(
                 "Using Shortcut pipeline for note '%s' in folder '%s'",
@@ -1228,9 +1251,7 @@ class NotesSyncEngine:
                 folder_name,
             )
 
-            pre_existing = set(
-                await self.notes_adapter.find_notes_by_name(folder_name, md_note.name)
-            )
+            pre_existing = set(same_title)
 
             source_markdown = (
                 prepared_note.markdown_with_inline_attachments or prepared_note.markdown_body
@@ -1270,8 +1291,10 @@ class NotesSyncEngine:
             # Shortcuts has no "edit note" action, so the pipeline is delete-old + create-new + append.
             # If the upsert created a fresh note, remove the previous version(s) BEFORE append so the
             # next shortcut call sees exactly one note with this title (no "which note?" prompt).
-            if created_by_upsert and pre_existing:
-                for stale_uuid in pre_existing:
+            # Only ever the note being replaced, never another note with its title.
+            stale = [uuid for uuid in pre_existing if uuid == existing_note_uuid]
+            if created_by_upsert and stale:
+                for stale_uuid in stale:
                     try:
                         await self.notes_adapter.delete_note_by_uuid(stale_uuid)
                         logger.info(
@@ -1320,11 +1343,16 @@ class NotesSyncEngine:
             return new_uuid
 
         if existing_note_name:
-            await self.notes_adapter.update_note(
-                folder_name=folder_name,
-                note_name=existing_note_name,
-                body_html=prepared_note.html_content,
-            )
+            if existing_note_uuid:
+                await self.notes_adapter.update_note_by_id(
+                    existing_note_uuid, prepared_note.html_content, existing_note_name
+                )
+            else:
+                await self.notes_adapter.update_note(
+                    folder_name=folder_name,
+                    note_name=existing_note_name,
+                    body_html=prepared_note.html_content,
+                )
             return existing_note_uuid
 
         note_uuid, _mod_date = await self.notes_adapter.create_note(

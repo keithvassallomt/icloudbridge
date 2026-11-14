@@ -237,6 +237,36 @@ def note_filename_stem(note_name: str) -> str:
     return sanitize_filename(note_name, NOTE_STEM_MAX_BYTES, keep_extension=False)
 
 
+_VARIANT_RE = re.compile(r"(?s)(.*) \((\d+)\)")
+
+
+def note_filename_variant(stem: str, n: int) -> str:
+    """Stem for the n-th note whose title maps to the same file name.
+
+    Notes can share a title ("TODO", "Temp"), so the second one is written
+    as "TODO (2)", the third as "TODO (3)", and so on.
+    """
+    if n < 2:
+        return stem
+    tail = f" ({n})"
+    return _utf8_prefix(stem, NOTE_STEM_MAX_BYTES - len(tail.encode("utf-8"))).rstrip(" .") + tail
+
+
+def note_stem_matches_title(stem: str, title: str) -> bool:
+    """Whether a file stem is the file name this title maps to.
+
+    Accepts the numbered variants of note_filename_variant() and ignores case,
+    because APFS treats "Todo.md" and "TODO.md" as the same file.
+    """
+    base = note_filename_stem(title)
+    if stem.casefold() == base.casefold():
+        return True
+    match = _VARIANT_RE.fullmatch(stem)
+    if not match or int(match.group(2)) < 2:
+        return False
+    return note_filename_variant(base, int(match.group(2))).casefold() == stem.casefold()
+
+
 def _ensure_heading(markdown: str, note_title: str | None) -> str:
     if not note_title:
         return markdown

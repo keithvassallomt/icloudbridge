@@ -28,6 +28,8 @@ from icloudbridge.utils.converters import (
     NOTE_FILENAME_SUFFIX,
     NOTE_METADATA_SUFFIX,
     note_filename_stem,
+    note_filename_variant,
+    note_stem_matches_title,
 )
 from icloudbridge.utils.exceptions import SourceUnavailableError
 
@@ -95,6 +97,20 @@ class MarkdownAdapter:
         target.mkdir(parents=True, exist_ok=True)
         logger.debug(f"Ensured folder exists: {target}")
 
+    def _free_note_path(self, folder: Path, stem: str) -> Path:
+        """First "<stem>.md", "<stem> (2).md", ... that no file uses yet.
+
+        Compared case-insensitively: on APFS "Todo.md" is the same file as
+        "TODO.md", so two notes must not be given names differing only in case.
+        """
+        taken = {entry.name.casefold() for entry in folder.iterdir()} if folder.exists() else set()
+        n = 1
+        while True:
+            candidate = note_filename_variant(stem, n) + NOTE_FILENAME_SUFFIX
+            if candidate.casefold() not in taken:
+                return folder / candidate
+            n += 1
+
     def _metadata_path(self, file_path: Path) -> Path:
         return file_path.parent / f".{file_path.name}{self._metadata_suffix}"
 
@@ -148,12 +164,13 @@ class MarkdownAdapter:
             return False
 
     @staticmethod
-    def _title_metadata(note_name: str | None, metadata: dict[str, str] | None) -> dict[str, str]:
-        # Keep the real title when the file name can't hold it (characters a file
-        # name can't contain, or a name shortened to fit), so pushing the note
-        # back to Apple Notes doesn't rename it to the file name.
+    def _title_metadata(note_name: str | None, metadata: dict[str, str] | None, stem: str) -> dict[str, str]:
+        # Keep the real title when the file name isn't it (characters a file name
+        # can't contain, a name shortened to fit, or "TODO (2)" for a second note
+        # titled "TODO"), so pushing the note back to Apple Notes doesn't rename
+        # it to the file name.
         effective = dict(metadata or {})
-        if note_name and note_filename_stem(note_name) != note_name:
+        if note_name and note_name != stem:
             effective["title"] = note_name
         else:
             effective.pop("title", None)
@@ -161,7 +178,7 @@ class MarkdownAdapter:
 
     @staticmethod
     def _note_title(file_path: Path, metadata: dict[str, str], body: str) -> str:
-        """The note's title: the file name, unless it is a shortened or sanitized one."""
+        """The note's title: the file name, unless it is a shortened, sanitized or numbered one."""
         stem = file_path.stem
         candidates = [metadata.get("title")]
         for line in body.splitlines():
@@ -170,7 +187,7 @@ class MarkdownAdapter:
                     candidates.append(line[2:].strip())
                 break
         for title in candidates:
-            if title and title != stem and note_filename_stem(title) == stem:
+            if title and title != stem and note_stem_matches_title(stem, title):
                 return title
         return stem
 
@@ -355,15 +372,14 @@ class MarkdownAdapter:
 
             await self.ensure_folder_exists(target_folder)
 
-            # Sanitize filename
-            safe_filename = note_filename_stem(note_name) + NOTE_FILENAME_SUFFIX
-            file_path = target_folder / safe_filename
+            # Sanitize filename; never overwrite another note's file
+            file_path = self._free_note_path(target_folder, note_filename_stem(note_name))
 
             # Convert HTML to Markdown
             markdown_body = html_to_markdown(body_html, note_name)
             markdown_body = self._normalize_preview_markdown(markdown_body)
             markdown_content = self._normalize_shortcut_checkmarks(markdown_body)
-            effective_metadata = self._title_metadata(note_name, metadata)
+            effective_metadata = self._title_metadata(note_name, metadata, file_path.stem)
 
             if attachments:
                 self._sync_attachments(target_folder, attachments)
@@ -417,10 +433,16 @@ class MarkdownAdapter:
         """
         try:
             # A rename only if the title maps to a different file. A shortened or
-            # sanitized name, or one differing only in case or accent encoding,
-            # is this same file: "renaming" it would delete what was just written.
+            # sanitized name, a numbered "TODO (2).md" for a note titled "TODO",
+            # or a name differing only in case or accent encoding is this note's
+            # own file: "renaming" it would delete what was just written.
             target = file_path.parent / (note_filename_stem(note_name) + NOTE_FILENAME_SUFFIX) if note_name else None
-            if target is not None and target != file_path and not self._same_file(target, file_path):
+            if (
+                target is not None
+                and not note_stem_matches_title(file_path.stem, note_name)
+                and target != file_path
+                and not self._same_file(target, file_path)
+            ):
                 # Get full nested folder path relative to base_path
                 if file_path.parent != self.base_path:
                     folder_name = str(file_path.parent.relative_to(self.base_path))
@@ -443,7 +465,7 @@ class MarkdownAdapter:
             markdown_body = html_to_markdown(body_html, note_name or file_path.stem)
             markdown_body = self._normalize_preview_markdown(markdown_body)
             markdown_content = self._normalize_shortcut_checkmarks(markdown_body)
-            effective_metadata = self._title_metadata(note_name, metadata)
+            effective_metadata = self._title_metadata(note_name, metadata, file_path.stem)
 
             if attachments:
                 self._sync_attachments(file_path.parent, attachments)

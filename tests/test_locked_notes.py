@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 from tests.test_notes_folder_moves import make_engine, markdown_files
 
@@ -137,8 +138,11 @@ async def test_a_deleted_note_is_not_mistaken_for_a_new_id(tmp_path):
 
     await engine.sync_folder("Notes", markdown_subfolder="Notes")
 
-    # Not repointed: a repoint would have moved u2's mapping onto u9.
-    assert "u2" in {m["local_uuid"] for m in await engine.db.get_all_mappings()}
+    # Not repointed: u9 is a new note with its own file, and u2's deletion
+    # removed u2's copy. A repoint would have handed u2's file to u9.
+    mappings = {m["local_uuid"]: Path(m["remote_path"]).name for m in await engine.db.get_all_mappings()}
+    assert mappings == {"u9": "Plain (2).md"}
+    assert markdown_files(tmp_path) == ["Notes/Plain (2).md"]
 
 
 async def test_a_note_moved_elsewhere_is_not_mistaken_for_a_new_id(tmp_path):
@@ -149,9 +153,13 @@ async def test_a_note_moved_elsewhere_is_not_mistaken_for_a_new_id(tmp_path):
     fake.notes["u9"] = replace(fake.notes["u2"], uuid="u9")
 
     await engine.sync_folder("Notes", markdown_subfolder="Notes")
+    await engine.sync_folder("Archive", markdown_subfolder="Archive")
 
-    # Not repointed: u2 still exists (in Archive), so u9 is a different note.
-    assert "u2" in {m["local_uuid"] for m in await engine.db.get_all_mappings()}
+    # Not repointed: u2 still exists (in Archive), so u9 is a different note
+    # with its own file, and u2's copy follows it to Archive.
+    mappings = {m["local_uuid"]: m["remote_path"] for m in await engine.db.get_all_mappings()}
+    assert mappings["u2"].endswith("Archive/Plain.md")
+    assert mappings["u9"].endswith("Notes/Plain (2).md")
 
 
 async def test_a_folder_of_only_locked_notes_still_syncs(tmp_path):

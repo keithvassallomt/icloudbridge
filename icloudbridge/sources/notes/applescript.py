@@ -327,6 +327,22 @@ end run
 """
 
 
+# Update one note by its id. Notes can share a title, and "note <name>" picks
+# the first of them, so updating by name could overwrite the wrong note.
+UPDATE_NOTE_BY_ID_SCRIPT = """
+on run argv
+    set {note_id, note_name, export_file} to {item 1, item 2, item 3} of argv
+    set html_content to read POSIX file export_file as «class utf8»
+    tell application "Notes"
+        set theNote to note id note_id
+        set body of theNote to html_content
+        if note_name is not "" then set name of theNote to note_name
+        return modification date of theNote
+    end tell
+end run
+"""
+
+
 # AppleScript to delete a note (supports nested folder paths)
 DELETE_NOTE_SCRIPT = """
 on run argv
@@ -1237,6 +1253,21 @@ class NotesAdapter:
         await self.ensure_notes_running()
         await self._run_applescript(CREATE_FOLDER_SCRIPT, *folder_path.split("/"))
         logger.info("Created Apple Notes folder: %s", folder_path)
+
+    async def update_note_by_id(self, note_uuid: str, body_html: str, note_name: str | None = None) -> datetime:
+        """Update one note, found by its id, in Apple Notes."""
+        await self.ensure_notes_running()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as temp_file:
+            temp_file.write(body_html)
+            temp_path = temp_file.name
+        try:
+            result = await self._run_applescript(UPDATE_NOTE_BY_ID_SCRIPT, note_uuid, note_name or "", temp_path)
+            logger.info(f"Updated note: {note_name or note_uuid}")
+            return self._parse_apple_date(result)
+        except Exception as e:
+            raise RuntimeError(f"Failed to update note '{note_name or note_uuid}': {e}") from e
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
 
     async def find_notes_by_name(self, folder_name: str, note_name: str) -> list[str]:
         """Return UUIDs of all notes in a folder with the given name."""
