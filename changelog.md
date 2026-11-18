@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Security
+- Saving settings wrote your passwords to the log in plain text: the CalDAV password, the Bitwarden / Vaultwarden password, client ID and client secret, the Nextcloud app password and the SMTP password. They showed on the Logs page and stayed in the log files in `~/Library/Logs/iCloudBridge`. They're now logged as `***`. The setup wizard also wrote them to the browser console, and no longer does. If you saved any of these in Settings or the setup wizard on an earlier version, delete those log files and change the passwords. Thanks to @valmayaki for finding and fixing this (#43).
+
 ## [0.4.0] - 2026-11-14
 
 ### Changed
