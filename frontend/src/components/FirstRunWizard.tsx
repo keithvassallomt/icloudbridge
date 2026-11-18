@@ -464,8 +464,8 @@ export default function FirstRunWizard() {
 
       const configUpdate = buildConfigPayload();
 
-      // Save credentials for enabled services
-      console.log('Sending config update:', JSON.stringify(configUpdate, null, 2));
+      // Save credentials for enabled services. Never log configUpdate: it
+      // carries the passwords.
       await apiClient.updateConfig(configUpdate);
 
       // Determine which services to test based on what's enabled
