@@ -658,6 +658,11 @@ async def test_connection(service: str, config: ConfigDep):
 
             logger.debug(f"Config username: {config.reminders.caldav_username}")
             logger.debug(f"Config URL: {config.reminders.caldav_url}")
+            if not config.reminders.caldav_url or not config.reminders.caldav_username:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="CalDAV URL and username must be configured",
+                )
             password = config.reminders.get_caldav_password()
             logger.debug(f"Retrieved password: {'<exists>' if password else '<none>'}")
             if not password:
@@ -681,6 +686,8 @@ async def test_connection(service: str, config: ConfigDep):
                 "message": f"Successfully connected to CalDAV server. Found {len(calendars)} calendars.",
                 "calendars": [cal["name"] for cal in calendars],
             }
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"CalDAV connection test failed: {e}")
             return {

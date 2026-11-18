@@ -12,6 +12,7 @@ from icalendar import Alarm, Calendar
 from icalendar import Todo as VTodo
 
 from icloudbridge.utils.datetime_utils import local_timezone
+from icloudbridge.utils.exceptions import SourceUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +250,8 @@ class CalDAVAdapter:
         self.client: DAVClient | None = None
         self.principal: Any = None
         self.calendars: list[Any] = []
+        # Why the last connect() failed, for _ensure_connected() to report
+        self.connect_error: str | None = None
 
     async def connect(self) -> bool:
         """Connect to CalDAV server and discover calendars."""
@@ -272,12 +275,28 @@ class CalDAVAdapter:
                 return client, principal, calendars
 
             self.client, self.principal, self.calendars = await asyncio.to_thread(_connect)
+            self.connect_error = None
             logger.info(f"Connected to CalDAV server: {self.url}")
             logger.info(f"Found {len(self.calendars)} calendars")
             return True
         except Exception as e:
+            self.connect_error = str(e) or type(e).__name__
             logger.error(f"Failed to connect to CalDAV server: {e}", exc_info=True)
             return False
+
+    async def _ensure_connected(self) -> None:
+        """Connect if not connected yet, and raise if the server can't be reached.
+
+        Carrying on without a connection made the server look like it had no
+        calendars and no tasks. A connection test then reported success, and a
+        sync could read it as everything having been deleted.
+        """
+        if self.client is not None:
+            return
+        if not await self.connect():
+            raise SourceUnavailableError(
+                f"Could not connect to the CalDAV server at {self.url}: {self.connect_error}"
+            )
 
     def _inject_truststore_if_available(self) -> None:
         """Try to make requests use the system trust store via truststore."""
@@ -307,8 +326,7 @@ class CalDAVAdapter:
         Returns:
             List of dicts with 'name' and 'url' keys
         """
-        if not self.client:
-            await self.connect()
+        await self._ensure_connected()
 
         result = []
         for cal in self.calendars:
@@ -351,8 +369,7 @@ class CalDAVAdapter:
         Returns:
             List of dicts with 'name' and 'url' keys; empty if not connected
         """
-        if not self.client:
-            await self.connect()
+        await self._ensure_connected()
         return [{"name": cal.name, "url": str(cal.url)} for cal in self.calendars]
 
     async def delete_calendar(self, calendar_url: str) -> bool:
@@ -365,8 +382,7 @@ class CalDAVAdapter:
         Returns:
             True if deleted, False if not found or the server refused
         """
-        if not self.client or not self.principal:
-            await self.connect()
+        await self._ensure_connected()
 
         calendar = next((cal for cal in self.calendars if str(cal.url) == calendar_url), None)
         if calendar is None:
@@ -392,8 +408,7 @@ class CalDAVAdapter:
         Returns:
             True if created successfully, False otherwise
         """
-        if not self.client or not self.principal:
-            await self.connect()
+        await self._ensure_connected()
 
         try:
             logger.info(f"Creating TODO calendar: {calendar_name}")
@@ -426,8 +441,7 @@ class CalDAVAdapter:
         Returns:
             List of CalDAVReminder objects
         """
-        if not self.client:
-            await self.connect()
+        await self._ensure_connected()
 
         # Find the target calendar
         target_calendar = None
@@ -685,8 +699,7 @@ class CalDAVAdapter:
         Returns:
             Created CalDAVReminder object or None if failed
         """
-        if not self.client:
-            await self.connect()
+        await self._ensure_connected()
 
         # Find the target calendar
         target_calendar = None
@@ -819,8 +832,7 @@ class CalDAVAdapter:
         Returns:
             Updated CalDAVReminder object or None if failed
         """
-        if not self.client:
-            await self.connect()
+        await self._ensure_connected()
 
         try:
             # Fetch the existing TODO - run blocking operation in thread pool
@@ -1000,8 +1012,7 @@ class CalDAVAdapter:
         Returns:
             True if deleted successfully, False otherwise
         """
-        if not self.client:
-            await self.connect()
+        await self._ensure_connected()
 
         try:
             # Run blocking operation in thread pool
