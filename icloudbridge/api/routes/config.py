@@ -6,7 +6,7 @@ from functools import lru_cache
 from fastapi import APIRouter, HTTPException, status
 
 from icloudbridge.api.dependencies import ConfigDep
-from icloudbridge.api.models import ConfigResponse, ConfigUpdateRequest
+from icloudbridge.api.models import ConfigResponse, ConfigUpdateRequest, credential_fields
 from icloudbridge.core.config import FolderMapping, PhotoSourceConfig, PasswordsConfig
 from icloudbridge.core.notifications import FailureNotifier
 from icloudbridge.utils.credentials import CredentialStore
@@ -16,13 +16,13 @@ logger = logging.getLogger(__name__)
 
 # Request fields holding credentials. They go to the keyring and must never be
 # printed or logged.
-_CREDENTIAL_FIELD_SUFFIXES = ("_password", "_secret", "_client_id")
+_CREDENTIAL_FIELDS = credential_fields(ConfigUpdateRequest)
 
 
 def _loggable_update(update: ConfigUpdateRequest) -> dict:
     """The fields set in a config update, with credential values masked."""
     return {
-        name: "***" if name.endswith(_CREDENTIAL_FIELD_SUFFIXES) and value else value
+        name: "***" if name in _CREDENTIAL_FIELDS and value else value
         for name, value in update.model_dump(exclude_none=True).items()
     }
 

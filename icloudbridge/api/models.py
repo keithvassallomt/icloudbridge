@@ -7,6 +7,33 @@ from pydantic import BaseModel, EmailStr, Field
 
 from icloudbridge.core.models import SyncStatus
 
+# Marks a credential field in the API schema, the way pydantic's SecretStr does.
+_CREDENTIAL_SCHEMA = {"format": "password", "writeOnly": True}
+
+
+def credential_field(description: str, default: Any = None) -> Any:
+    """A request field that holds a credential.
+
+    Credentials go to the keyring and must never be logged or sent back. The
+    field is left out of the model's repr, and credential_fields() finds it so
+    that a dump of the request can be masked before it is logged.
+    """
+    return Field(
+        default=default,
+        description=description,
+        repr=False,
+        json_schema_extra=dict(_CREDENTIAL_SCHEMA),
+    )
+
+
+def credential_fields(model: type[BaseModel]) -> frozenset[str]:
+    """The names of a model's fields declared with credential_field()."""
+    return frozenset(
+        name
+        for name, field in model.model_fields.items()
+        if field.json_schema_extra == _CREDENTIAL_SCHEMA
+    )
+
 
 class SyncRequest(BaseModel):
     """Request model for synchronization operations."""
@@ -150,9 +177,8 @@ class ConfigUpdateRequest(BaseModel):
     notes_folder_mappings: dict[str, dict[str, str]] | None = None
     reminders_caldav_url: str | None = None
     reminders_caldav_username: str | None = None
-    reminders_caldav_password: str | None = Field(
-        default=None,
-        description="Password will be stored in system keyring",
+    reminders_caldav_password: str | None = credential_field(
+        "Password will be stored in system keyring",
     )
     reminders_sync_mode: str | None = None
     reminders_caldav_ssl_verify_cert: bool | str | None = Field(
@@ -166,23 +192,19 @@ class ConfigUpdateRequest(BaseModel):
     passwords_review_deletions: bool | None = None
     passwords_vaultwarden_url: str | None = None
     passwords_vaultwarden_email: str | None = None
-    passwords_vaultwarden_password: str | None = Field(
-        default=None,
-        description="Password will be stored in system keyring",
+    passwords_vaultwarden_password: str | None = credential_field(
+        "Password will be stored in system keyring",
     )
-    passwords_vaultwarden_client_id: str | None = Field(
-        default=None,
-        description="OAuth client ID (Personal API Key) will be stored in system keyring",
+    passwords_vaultwarden_client_id: str | None = credential_field(
+        "OAuth client ID (Personal API Key) will be stored in system keyring",
     )
-    passwords_vaultwarden_client_secret: str | None = Field(
-        default=None,
-        description="OAuth client secret (Personal API Key) will be stored in system keyring",
+    passwords_vaultwarden_client_secret: str | None = credential_field(
+        "OAuth client secret (Personal API Key) will be stored in system keyring",
     )
     passwords_nextcloud_url: str | None = None
     passwords_nextcloud_username: str | None = None
-    passwords_nextcloud_app_password: str | None = Field(
-        default=None,
-        description="Nextcloud app password will be stored in system keyring",
+    passwords_nextcloud_app_password: str | None = credential_field(
+        "Nextcloud app password will be stored in system keyring",
     )
     passwords_ssl_verify_cert: bool | str | None = Field(
         default=None,
@@ -200,9 +222,8 @@ class ConfigUpdateRequest(BaseModel):
     notifications_smtp_host: str | None = None
     notifications_smtp_port: int | None = None
     notifications_smtp_username: str | None = None
-    notifications_smtp_password: str | None = Field(
-        default=None,
-        description="SMTP password will be stored in system keyring",
+    notifications_smtp_password: str | None = credential_field(
+        "SMTP password will be stored in system keyring",
     )
     notifications_smtp_use_tls: bool | None = None
     notifications_smtp_use_ssl: bool | None = None
@@ -332,9 +353,9 @@ class VaultwardenCredentialRequest(BaseModel):
     """Request body for storing VaultWarden credentials."""
 
     email: EmailStr
-    password: str
-    client_id: str | None = None
-    client_secret: str | None = None
+    password: str = credential_field("Stored in the system keyring", default=...)
+    client_id: str | None = credential_field("Stored in the system keyring")
+    client_secret: str | None = credential_field("Stored in the system keyring")
     url: str | None = None
 
 
@@ -342,7 +363,7 @@ class NextcloudCredentialRequest(BaseModel):
     """Request body for storing Nextcloud Passwords credentials."""
 
     username: str
-    app_password: str
+    app_password: str = credential_field("Stored in the system keyring", default=...)
     url: str | None = None
 
 
